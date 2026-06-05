@@ -4,6 +4,7 @@ from typing import Any, Callable
 import pytest
 
 from thalovant import ThalovantClient, ThalovantIdentity, ThalovantTimeoutError
+from thalovant.client import _runtime_bus_context, _runtime_crypto_key
 
 
 @dataclass
@@ -86,6 +87,31 @@ def test_emit_sends_low_level_event():
     client.emit("skillmanager.list", {"x": 1}, {"source": "test"})
 
     assert transport.emitted == [("skillmanager.list", {"x": 1}, {"source": "test"})]
+
+
+def test_runtime_crypto_key_matches_hivemind_runtime_truncation():
+    assert _runtime_crypto_key("  abcdefghijklmnopqrstuvwxyz  ") == "abcdefghijklmnop"
+    assert _runtime_crypto_key("0123456789abcdef") == "0123456789abcdef"
+    assert _runtime_crypto_key("   ") is None
+    assert _runtime_crypto_key(None) is None
+
+
+def test_runtime_bus_context_injects_non_default_session():
+    context = _runtime_bus_context(
+        {"session": {"session_id": "default", "pipeline": ["x"]}},
+        useragent="SDK",
+        session_id="runtime-session",
+        site_id="Office",
+    )
+
+    assert context["source"] == "SDK"
+    assert context["platform"] == "SDK"
+    assert context["destination"] == "HiveMind"
+    assert context["session"] == {
+        "session_id": "runtime-session",
+        "site_id": "Office",
+        "pipeline": ["x"],
+    }
 
 
 def test_ask_times_out_without_handled_event():

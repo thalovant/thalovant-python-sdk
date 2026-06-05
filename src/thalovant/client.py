@@ -296,8 +296,18 @@ class HiveMindHTTPTransport:
         context: dict[str, Any],
     ) -> Any:
         deps = self._load_deps()
-        message = deps.Message(event_type, data, context)
-        return self._require_client().emit(message)
+        client = self._require_client()
+        message = deps.Message(
+            event_type,
+            data,
+            _runtime_bus_context(
+                context,
+                useragent=client.useragent,
+                session_id=client.session_id,
+                site_id=client.site_id,
+            ),
+        )
+        return client.emit(message)
 
     def _require_client(self) -> Any:
         if self._client is None:
@@ -331,7 +341,7 @@ class HiveMindHTTPTransport:
         return self._deps
 
     def _build_protocol(self, client: Any, deps: "_HiveMindDeps") -> Any:
-        crypto_key = self.identity.crypto_key
+        crypto_key = _runtime_crypto_key(self.identity.crypto_key)
 
         if not crypto_key:
             return deps.HiveMindSlaveProtocol(
@@ -412,3 +422,32 @@ class _HiveMindDeps:
 def _message_data(message: Any) -> dict[str, Any]:
     data = getattr(message, "data", None)
     return data if isinstance(data, dict) else {}
+
+
+def _runtime_crypto_key(raw_crypto_key: str | None) -> str | None:
+    if not isinstance(raw_crypto_key, str):
+        return None
+    normalized = raw_crypto_key.strip()
+    if not normalized:
+        return None
+    return normalized[:16]
+
+
+def _runtime_bus_context(
+    raw_context: dict[str, Any] | None,
+    *,
+    useragent: str,
+    session_id: str,
+    site_id: str | None,
+) -> dict[str, Any]:
+    context = dict(raw_context or {})
+    context.setdefault("source", useragent)
+    context.setdefault("platform", useragent)
+    context.setdefault("destination", "HiveMind")
+
+    raw_session = context.get("session")
+    session = dict(raw_session) if isinstance(raw_session, dict) else {}
+    session["session_id"] = session_id
+    session["site_id"] = site_id
+    context["session"] = session
+    return context
