@@ -1,116 +1,52 @@
-"""High-level client for Thalovant HiveMind HTTP connections."""
+"""High-level sync and async clients."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from pathlib import Path
 import queue
 import threading
 import time
-from typing import Any, AsyncIterator, Callable, Iterator, Protocol
+from typing import Any, AsyncIterator, Callable, Iterator
+from urllib.parse import urlparse
 
+from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
     ThalovantConnectionError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
 )
+from .events import (
+    EVENT_INTENT_FAILURE,
+    EVENT_POLICY_DENIED,
+    EVENT_RECOGNIZER_LOOP_UTTERANCE,
+    EVENT_SPEAK,
+    EVENT_UTTERANCE_HANDLED,
+    EventHandler,
+    EventPredicate,
+    ThalovantEvent,
+    _context_with_correlation,
+    _event_from_message,
+    _event_matches_context,
+    _failure_reason,
+    _new_request_id,
+    _runtime_bus_context,
+    _runtime_crypto_key,
+    _session_id_from_context,
+    _utterance_payload,
+)
 from .identity import ThalovantIdentity
+from .models import (
+    ThalovantDoctorCheck,
+    ThalovantDoctorReport,
+    ThalovantHealth,
+    ThalovantReply,
+)
+from .subscriptions import ThalovantSubscription
+from .transport import HiveMindHTTPTransport, Transport
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.2.0"
-
-
-class _Transport(Protocol):
-    def connect(self) -> None: ...
-
-    def disconnect(self) -> None: ...
-
-    def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None: ...
-
-    def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None: ...
-
-    def emit_event(
-        self,
-        event_type: str,
-        data: dict[str, Any],
-        context: dict[str, Any],
-    ) -> Any: ...
-
-    def healthcheck(self) -> "ThalovantHealth": ...
-
-    def is_connected(self) -> bool: ...
-
-    def last_error(self) -> BaseException | None: ...
-
-
-EventHandler = Callable[["ThalovantEvent"], None]
-EventPredicate = Callable[["ThalovantEvent"], bool]
-
-
-@dataclass(frozen=True)
-class ThalovantEvent:
-    """A normalized event received from a hub."""
-
-    name: str
-    data: dict[str, Any]
-    context: dict[str, Any]
-    raw: Any
-
-
-@dataclass(frozen=True)
-class ThalovantHealth:
-    """Snapshot of the SDK's live HiveMind HTTP transport state."""
-
-    connected: bool
-    handshake_complete: bool
-    transport_alive: bool
-    last_error: str | None = None
-
-    @property
-    def ok(self) -> bool:
-        return self.connected and self.handshake_complete and self.transport_alive and not self.last_error
-
-
-@dataclass(frozen=True)
-class ThalovantReply:
-    """A normalized response from a hub utterance request."""
-
-    text: str
-    utterances: tuple[str, ...] = ()
-    handled: bool = False
-    raw_messages: tuple[Any, ...] = field(default_factory=tuple)
-    events: tuple[ThalovantEvent, ...] = field(default_factory=tuple)
-    failure_event: ThalovantEvent | None = None
-
-
-class ThalovantSubscription:
-    """Handle returned by `ThalovantClient.on`."""
-
-    def __init__(
-        self,
-        client: "ThalovantClient",
-        event_name: str,
-        handler: Callable[[Any], None],
-    ) -> None:
-        self._client = client
-        self.event_name = event_name
-        self._handler = handler
-        self._closed = False
-
-    def __enter__(self) -> "ThalovantSubscription":
-        return self
-
-    def __exit__(self, *_: Any) -> None:
-        self.close()
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._client._remove_subscription(self.event_name, self._handler)
-        self._closed = True
-
-    unsubscribe = close
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.3.0"
 
 
 class ThalovantClient:
@@ -127,7 +63,7 @@ class ThalovantClient:
         reply_settle_seconds: float = 0.25,
         auto_reconnect: bool = True,
         reconnect_attempts: int = 1,
-        transport: _Transport | None = None,
+        transport: Transport | None = None,
     ) -> None:
         self.identity = identity
         self.useragent = useragent
@@ -166,6 +102,22 @@ class ThalovantClient:
     def __exit__(self, *_: Any) -> None:
         self.close()
 
+    def conversation(
+        self,
+        *,
+        session_id: str | None = None,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+    ) -> ThalovantConversation:
+        """Create a scoped conversation with a stable session id."""
+
+        return ThalovantConversation(
+            self,
+            session_id=session_id,
+            lang=lang,
+            context=context,
+        )
+
     def connect(self) -> None:
         """Open the HiveMind HTTP connection if needed."""
 
@@ -192,13 +144,63 @@ class ThalovantClient:
         self.connect()
         return self._transport.healthcheck()
 
-    def on(self, event_name: str, handler: EventHandler) -> ThalovantSubscription:
+    def doctor(self) -> ThalovantDoctorReport:
+        """Run identity, endpoint, connection, and transport diagnostics."""
+
+        checks: list[ThalovantDoctorCheck] = []
+
+        def check(name: str, operation: Callable[[], str]) -> None:
+            started = time.monotonic()
+            try:
+                detail = operation()
+                ok = True
+            except Exception as exc:
+                detail = str(exc)
+                ok = False
+            checks.append(
+                ThalovantDoctorCheck(
+                    name=name,
+                    ok=ok,
+                    detail=detail,
+                    duration_ms=(time.monotonic() - started) * 1000,
+                )
+            )
+
+        check("identity", self._doctor_identity)
+        check("endpoint", self._doctor_endpoint)
+        check("connect", self._doctor_connect)
+        check("transport", self._doctor_transport)
+        return ThalovantDoctorReport(
+            identity=self.identity.as_dict(include_secrets=False),
+            checks=tuple(checks),
+        )
+
+    def on(
+        self,
+        event_name: str,
+        handler: EventHandler,
+        *,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+        predicate: EventPredicate | None = None,
+    ) -> ThalovantSubscription:
         """Subscribe to a hub event and receive normalized `ThalovantEvent` objects."""
 
         self.connect()
+        expected_context = _context_with_correlation(
+            context,
+            session_id=session_id,
+            request_id=request_id,
+        )
 
         def wrapped(raw_message: Any) -> None:
-            handler(_event_from_message(event_name, raw_message))
+            event = _event_from_message(event_name, raw_message)
+            if not _event_matches_context(event, expected_context):
+                return
+            if predicate is not None and not predicate(event):
+                return
+            handler(event)
 
         self._transport.on_mycroft(event_name, wrapped)
         return ThalovantSubscription(self, event_name, wrapped)
@@ -209,17 +211,22 @@ class ThalovantClient:
         *,
         timeout: float = 12.0,
         predicate: EventPredicate | None = None,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
     ) -> ThalovantEvent:
         """Wait for one matching hub event."""
 
         events: queue.Queue[ThalovantEvent] = queue.Queue()
-
-        def handler(event: ThalovantEvent) -> None:
-            if predicate is None or predicate(event):
-                events.put(event)
-
         deadline = time.monotonic() + timeout
-        with self.on(event_name, handler):
+        with self.on(
+            event_name,
+            events.put,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+            predicate=predicate,
+        ):
             while True:
                 self._raise_if_transport_stopped()
                 remaining = deadline - time.monotonic()
@@ -238,6 +245,10 @@ class ThalovantClient:
         *,
         timeout: float | None = None,
         max_events: int | None = None,
+        predicate: EventPredicate | None = None,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
     ) -> Iterator[ThalovantEvent]:
         """Yield hub events until `timeout` expires or `max_events` is reached."""
 
@@ -245,7 +256,14 @@ class ThalovantClient:
         deadline = None if timeout is None else time.monotonic() + timeout
         yielded = 0
 
-        with self.on(event_name, events.put):
+        with self.on(
+            event_name,
+            events.put,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+            predicate=predicate,
+        ):
             while max_events is None or yielded < max_events:
                 self._raise_if_transport_stopped()
                 wait_time = 0.1
@@ -273,6 +291,34 @@ class ThalovantClient:
             lambda: self._transport.emit_event(event_type, data or {}, context or {})
         )
 
+    def send_utterance(
+        self,
+        text: str,
+        *,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        """Emit a text utterance without waiting for a spoken reply."""
+
+        prompt = text.strip()
+        if not prompt:
+            raise ValueError("send_utterance() requires a non-empty text prompt.")
+
+        request_context = _context_with_correlation(
+            context,
+            session_id=session_id,
+            site_id=self.identity.site_id,
+            lang=lang,
+            request_id=request_id or _new_request_id(),
+        )
+        return self.emit(
+            EVENT_RECOGNIZER_LOOP_UTTERANCE,
+            _utterance_payload(prompt, lang),
+            request_context,
+        )
+
     def ask(
         self,
         text: str,
@@ -280,6 +326,8 @@ class ThalovantClient:
         timeout: float = 12.0,
         lang: str = "en-us",
         context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
     ) -> ThalovantReply:
         """Send a text utterance and wait for the hub's spoken reply."""
 
@@ -287,11 +335,26 @@ class ThalovantClient:
         if not prompt:
             raise ValueError("ask() requires a non-empty text prompt.")
 
+        request_id = request_id or _new_request_id()
+        request_context = _context_with_correlation(
+            context,
+            session_id=session_id,
+            site_id=self.identity.site_id,
+            lang=lang,
+            request_id=request_id,
+        )
         last_error: BaseException | None = None
         attempts = self.reconnect_attempts + 1 if self.auto_reconnect else 1
         for attempt in range(attempts):
             try:
-                return self._ask_once(prompt, timeout=timeout, lang=lang, context=context or {})
+                return self._ask_once(
+                    prompt,
+                    timeout=timeout,
+                    lang=lang,
+                    context=request_context,
+                    request_id=request_id,
+                    session_id=_session_id_from_context(request_context),
+                )
             except ThalovantConnectionError as exc:
                 last_error = exc
                 if attempt + 1 >= attempts:
@@ -306,6 +369,8 @@ class ThalovantClient:
         timeout: float,
         lang: str,
         context: dict[str, Any],
+        request_id: str | None,
+        session_id: str | None,
     ) -> ThalovantReply:
         self.connect()
 
@@ -316,14 +381,18 @@ class ThalovantClient:
         events: list[ThalovantEvent] = []
         failure_event: ThalovantEvent | None = None
 
-        def remember(event_name: str, message: Any) -> ThalovantEvent:
+        def remember(event_name: str, message: Any) -> ThalovantEvent | None:
             event = _event_from_message(event_name, message)
+            if not _event_matches_context(event, context):
+                return None
             events.append(event)
             raw_messages.append(message)
             return event
 
         def handle_speak(message: Any) -> None:
-            event = remember("speak", message)
+            event = remember(EVENT_SPEAK, message)
+            if event is None:
+                return
             utterance = event.data.get("utterance")
             if isinstance(utterance, str) and utterance.strip():
                 normalized = " ".join(utterance.strip().split())
@@ -331,38 +400,45 @@ class ThalovantClient:
                     fragments.append(normalized)
 
         def handle_handled(message: Any) -> None:
-            remember("ovos.utterance.handled", message)
-            handled.set()
+            if remember(EVENT_UTTERANCE_HANDLED, message) is not None:
+                handled.set()
 
         def handle_failure(message: Any) -> None:
             nonlocal failure_event
-            failure_event = remember(_message_name(message) or "complete_intent_failure", message)
+            event = remember(getattr(message, "msg_type", None) or EVENT_INTENT_FAILURE, message)
+            if event is None:
+                return
+            failure_event = event
             failed.set()
             handled.set()
 
         handlers = (
-            ("speak", handle_speak),
-            ("ovos.utterance.handled", handle_handled),
-            ("complete_intent_failure", handle_failure),
-            ("hive.policy.denied", handle_failure),
+            (EVENT_SPEAK, handle_speak),
+            (EVENT_UTTERANCE_HANDLED, handle_handled),
+            (EVENT_INTENT_FAILURE, handle_failure),
+            (EVENT_POLICY_DENIED, handle_failure),
         )
 
         for event_name, handler in handlers:
             self._transport.on_mycroft(event_name, handler)
 
         try:
-            payload = {"utterances": [prompt], "lang": lang}
-            self._transport.emit_event("recognizer_loop:utterance", payload, context)
+            self._transport.emit_event(
+                EVENT_RECOGNIZER_LOOP_UTTERANCE,
+                _utterance_payload(prompt, lang),
+                context,
+            )
             self._wait_for_handled(handled, timeout=timeout)
             if self.reply_settle_seconds > 0:
                 time.sleep(self.reply_settle_seconds)
             if failed.is_set() and not fragments:
-                reason = _failure_reason(failure_event)
-                raise ThalovantRuntimeError(reason)
+                raise ThalovantRuntimeError(_failure_reason(failure_event))
             return ThalovantReply(
                 text=" ".join(fragments),
                 utterances=tuple(fragments),
                 handled=handled.is_set() and not failed.is_set(),
+                session_id=session_id,
+                request_id=request_id,
                 raw_messages=tuple(raw_messages),
                 events=tuple(events),
                 failure_event=failure_event,
@@ -412,12 +488,40 @@ class ThalovantClient:
         except ThalovantConnectionError:
             pass
 
+    def _doctor_identity(self) -> str:
+        self.identity.as_dict(include_secrets=False)
+        return f"site_id={self.identity.site_id}"
+
+    def _doctor_endpoint(self) -> str:
+        parsed = urlparse(self.identity.default_master)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("default_master must start with http:// or https://")
+        if not parsed.netloc:
+            raise ValueError("default_master must include a host")
+        if self.identity.default_port <= 0:
+            raise ValueError("default_port must be positive")
+        return f"{self.identity.default_master}:{self.identity.default_port}"
+
+    def _doctor_connect(self) -> str:
+        self.connect()
+        return "connected and handshake completed"
+
+    def _doctor_transport(self) -> str:
+        health = self.healthcheck()
+        if not health.ok:
+            raise ThalovantConnectionError(str(health.as_dict()))
+        return "polling thread alive"
+
 
 class AsyncThalovantClient:
     """Async wrapper for web apps and long-running Python agents."""
 
     def __init__(self, identity: ThalovantIdentity, **kwargs: Any) -> None:
         self._client = ThalovantClient(identity, **kwargs)
+
+    @property
+    def identity(self) -> ThalovantIdentity:
+        return self._client.identity
 
     @classmethod
     def from_identity_file(
@@ -438,6 +542,20 @@ class AsyncThalovantClient:
     async def __aexit__(self, *_: Any) -> None:
         await self.close()
 
+    def conversation(
+        self,
+        *,
+        session_id: str | None = None,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+    ) -> AsyncThalovantConversation:
+        return AsyncThalovantConversation(
+            self,
+            session_id=session_id,
+            lang=lang,
+            context=context,
+        )
+
     async def connect(self) -> None:
         await asyncio.to_thread(self._client.connect)
 
@@ -449,7 +567,19 @@ class AsyncThalovantClient:
     async def healthcheck(self) -> ThalovantHealth:
         return await asyncio.to_thread(self._client.healthcheck)
 
-    def on(self, event_name: str, handler: EventHandler) -> ThalovantSubscription:
+    async def doctor(self) -> ThalovantDoctorReport:
+        return await asyncio.to_thread(self._client.doctor)
+
+    def on(
+        self,
+        event_name: str,
+        handler: EventHandler,
+        *,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+        predicate: EventPredicate | None = None,
+    ) -> ThalovantSubscription:
         loop = asyncio.get_running_loop()
 
         def dispatch(event: ThalovantEvent) -> None:
@@ -460,7 +590,14 @@ class AsyncThalovantClient:
 
             loop.call_soon_threadsafe(run_handler)
 
-        return self._client.on(event_name, dispatch)
+        return self._client.on(
+            event_name,
+            dispatch,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+            predicate=predicate,
+        )
 
     async def listen(
         self,
@@ -468,6 +605,10 @@ class AsyncThalovantClient:
         *,
         timeout: float | None = None,
         max_events: int | None = None,
+        predicate: EventPredicate | None = None,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
     ) -> AsyncIterator[ThalovantEvent]:
         await self.connect()
         loop = asyncio.get_running_loop()
@@ -478,7 +619,14 @@ class AsyncThalovantClient:
         def handler(event: ThalovantEvent) -> None:
             loop.call_soon_threadsafe(events.put_nowait, event)
 
-        subscription = self._client.on(event_name, handler)
+        subscription = self._client.on(
+            event_name,
+            handler,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+            predicate=predicate,
+        )
         try:
             while max_events is None or yielded < max_events:
                 wait_timeout = None
@@ -503,6 +651,24 @@ class AsyncThalovantClient:
     ) -> Any:
         return await asyncio.to_thread(self._client.emit, event_type, data, context)
 
+    async def send_utterance(
+        self,
+        text: str,
+        *,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return await asyncio.to_thread(
+            self._client.send_utterance,
+            text,
+            lang=lang,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+        )
+
     async def ask(
         self,
         text: str,
@@ -510,6 +676,8 @@ class AsyncThalovantClient:
         timeout: float = 12.0,
         lang: str = "en-us",
         context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
     ) -> ThalovantReply:
         return await asyncio.to_thread(
             self._client.ask,
@@ -517,6 +685,8 @@ class AsyncThalovantClient:
             timeout=timeout,
             lang=lang,
             context=context,
+            session_id=session_id,
+            request_id=request_id,
         )
 
     async def wait_for_event(
@@ -525,416 +695,16 @@ class AsyncThalovantClient:
         *,
         timeout: float = 12.0,
         predicate: EventPredicate | None = None,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
     ) -> ThalovantEvent:
         return await asyncio.to_thread(
             self._client.wait_for_event,
             event_name,
             timeout=timeout,
             predicate=predicate,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
         )
-
-
-class HiveMindHTTPTransport:
-    """Thin adapter around `hivemind_bus_client.http_client.HiveMindHTTPClient`."""
-
-    def __init__(
-        self,
-        identity: ThalovantIdentity,
-        *,
-        useragent: str = DEFAULT_USERAGENT,
-        connect_timeout: float = 4.0,
-        handshake_timeout: float = 6.0,
-        handshake_poll_interval: float = 0.1,
-        handshake_settle_seconds: float = 0.1,
-        send_timeout: float = 8.0,
-        self_signed: bool = True,
-        compress: bool = False,
-        binarize: bool = False,
-    ) -> None:
-        self.identity = identity
-        self.useragent = useragent
-        self.connect_timeout = connect_timeout
-        self.handshake_timeout = handshake_timeout
-        self.handshake_poll_interval = handshake_poll_interval
-        self.handshake_settle_seconds = handshake_settle_seconds
-        self.send_timeout = send_timeout
-        self.self_signed = self_signed
-        self.compress = compress
-        self.binarize = binarize
-        self._client: Any | None = None
-        self._transport_connected = False
-        self._deps: _HiveMindDeps | None = None
-        self._last_error: BaseException | None = None
-
-    def connect(self) -> None:
-        if self.is_connected():
-            return
-
-        deps = self._load_deps()
-        self._last_error = None
-        http_client_class = self._build_http_client_class(deps.HiveMindHTTPClient)
-        client = http_client_class(
-            key=self.identity.access_key,
-            password=self.identity.password,
-            crypto_key=None,
-            host=self.identity.default_master,
-            port=self.identity.default_port,
-            useragent=self.useragent,
-            self_signed=self.self_signed,
-            compress=self.compress,
-            binarize=self.binarize,
-        )
-        protocol = self._build_protocol(client, deps)
-        client.identity.site_id = self.identity.site_id
-        client.protocol = protocol
-        client.protocol.identity = client.identity
-        client.protocol.site_id = self.identity.site_id
-        client.protocol.bind(client.internal_bus)
-
-        try:
-            response = deps.requests.post(
-                f"{client.base_url}/connect",
-                params={"authorization": client.auth},
-                timeout=self.connect_timeout,
-            )
-        except deps.requests.RequestException as exc:
-            self._shutdown_client(client, transport_connected=False)
-            raise ThalovantConnectionError("Could not reach the HiveMind HTTP endpoint.") from exc
-
-        if getattr(response, "ok", False) is False:
-            self._shutdown_client(client, transport_connected=False)
-            detail = getattr(response, "text", "") or f"HTTP {getattr(response, 'status_code', 'error')}"
-            raise ThalovantConnectionError(f"HiveMind HTTP connect failed: {detail}")
-
-        client.connected.set()
-        deadline = time.monotonic() + self.handshake_timeout
-        while time.monotonic() < deadline:
-            remaining = max(0.0, deadline - time.monotonic())
-            if client.handshake_event.wait(timeout=min(self.handshake_poll_interval, remaining)):
-                time.sleep(self.handshake_settle_seconds)
-                self._client = client
-                self._transport_connected = True
-                return
-
-        self._shutdown_client(client, transport_connected=True)
-        raise ThalovantTimeoutError("HiveMind HTTP handshake timed out.")
-
-    def disconnect(self) -> None:
-        client = self._client
-        if client is None:
-            return
-        self._shutdown_client(client, transport_connected=self._transport_connected)
-        self._client = None
-        self._transport_connected = False
-
-    def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
-        self._require_client().on_mycroft(event_name, handler)
-
-    def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
-        self._require_client().remove_mycroft(event_name, handler)
-
-    def emit_event(
-        self,
-        event_type: str,
-        data: dict[str, Any],
-        context: dict[str, Any],
-    ) -> Any:
-        deps = self._load_deps()
-        client = self._require_live_client()
-        message = deps.Message(
-            event_type,
-            data,
-            _runtime_bus_context(
-                context,
-                useragent=client.useragent,
-                session_id=client.session_id,
-                site_id=client.site_id,
-            ),
-        )
-        hive_message = deps.HiveMessage(deps.HiveMessageType.BUS, message)
-        payload = deps.serialize_message(hive_message)
-        if client.crypto_key:
-            payload = deps.encrypt_as_json(
-                client.crypto_key,
-                payload,
-                cipher=client.cipher,
-                encoding=client.json_encoding,
-            )
-
-        try:
-            response = deps.requests.post(
-                f"{client.base_url}/send_message",
-                data={"message": payload},
-                params={"authorization": client.auth},
-                timeout=self.send_timeout,
-            )
-        except deps.requests.RequestException as exc:
-            self._last_error = exc
-            raise ThalovantConnectionError("Could not send the HiveMind HTTP message.") from exc
-
-        self._raise_for_emit_response(response)
-        return response
-
-    def _require_client(self) -> Any:
-        if self._client is None:
-            raise ThalovantConnectionError("HiveMind HTTP transport is not connected.")
-        return self._client
-
-    def _require_live_client(self) -> Any:
-        client = self._require_client()
-        if not self.is_connected():
-            error = self.last_error()
-            detail = f": {error}" if error else ""
-            raise ThalovantConnectionError(f"HiveMind HTTP transport is not connected{detail}")
-        return client
-
-    def is_connected(self) -> bool:
-        client = self._client
-        if client is None or not self._transport_connected:
-            return False
-        try:
-            return bool(
-                client.connected.is_set()
-                and client.handshake_event.is_set()
-                and client.is_alive()
-            )
-        except Exception:
-            return False
-
-    def last_error(self) -> BaseException | None:
-        client = self._client
-        if client is not None:
-            error = getattr(client, "thalovant_last_error", None)
-            if isinstance(error, BaseException):
-                return error
-        return self._last_error
-
-    def healthcheck(self) -> ThalovantHealth:
-        client = self._client
-        connected = False
-        handshake_complete = False
-        transport_alive = False
-        if client is not None and self._transport_connected:
-            try:
-                connected = bool(client.connected.is_set())
-                handshake_complete = bool(client.handshake_event.is_set())
-                transport_alive = bool(client.is_alive())
-            except Exception as exc:
-                self._last_error = exc
-        error = self.last_error()
-        return ThalovantHealth(
-            connected=connected,
-            handshake_complete=handshake_complete,
-            transport_alive=transport_alive,
-            last_error=str(error) if error else None,
-        )
-
-    def _load_deps(self) -> "_HiveMindDeps":
-        if self._deps is not None:
-            return self._deps
-        try:
-            import requests
-            from hivemind_bus_client.http_client import HiveMindHTTPClient
-            from hivemind_bus_client.encryption import encrypt_as_json
-            from hivemind_bus_client.message import HiveMessage, HiveMessageType
-            from hivemind_bus_client.protocol import HiveMindSlaveProtocol
-            from hivemind_bus_client.util import serialize_message
-            from ovos_bus_client.message import Message
-            from ovos_bus_client.session import Session
-        except ImportError as exc:
-            raise ThalovantConnectionError(
-                "Install the SDK with HiveMind dependencies before connecting."
-            ) from exc
-
-        self._deps = _HiveMindDeps(
-            HiveMindHTTPClient=HiveMindHTTPClient,
-            encrypt_as_json=encrypt_as_json,
-            HiveMessage=HiveMessage,
-            HiveMessageType=HiveMessageType,
-            HiveMindSlaveProtocol=HiveMindSlaveProtocol,
-            Message=Message,
-            Session=Session,
-            serialize_message=serialize_message,
-            requests=requests,
-        )
-        return self._deps
-
-    def _build_http_client_class(self, base_class: Any) -> Any:
-        transport = self
-
-        class _ObservedHiveMindHTTPClient(base_class):  # type: ignore[misc, valid-type]
-            thalovant_last_error: BaseException | None = None
-
-            def run(inner_self: Any) -> None:
-                try:
-                    super().run()
-                except Exception as exc:
-                    inner_self.thalovant_last_error = exc
-                    transport._last_error = exc
-                    try:
-                        inner_self.connected.clear()
-                    except Exception:
-                        pass
-
-        return _ObservedHiveMindHTTPClient
-
-    def _raise_for_emit_response(self, response: Any) -> None:
-        status_code = getattr(response, "status_code", None)
-        try:
-            body = response.json()
-        except Exception:
-            body = {}
-
-        error = body.get("error") if isinstance(body, dict) else None
-        if error:
-            if "not connected" in str(error).lower():
-                exc = ThalovantConnectionError(f"HiveMind HTTP send failed: {error}")
-                self._last_error = exc
-                raise exc
-            raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {error}")
-
-        if getattr(response, "ok", False) is False:
-            detail = getattr(response, "text", "") or f"HTTP {status_code or 'error'}"
-            raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {detail}")
-
-    def _build_protocol(self, client: Any, deps: "_HiveMindDeps") -> Any:
-        crypto_key = _runtime_crypto_key(self.identity.crypto_key)
-
-        if not crypto_key:
-            return deps.HiveMindSlaveProtocol(
-                client,
-                shared_bus=client.share_bus,
-                site_id=self.identity.site_id or "unknown",
-                identity=client.identity,
-            )
-
-        class _ThalovantPresharedProtocol(deps.HiveMindSlaveProtocol):  # type: ignore[misc, valid-type]
-            def handle_handshake(inner_self: Any, message: Any) -> None:
-                payload = getattr(message, "payload", None)
-                if (
-                    isinstance(payload, dict)
-                    and "envelope" not in payload
-                    and payload.get("preshared_key")
-                    and not payload.get("handshake")
-                ):
-                    inner_self.binarize = bool(payload.get("binarize", False))
-                    session = deps.Session(inner_self.hm.session_id)
-                    session.site_id = inner_self.site_id
-                    inner_self.hm.emit(
-                        deps.HiveMessage(
-                            deps.HiveMessageType.HELLO,
-                            {
-                                "pubkey": inner_self.identity.public_key,
-                                "session": session.serialize(),
-                                "site_id": inner_self.site_id,
-                            },
-                        )
-                    )
-                    inner_self.hm.crypto_key = crypto_key
-                    inner_self.hm.handshake_event.set()
-                    return
-                super().handle_handshake(message)
-
-        return _ThalovantPresharedProtocol(
-            client,
-            shared_bus=client.share_bus,
-            site_id=self.identity.site_id or "unknown",
-            identity=client.identity,
-        )
-
-    def _shutdown_client(self, client: Any, *, transport_connected: bool) -> None:
-        deps = self._load_deps()
-        if transport_connected:
-            try:
-                deps.requests.post(
-                    f"{client.base_url}/disconnect",
-                    params={"authorization": client.auth},
-                    timeout=self.connect_timeout,
-                )
-            except deps.requests.RequestException:
-                pass
-        try:
-            client.connected.clear()
-            client.handshake_event.clear()
-        except Exception:
-            pass
-        try:
-            client.connected.set()
-            client.shutdown()
-        except Exception:
-            pass
-
-
-@dataclass(frozen=True)
-class _HiveMindDeps:
-    HiveMindHTTPClient: Any
-    encrypt_as_json: Any
-    HiveMessage: Any
-    HiveMessageType: Any
-    HiveMindSlaveProtocol: Any
-    Message: Any
-    Session: Any
-    serialize_message: Any
-    requests: Any
-
-
-def _message_data(message: Any) -> dict[str, Any]:
-    data = getattr(message, "data", None)
-    return data if isinstance(data, dict) else {}
-
-
-def _message_context(message: Any) -> dict[str, Any]:
-    context = getattr(message, "context", None)
-    return context if isinstance(context, dict) else {}
-
-
-def _message_name(message: Any) -> str | None:
-    name = getattr(message, "msg_type", None)
-    return str(name) if name is not None else None
-
-
-def _event_from_message(event_name: str, message: Any) -> ThalovantEvent:
-    return ThalovantEvent(
-        name=_message_name(message) or event_name,
-        data=_message_data(message),
-        context=_message_context(message),
-        raw=message,
-    )
-
-
-def _failure_reason(event: ThalovantEvent | None) -> str:
-    if event is None:
-        return "Hub reported that the utterance could not be handled."
-    reason = event.data.get("reason") or event.data.get("error") or event.data.get("code")
-    if isinstance(reason, str) and reason.strip():
-        return reason.strip()
-    return f"Hub reported {event.name}."
-
-
-def _runtime_crypto_key(raw_crypto_key: str | None) -> str | None:
-    if not isinstance(raw_crypto_key, str):
-        return None
-    normalized = raw_crypto_key.strip()
-    if not normalized:
-        return None
-    return normalized[:16]
-
-
-def _runtime_bus_context(
-    raw_context: dict[str, Any] | None,
-    *,
-    useragent: str,
-    session_id: str,
-    site_id: str | None,
-) -> dict[str, Any]:
-    context = dict(raw_context or {})
-    context.setdefault("source", useragent)
-    context.setdefault("platform", useragent)
-    context.setdefault("destination", "HiveMind")
-
-    raw_session = context.get("session")
-    session = dict(raw_session) if isinstance(raw_session, dict) else {}
-    session["session_id"] = session_id
-    session["site_id"] = site_id
-    context["session"] = session
-    return context

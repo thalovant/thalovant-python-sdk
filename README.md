@@ -1,12 +1,13 @@
 # Thalovant Python SDK
 
-The Thalovant Python SDK is a thin developer layer over HiveMind's HTTP/HTTPS
-data plane. It uses client identities provisioned by Thalovant, then connects
-directly to the hub listener through `hivemind-http-protocol`.
+The Thalovant Python SDK is the developer layer for direct HiveMind hub access.
+Thalovant provisions client identities and policy; this SDK connects directly to
+the hub listener over the HiveMind HTTP/HTTPS data plane through
+`hivemind-http-protocol`.
 
 ```text
 Thalovant API / dashboard -> provision identity and policy
-Python SDK                -> direct HiveMind HTTPS/HTTP data-plane connection
+Python SDK / CLI          -> direct HiveMind HTTPS/HTTP data-plane connection
 hivemind-listener         -> OVOS / skills / hub runtime
 ```
 
@@ -30,7 +31,7 @@ Download or copy the client identity created in Thalovant, then:
 from thalovant import ThalovantClient
 
 with ThalovantClient.from_identity_file("_identity.json") as client:
-    reply = client.ask("What time is it?")
+    reply = client.ask("Tell me a short clean joke.")
     print(reply.text)
 ```
 
@@ -43,12 +44,14 @@ from thalovant import AsyncThalovantClient
 
 async def main():
     async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
-        reply = await client.ask("Tell me a short clean joke.")
+        reply = await client.ask("What time is it?")
         print(reply.text)
 
 
 asyncio.run(main())
 ```
+
+## Identity
 
 The identity file uses the same fields already produced for HiveMind clients:
 
@@ -77,92 +80,139 @@ export THALOVANT_HUB_HTTP_PORT=443
 ```python
 from thalovant import ThalovantClient
 
-client = ThalovantClient.from_env()
-reply = client.ask("Tell me a joke")
+with ThalovantClient.from_env() as client:
+    print(client.ask("Tell me a joke").text)
 ```
 
-## Low-Level Events
+Keep identity files secret. They are client credentials, not public API keys.
+
+## Conversations
+
+Use a conversation when multiple messages should share a stable session and
+correlation context:
+
+```python
+from thalovant import ThalovantClient
+
+with ThalovantClient.from_identity_file("_identity.json") as client:
+    with client.conversation(lang="en-us") as convo:
+        first = convo.ask("Remember that my favorite color is blue.")
+        second = convo.ask("What color did I mention?")
+        print(second.text)
+```
+
+Conversation helpers add session and request metadata automatically. When the
+hub echoes that metadata, SDK listeners filter unrelated events from other
+sessions.
+
+## Agents
+
+Use `ThalovantAgent` for long-running synchronous workers:
+
+```python
+from thalovant import ThalovantAgent, EVENT_SPEAK
+
+agent = ThalovantAgent.from_identity_file("_identity.json")
+
+
+@agent.on(EVENT_SPEAK)
+def handle_speak(event):
+    print(event.text)
+
+
+agent.run_forever()
+```
+
+Async agents work the same way:
+
+```python
+import asyncio
+from thalovant import AsyncThalovantAgent, EVENT_SPEAK
+
+agent = AsyncThalovantAgent.from_identity_file("_identity.json")
+
+
+@agent.on(EVENT_SPEAK)
+async def handle_speak(event):
+    print(event.text)
+
+
+asyncio.run(agent.run_forever())
+```
+
+## CLI
+
+The package installs a `thalovant` command for smoke tests and operational
+debugging:
+
+```bash
+thalovant --identity _identity.json doctor
+thalovant --identity _identity.json health
+thalovant --identity _identity.json ask "Tell me a joke"
+thalovant --identity _identity.json listen speak --timeout 30 --max-events 3
+thalovant --identity _identity.json emit recognizer_loop:utterance \
+  --data '{"utterances":["hello"],"lang":"en-us"}'
+```
+
+Add `--json` to commands that return structured output.
+
+## Events
+
+For common flows, prefer helpers over raw event strings:
+
+```python
+from thalovant import EVENT_SPEAK, ThalovantClient
+
+with ThalovantClient.from_identity_file("_identity.json") as client:
+    for event in client.listen(EVENT_SPEAK, timeout=30, max_events=1):
+        print(event.text)
+```
 
 Use `emit` when you already know the OVOS/HiveMind event shape:
 
 ```python
-from thalovant import ThalovantClient
+from thalovant import EVENT_RECOGNIZER_LOOP_UTTERANCE, ThalovantClient
 
 with ThalovantClient.from_identity_file("_identity.json") as client:
     client.emit(
-        "recognizer_loop:utterance",
+        EVENT_RECOGNIZER_LOOP_UTTERANCE,
         {"utterances": ["turn on the lights"], "lang": "en-us"},
     )
 ```
 
-## Agent Events
+`ThalovantEvent` normalizes common fields:
 
-Long-running agents can subscribe to hub events and receive normalized
-`ThalovantEvent` objects:
+- `event.text`
+- `event.utterances`
+- `event.session_id`
+- `event.request_id`
+- `event.is_failure`
+- `event.is_policy_denied`
 
-```python
-from thalovant import ThalovantClient
+## Diagnostics
 
-
-def on_speak(event):
-    print(event.data.get("utterance", ""))
-
-
-with ThalovantClient.from_identity_file("_identity.json") as client:
-    with client.on("speak", on_speak):
-        client.emit(
-            "recognizer_loop:utterance",
-            {"utterances": ["tell me a joke"], "lang": "en-us"},
-        )
-        client.wait_for_event("ovos.utterance.handled", timeout=20)
-```
-
-For simple blocking workflows, `listen` yields events until a timeout or a limit:
+Use `doctor()` before debugging application code:
 
 ```python
 with ThalovantClient.from_identity_file("_identity.json") as client:
-    for event in client.listen("speak", timeout=30, max_events=3):
-        print(event.data.get("utterance", ""))
+    report = client.doctor()
+    print(report.format())
 ```
 
-Async agents can listen the same way:
+The report checks identity shape, endpoint configuration, hub connection,
+handshake completion, and the live HTTP polling thread.
 
-```python
-import asyncio
-from thalovant import AsyncThalovantClient
+## Documentation
 
-
-async def main():
-    async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
-        await client.emit(
-            "recognizer_loop:utterance",
-            {"utterances": ["tell me a joke"], "lang": "en-us"},
-        )
-        async for event in client.listen("speak", timeout=30, max_events=1):
-            print(event.data.get("utterance", ""))
-
-
-asyncio.run(main())
-```
-
-## Health And Recovery
-
-The SDK validates the HTTP/HTTPS transport, handshake, and polling thread state:
-
-```python
-with ThalovantClient.from_identity_file("_identity.json") as client:
-    health = client.healthcheck()
-    assert health.ok, health
-```
-
-`ThalovantClient` enables one reconnect attempt by default for sends and asks.
-If the HiveMind HTTP polling thread stops, SDK calls surface
-`ThalovantConnectionError` instead of silently timing out.
+- [Quickstart](docs/quickstart.md)
+- [Concepts](docs/concepts.md)
+- [CLI](docs/cli.md)
+- [API Reference](docs/api-reference.md)
 
 ## Notes
 
-- This SDK is the developer convenience layer. It does not proxy messages through
-  the Thalovant API.
+- This SDK is the developer convenience layer. It does not proxy messages
+  through the Thalovant API.
 - The Thalovant API remains the control plane for creating clients, rotating or
   revoking identity material, and managing ACL/policy.
 - The data plane is direct `hivemind-http-protocol` traffic from this SDK to the

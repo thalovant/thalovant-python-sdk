@@ -8,6 +8,8 @@ import pytest
 
 from thalovant import (
     AsyncThalovantClient,
+    EVENT_SPEAK,
+    ThalovantAgent,
     ThalovantClient,
     ThalovantConnectionError,
     ThalovantHealth,
@@ -126,13 +128,20 @@ def test_ask_emits_utterance_and_collects_speak():
     assert reply.text == "The answer"
     assert reply.utterances == ("The answer",)
     assert reply.handled is True
-    assert transport.emitted == [
-        (
-            "recognizer_loop:utterance",
-            {"utterances": ["what is up?"], "lang": "en-us"},
-            {"source": "test"},
-        )
-    ]
+    assert reply.ok is True
+    assert reply.request_id
+    assert len(transport.emitted) == 1
+    event_type, payload, context = transport.emitted[0]
+    assert event_type == "recognizer_loop:utterance"
+    assert payload == {"utterances": ["what is up?"], "lang": "en-us"}
+    assert context["source"] == "test"
+    assert context["request_id"] == reply.request_id
+    assert context["thalovant_request_id"] == reply.request_id
+    assert context["session"] == {
+        "site_id": "site",
+        "lang": "en-us",
+        "request_id": reply.request_id,
+    }
     assert transport.handlers["speak"] == []
     assert transport.handlers["ovos.utterance.handled"] == []
 
@@ -160,7 +169,21 @@ def test_on_receives_normalized_events_and_unsubscribes():
     assert events[0].name == "custom.event"
     assert events[0].data == {"value": 1}
     assert events[0].context == {"source": "hub"}
+    assert events[0].text == ""
     assert transport.handlers["custom.event"] == []
+
+
+def test_on_filters_by_session_when_event_context_is_available():
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+    events = []
+
+    subscription = client.on("custom.event", events.append, session_id="wanted")
+    transport.push("custom.event", {"value": 1}, {"session": {"session_id": "other"}})
+    transport.push("custom.event", {"value": 2}, {"session": {"session_id": "wanted"}})
+    subscription.close()
+
+    assert [event.data["value"] for event in events] == [2]
 
 
 def test_wait_for_event_blocks_until_predicate_matches():
@@ -201,6 +224,36 @@ def test_listen_yields_until_max_events():
     assert [event.data["value"] for event in events] == [1, 2]
 
 
+def test_send_utterance_adds_correlation_context():
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    client.send_utterance("hello there", session_id="session-1", request_id="request-1")
+
+    event_type, payload, context = transport.emitted[0]
+    assert event_type == "recognizer_loop:utterance"
+    assert payload == {"utterances": ["hello there"], "lang": "en-us"}
+    assert context["request_id"] == "request-1"
+    assert context["session"]["session_id"] == "session-1"
+    assert context["session"]["site_id"] == "site"
+
+
+def test_conversation_reuses_session_context():
+    transport = FakeTransport(answer="conversation hello")
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
+
+    with client.conversation(session_id="conversation-1", context={"source": "test"}) as convo:
+        reply = convo.ask("hello", request_id="request-1")
+
+    assert reply.text == "conversation hello"
+    assert reply.session_id == "conversation-1"
+    assert reply.request_id == "request-1"
+    _, _, context = transport.emitted[0]
+    assert context["source"] == "test"
+    assert context["session"]["session_id"] == "conversation-1"
+    assert context["session"]["request_id"] == "request-1"
+
+
 def test_healthcheck_returns_transport_state():
     transport = FakeTransport()
     client = ThalovantClient(identity(), transport=transport)
@@ -209,6 +262,26 @@ def test_healthcheck_returns_transport_state():
 
     assert health.ok
     assert health.connected
+
+
+def test_doctor_reports_identity_and_transport_checks():
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    report = client.doctor()
+
+    assert report.ok
+    assert report.identity == {
+        "site_id": "site",
+        "default_master": "http://hub.local",
+        "default_port": 5679,
+    }
+    assert [check.name for check in report.checks] == [
+        "identity",
+        "endpoint",
+        "connect",
+        "transport",
+    ]
 
 
 def test_emit_reconnects_once_after_transport_failure():
@@ -246,6 +319,17 @@ def test_runtime_bus_context_injects_non_default_session():
     }
 
 
+def test_runtime_bus_context_preserves_explicit_session():
+    context = _runtime_bus_context(
+        {"session": {"session_id": "conversation-1"}},
+        useragent="SDK",
+        session_id="runtime-session",
+        site_id="Office",
+    )
+
+    assert context["session"]["session_id"] == "conversation-1"
+
+
 def test_ask_times_out_without_handled_event():
     transport = FakeTransport(answer=None, handled=False)
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
@@ -267,6 +351,22 @@ def test_async_client_supports_ask():
         return reply.text
 
     assert asyncio.run(run()) == "async hello"
+
+
+def test_async_client_supports_conversation():
+    async def run() -> tuple[str, str | None]:
+        transport = FakeTransport(answer="async conversation")
+        client = AsyncThalovantClient(
+            identity(),
+            transport=transport,
+            reply_settle_seconds=0,
+        )
+        async with client.conversation(session_id="async-session") as convo:
+            reply = await convo.ask("hello")
+        await client.close()
+        return reply.text, reply.session_id
+
+    assert asyncio.run(run()) == ("async conversation", "async-session")
 
 
 def test_async_client_supports_event_handlers():
@@ -308,3 +408,25 @@ def test_async_client_supports_listen():
         return values
 
     assert asyncio.run(run()) == [1, 2]
+
+
+def test_agent_runs_registered_handler_until_stopped():
+    transport = FakeTransport()
+    agent = ThalovantAgent(identity(), transport=transport)
+    values = []
+
+    @agent.on_speak
+    def handle_speak(event):
+        values.append(event.text)
+        agent.stop()
+
+    thread = threading.Thread(target=lambda: agent.run_forever(poll_interval=0.01))
+    thread.start()
+    deadline = time.monotonic() + 1
+    while not transport.handlers.get(EVENT_SPEAK) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    transport.push(EVENT_SPEAK, {"utterance": "hello agent"})
+    thread.join(timeout=1)
+
+    assert values == ["hello agent"]
+    assert not thread.is_alive()
