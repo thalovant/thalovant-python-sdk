@@ -1,12 +1,12 @@
 # Thalovant Python SDK
 
-The Thalovant Python SDK is a thin developer layer over HiveMind's HTTP data plane.
-It uses client identities provisioned by Thalovant, then connects directly to the
-hub listener through `hivemind-http-protocol`.
+The Thalovant Python SDK is a thin developer layer over HiveMind's HTTP/HTTPS
+data plane. It uses client identities provisioned by Thalovant, then connects
+directly to the hub listener through `hivemind-http-protocol`.
 
 ```text
 Thalovant API / dashboard -> provision identity and policy
-Python SDK                -> direct HiveMind HTTP data-plane connection
+Python SDK                -> direct HiveMind HTTPS/HTTP data-plane connection
 hivemind-listener         -> OVOS / skills / hub runtime
 ```
 
@@ -58,8 +58,8 @@ The identity file uses the same fields already produced for HiveMind clients:
   "password": "client-password",
   "crypto_key": "optional-preshared-key",
   "site_id": "my-client-site",
-  "default_master": "http://hub.example.com",
-  "default_port": 5679
+  "default_master": "https://hub.example.com",
+  "default_port": 443
 }
 ```
 
@@ -70,8 +70,8 @@ export THALOVANT_ACCESS_KEY=...
 export THALOVANT_PASSWORD=...
 export THALOVANT_CRYPTO_KEY=...
 export THALOVANT_SITE_ID=...
-export THALOVANT_HUB_HTTP_HOST=http://hub.example.com
-export THALOVANT_HUB_HTTP_PORT=5679
+export THALOVANT_HUB_HTTP_HOST=https://hub.example.com
+export THALOVANT_HUB_HTTP_PORT=443
 ```
 
 ```python
@@ -128,20 +128,26 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 Async agents can listen the same way:
 
 ```python
+import asyncio
 from thalovant import AsyncThalovantClient
 
-async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
-    await client.emit(
-        "recognizer_loop:utterance",
-        {"utterances": ["tell me a joke"], "lang": "en-us"},
-    )
-    async for event in client.listen("speak", timeout=30, max_events=1):
-        print(event.data.get("utterance", ""))
+
+async def main():
+    async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
+        await client.emit(
+            "recognizer_loop:utterance",
+            {"utterances": ["tell me a joke"], "lang": "en-us"},
+        )
+        async for event in client.listen("speak", timeout=30, max_events=1):
+            print(event.data.get("utterance", ""))
+
+
+asyncio.run(main())
 ```
 
 ## Health And Recovery
 
-The SDK validates the HTTPS transport, handshake, and polling thread state:
+The SDK validates the HTTP/HTTPS transport, handshake, and polling thread state:
 
 ```python
 with ThalovantClient.from_identity_file("_identity.json") as client:
@@ -161,3 +167,14 @@ If the HiveMind HTTP polling thread stops, SDK calls surface
   revoking identity material, and managing ACL/policy.
 - The data plane is direct `hivemind-http-protocol` traffic from this SDK to the
   hub listener.
+
+## Publishing
+
+This repository is configured for PyPI trusted publishing through
+`.github/workflows/publish.yml`. Use these values in the PyPI publisher form:
+
+- PyPI Project Name: `thalovant`
+- Owner: `thalovant`
+- Repository name: `thalovant-python-sdk`
+- Workflow name: `publish.yml`
+- Environment name: `pypi`
