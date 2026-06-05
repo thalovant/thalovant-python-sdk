@@ -5,8 +5,15 @@ on:
     types: [published]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: read
+
+concurrency:
+  group: publish-pypi-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -37,7 +44,9 @@ jobs:
         run: python -m pytest -q
 
       - name: Build distributions
-        run: python -m build
+        run: |
+          rm -rf dist
+          python -m build
 
       - name: Check distribution metadata
         run: python -m twine check dist/*
