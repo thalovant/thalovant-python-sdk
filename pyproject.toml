@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "thalovant"
 version = "0.4.0"
-description = "Python SDK and CLI for direct Thalovant HiveMind HTTPS clients and agents"
+description = "Python SDK and CLI for direct Thalovant hub HTTPS clients and agents"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Thalovant" }]
 maintainers = [{ name = "Thalovant" }]
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["thalovant", "hivemind", "openvoiceos", "ovos", "sdk", "agent", "voice"]
+keywords = ["thalovant", "sdk", "agent", "voice", "assistant", "iot"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
@@ -37,7 +37,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://thalovant.com"
-Documentation = "https://thalovant.github.io/thalovant-python-sdk/"
+Documentation = "https://docs.thalovant.com/developers/sdks/python/"
 Repository = "https://github.com/thalovant/thalovant-python-sdk"
 Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 

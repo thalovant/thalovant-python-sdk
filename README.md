@@ -1,15 +1,16 @@
 # Thalovant Python SDK
 
-The Thalovant Python SDK is the developer layer for direct HiveMind hub access.
+The Thalovant Python SDK is the developer layer for direct Thalovant hub access.
 Thalovant provisions client identities and policy; this SDK connects directly to
-the hub listener over the HiveMind HTTP/HTTPS data plane through
-`hivemind-http-protocol`.
+the hub endpoint over the HTTPS data plane.
 
 ```text
 Thalovant API / dashboard -> provision identity and policy
-Python SDK / CLI          -> direct HiveMind HTTPS/HTTP data-plane connection
-hivemind-listener         -> OVOS / skills / hub runtime
+Python SDK / CLI          -> direct hub HTTPS data-plane connection
+Hub runtime               -> skills, events, and replies
 ```
+
+Full documentation: <https://docs.thalovant.com/developers/sdks/python/>
 
 ## Install
 
@@ -53,7 +54,7 @@ asyncio.run(main())
 
 ## Identity
 
-The identity file uses the same fields already produced for HiveMind clients:
+The identity file uses the same fields produced for Thalovant hub clients:
 
 ```json
 {
@@ -63,7 +64,7 @@ The identity file uses the same fields already produced for HiveMind clients:
   "site_id": "my-client-site",
   "default_master": "https://hub.example.com",
   "default_port": 443,
-  "default_path": "/hivemind/public"
+  "default_path": "/public"
 }
 ```
 
@@ -76,7 +77,7 @@ export THALOVANT_CRYPTO_KEY=...
 export THALOVANT_SITE_ID=...
 export THALOVANT_HUB_HTTP_HOST=https://hub.example.com
 export THALOVANT_HUB_HTTP_PORT=443
-export THALOVANT_HUB_HTTP_PATH=/hivemind/public
+export THALOVANT_HUB_HTTP_PATH=/public
 ```
 
 ```python
@@ -107,22 +108,21 @@ Conversation helpers add session and request metadata automatically. When the
 hub echoes that metadata, SDK listeners filter unrelated events from other
 sessions.
 
-## Enterprise Client Context
+## Client Context
 
 Use `build_client_context` when a web, mobile, kiosk, or service client needs
-to pass user, auth, device, channel, and platform metadata to skills:
+to pass user, device, channel, and platform metadata to skills:
 
 ```python
 from thalovant import ThalovantClient, build_client_context
 
 context = build_client_context(
-    user_id="operator-42",
+    user_id="user-42",
     user_name="Ada",
-    auth_token="access-token",
     auth_provider="oidc",
-    roles=["operator"],
-    platform="mobile",
-    source="line-a-tablet-3",
+    roles=["member"],
+    platform="kiosk",
+    source="checkout-kiosk",
     channel="chat",
 )
 
@@ -227,7 +227,7 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
         print(event.text)
 ```
 
-Use `emit` when you already know the OVOS/HiveMind event shape:
+Use `emit` when you already know the hub event shape:
 
 ```python
 from thalovant import EVENT_RECOGNIZER_LOOP_UTTERANCE, ThalovantClient
@@ -263,9 +263,12 @@ handshake completion, and the live HTTP polling thread.
 
 ## Documentation
 
-The documentation website is built with MkDocs Material:
+The canonical public documentation lives on the Thalovant docs site:
 
-- Website: <https://thalovant.github.io/thalovant-python-sdk/>
+- Website: <https://docs.thalovant.com/developers/sdks/python/>
+
+This repository also keeps generated API reference material for maintainers:
+
 - Local preview: `pip install -e ".[docs]" && mkdocs serve`
 - Build check: `mkdocs build --strict`
 
@@ -275,8 +278,8 @@ The documentation website is built with MkDocs Material:
   through the Thalovant API.
 - The Thalovant API remains the control plane for creating clients, rotating or
   revoking identity material, and managing ACL/policy.
-- The data plane is direct `hivemind-http-protocol` traffic from this SDK to the
-  hub listener.
+- The data plane is direct hub protocol traffic from this SDK to the hub
+  listener.
 
 ## Publishing
 

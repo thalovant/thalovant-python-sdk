@@ -1,7 +1,13 @@
 # Deployment
 
-The documentation website is built with MkDocs Material and published as a
-static GitHub Pages site.
+The canonical public docs live at:
+
+```text
+https://docs.thalovant.com/developers/sdks/python/
+```
+
+This MkDocs site is generated API reference material for maintainers and release
+checks.
 
 ## Local Preview
 
@@ -37,10 +43,10 @@ the workflow:
 
 In GitHub repository settings, set Pages source to **GitHub Actions**.
 
-The current GitHub Pages URL in `mkdocs.yml` is:
+The current public docs URL in `mkdocs.yml` is:
 
 ```text
-https://thalovant.github.io/thalovant-python-sdk/
+https://docs.thalovant.com/developers/sdks/python/
 ```
 
-If a custom docs domain is added later, update `site_url` in `mkdocs.yml`.
+If the public docs route changes later, update `site_url` in `mkdocs.yml`.
