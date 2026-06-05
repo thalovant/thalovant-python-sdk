@@ -270,6 +270,10 @@ class HiveMindHTTPTransport:
         class _ObservedHiveMindHTTPClient(base_class):  # type: ignore[misc, valid-type]
             thalovant_last_error: BaseException | None = None
 
+            @property
+            def base_url(inner_self: Any) -> str:
+                return transport.identity.endpoint_base()
+
             def run(inner_self: Any) -> None:
                 try:
                     super().run()

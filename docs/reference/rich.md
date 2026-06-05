@@ -1,0 +1,3 @@
+# Rich Output
+
+::: thalovant.rich

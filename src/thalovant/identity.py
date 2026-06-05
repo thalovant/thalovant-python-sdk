@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from .errors import ThalovantIdentityError
 
@@ -23,6 +24,7 @@ class ThalovantIdentity:
     default_master: str
     site_id: str
     default_port: int = 5679
+    default_path: str = ""
     crypto_key: str | None = None
 
     @classmethod
@@ -56,6 +58,8 @@ class ThalovantIdentity:
                 or env.get(f"{prefix}DEFAULT_MASTER"),
                 "default_port": env.get(f"{prefix}HUB_HTTP_PORT")
                 or env.get(f"{prefix}DEFAULT_PORT"),
+                "default_path": env.get(f"{prefix}HUB_HTTP_PATH")
+                or env.get(f"{prefix}DEFAULT_PATH"),
             }
         )
 
@@ -72,6 +76,11 @@ class ThalovantIdentity:
         )
         site_id = _required_string(values, "site_id", aliases=("siteId", "site"))
         default_port = _int_value(values, "default_port", aliases=("port", "hub_http_port"))
+        default_path = _optional_string(
+            values,
+            "default_path",
+            aliases=("defaultPath", "hub_http_path", "path", "uri_path"),
+        )
         crypto_key = _optional_string(values, "crypto_key", aliases=("cryptoKey",))
 
         return cls(
@@ -79,9 +88,27 @@ class ThalovantIdentity:
             password=password,
             default_master=default_master.rstrip("/"),
             default_port=default_port or 5679,
+            default_path=_normalize_path(default_path),
             site_id=site_id,
             crypto_key=crypto_key,
         )
+
+    def endpoint_base(self) -> str:
+        """Return the HTTP endpoint base URL including port and optional path."""
+
+        master = self.default_master.replace("wss://", "https://", 1).replace("ws://", "http://", 1)
+        parsed = urlsplit(master)
+        if parsed.scheme and parsed.netloc:
+            netloc = parsed.netloc
+            if ":" not in netloc.rsplit("@", 1)[-1]:
+                netloc = f"{netloc}:{self.default_port}"
+            path = "/".join(
+                part.strip("/")
+                for part in (parsed.path, self.default_path)
+                if part and part.strip("/")
+            )
+            return urlunsplit((parsed.scheme, netloc, f"/{path}" if path else "", "", ""))
+        return f"{master.rstrip('/')}:{self.default_port}{self.default_path}"
 
     def as_dict(self, *, include_secrets: bool = False) -> dict[str, Any]:
         """Return a serializable identity summary."""
@@ -90,6 +117,7 @@ class ThalovantIdentity:
             "site_id": self.site_id,
             "default_master": self.default_master,
             "default_port": self.default_port,
+            "default_path": self.default_path,
         }
         if include_secrets:
             data.update(
@@ -139,3 +167,10 @@ def _int_value(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = (
     except (TypeError, ValueError) as exc:
         accepted = ", ".join((key, *aliases))
         raise ThalovantIdentityError(f"Identity field must be an integer: {accepted}") from exc
+
+
+def _normalize_path(path: str | None) -> str:
+    if not path:
+        return ""
+    normalized = "/" + path.strip("/")
+    return "" if normalized == "/" else normalized

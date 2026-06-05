@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import json
 import threading
 import time
 from typing import Any, Callable
@@ -15,6 +16,7 @@ from thalovant import (
     ThalovantHealth,
     ThalovantIdentity,
     ThalovantTimeoutError,
+    build_client_context,
 )
 from thalovant.client import _runtime_bus_context, _runtime_crypto_key
 
@@ -238,6 +240,58 @@ def test_send_utterance_adds_correlation_context():
     assert context["session"]["site_id"] == "site"
 
 
+def test_send_action_preserves_payload_metadata():
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    client.send_action('/choose{"id":"42"}', title="Choose item", session_id="session-1")
+
+    event_type, payload, context = transport.emitted[0]
+    assert event_type == "recognizer_loop:utterance"
+    assert payload["utterances"] == ['/choose{"id":"42"}']
+    assert context["input"] == {
+        "kind": "action",
+        "title": "Choose item",
+        "payload": '/choose{"id":"42"}',
+    }
+    assert context["session"]["session_id"] == "session-1"
+
+
+def test_send_code_marks_exact_machine_input():
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    client.send_code("SN-001-XYZ", kind="qr", label="serial", request_id="request-1")
+
+    _, payload, context = transport.emitted[0]
+    expected = {"kind": "qr", "label": "serial", "value": "SN-001-XYZ", "exact": True}
+    assert payload["utterances"] == ["SN-001-XYZ"]
+    assert payload["input"] == expected
+    assert context["input"] == expected
+    assert context["request_id"] == "request-1"
+
+
+def test_build_client_context_is_provider_neutral():
+    context = build_client_context(
+        user_id="u-1",
+        user_name="Ada",
+        auth_token="token",
+        auth_provider="oidc",
+        roles=["operator"],
+        platform="mobile",
+        source="device-1",
+        destination="hive_mind",
+        channel="chat",
+        device_id="phone-1",
+        metadata={"shift": "night"},
+    )
+
+    assert context["user"] == {"id": "u-1", "name": "Ada", "roles": ["operator"]}
+    assert context["auth"] == {"token": "token", "provider": "oidc"}
+    assert context["device"] == {"id": "phone-1", "platform": "mobile"}
+    assert context["metadata"] == {"shift": "night"}
+
+
 def test_conversation_reuses_session_context():
     transport = FakeTransport(answer="conversation hello")
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
@@ -275,6 +329,7 @@ def test_doctor_reports_identity_and_transport_checks():
         "site_id": "site",
         "default_master": "http://hub.local",
         "default_port": 5679,
+        "default_path": "",
     }
     assert [check.name for check in report.checks] == [
         "identity",
@@ -367,6 +422,42 @@ def test_async_client_supports_conversation():
         return reply.text, reply.session_id
 
     assert asyncio.run(run()) == ("async conversation", "async-session")
+
+
+def test_rich_reply_display_items_include_text_table_image_and_choices():
+    transport = FakeTransport(answer=None)
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
+
+    def emit_event(event_type, data, context):
+        transport.emitted.append((event_type, data, context))
+        rich = {
+            "table": '[{"name":"part","status":"ok"}]',
+            "attachment": {"type": "image", "payload": {"src": "https://example.com/image.png"}},
+            "quick_replies": [{"title": "Continue", "payload": "/continue"}],
+        }
+        for handler in transport.handlers.get("speak", []):
+            handler(
+                FakeMessage(
+                    {
+                        "utterance": "<speak>Hello</speak>",
+                        "rich_media_data": json.dumps(rich),
+                    },
+                    context=context,
+                    msg_type="speak",
+                )
+            )
+        for handler in transport.handlers.get("ovos.utterance.handled", []):
+            handler(FakeMessage({}, context=context, msg_type="ovos.utterance.handled"))
+
+    transport.emit_event = emit_event
+    reply = client.ask("show rich output")
+
+    assert reply.display_text == "Hello"
+    items = reply.display_items()
+    assert [item.kind for item in items] == ["text", "table", "image", "choices"]
+    assert items[0].text == "Hello"
+    assert items[2].url == "https://example.com/image.png"
+    assert items[3].data[0]["payload"] == "/continue"
 
 
 def test_async_client_supports_event_handlers():

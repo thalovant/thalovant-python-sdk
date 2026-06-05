@@ -75,6 +75,44 @@ class ThalovantConversation:
             request_id=request_id,
         )
 
+    def send_action(
+        self,
+        payload: str,
+        *,
+        title: str | None = None,
+        lang: str | None = None,
+        context: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return self.client.send_action(
+            payload,
+            title=title,
+            lang=lang or self.lang,
+            context=self._merged_context(context),
+            session_id=self.session_id,
+            request_id=request_id,
+        )
+
+    def send_code(
+        self,
+        value: str,
+        *,
+        kind: str = "code",
+        label: str | None = None,
+        lang: str | None = None,
+        context: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return self.client.send_code(
+            value,
+            kind=kind,
+            label=label,
+            lang=lang or self.lang,
+            context=self._merged_context(context),
+            session_id=self.session_id,
+            request_id=request_id,
+        )
+
     def emit(
         self,
         event_type: str,
@@ -193,6 +231,44 @@ class AsyncThalovantConversation:
     ) -> Any:
         return await self.client.send_utterance(
             text,
+            lang=lang or self.lang,
+            context=self._merged_context(context),
+            session_id=self.session_id,
+            request_id=request_id,
+        )
+
+    async def send_action(
+        self,
+        payload: str,
+        *,
+        title: str | None = None,
+        lang: str | None = None,
+        context: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return await self.client.send_action(
+            payload,
+            title=title,
+            lang=lang or self.lang,
+            context=self._merged_context(context),
+            session_id=self.session_id,
+            request_id=request_id,
+        )
+
+    async def send_code(
+        self,
+        value: str,
+        *,
+        kind: str = "code",
+        label: str | None = None,
+        lang: str | None = None,
+        context: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return await self.client.send_code(
+            value,
+            kind=kind,
+            label=label,
             lang=lang or self.lang,
             context=self._merged_context(context),
             session_id=self.session_id,

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from uuid import uuid4
 
+from .rich import ThalovantDisplayItem, display_items_from_event_data, rich_media_from_data, strip_ssml
+
 
 EVENT_RECOGNIZER_LOOP_UTTERANCE = "recognizer_loop:utterance"
 EVENT_SPEAK = "speak"
@@ -36,6 +38,12 @@ class ThalovantEvent:
             return utterance
         utterances = self.utterances
         return utterances[0] if utterances else ""
+
+    @property
+    def display_text(self) -> str:
+        """Text suitable for visual display with simple SSML/XML tags removed."""
+
+        return strip_ssml(self.text)
 
     @property
     def utterances(self) -> tuple[str, ...]:
@@ -77,6 +85,21 @@ class ThalovantEvent:
     def is_failure(self) -> bool:
         return self.name in FAILURE_EVENTS
 
+    @property
+    def rich_media(self) -> dict[str, Any]:
+        """Return normalized rich media data from the event payload."""
+
+        return rich_media_from_data(self.data)
+
+    def display_items(self, *, max_text_chars: int | None = None) -> tuple[ThalovantDisplayItem, ...]:
+        """Return UI-friendly text/media/table/choice items for this event."""
+
+        return display_items_from_event_data(
+            self.data,
+            event_name=self.name,
+            max_text_chars=max_text_chars,
+        )
+
     def matches_context(
         self,
         context: dict[str, Any] | None = None,
@@ -103,8 +126,10 @@ class ThalovantEvent:
             "data": self.data,
             "context": self.context,
             "text": self.text,
+            "display_text": self.display_text,
             "session_id": self.session_id,
             "request_id": self.request_id,
+            "display_items": [item.as_dict() for item in self.display_items()],
         }
 
 

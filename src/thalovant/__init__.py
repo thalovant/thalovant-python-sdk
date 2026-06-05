@@ -2,6 +2,7 @@
 
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
+from .context import build_client_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
     ThalovantConnectionError,
@@ -27,9 +28,10 @@ from .models import (
     ThalovantHealth,
     ThalovantReply,
 )
+from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -42,6 +44,7 @@ __all__ = [
     "EVENT_UTTERANCE_HANDLED",
     "EventHandler",
     "EventPredicate",
+    "ThalovantDisplayItem",
     "ThalovantAgent",
     "ThalovantClient",
     "ThalovantConnectionError",
@@ -57,4 +60,6 @@ __all__ = [
     "ThalovantRuntimeError",
     "ThalovantSubscription",
     "ThalovantTimeoutError",
+    "build_client_context",
+    "strip_ssml",
 ]

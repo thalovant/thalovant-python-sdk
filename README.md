@@ -62,7 +62,8 @@ The identity file uses the same fields already produced for HiveMind clients:
   "crypto_key": "optional-preshared-key",
   "site_id": "my-client-site",
   "default_master": "https://hub.example.com",
-  "default_port": 443
+  "default_port": 443,
+  "default_path": "/hivemind/public"
 }
 ```
 
@@ -75,6 +76,7 @@ export THALOVANT_CRYPTO_KEY=...
 export THALOVANT_SITE_ID=...
 export THALOVANT_HUB_HTTP_HOST=https://hub.example.com
 export THALOVANT_HUB_HTTP_PORT=443
+export THALOVANT_HUB_HTTP_PATH=/hivemind/public
 ```
 
 ```python
@@ -104,6 +106,63 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 Conversation helpers add session and request metadata automatically. When the
 hub echoes that metadata, SDK listeners filter unrelated events from other
 sessions.
+
+## Enterprise Client Context
+
+Use `build_client_context` when a web, mobile, kiosk, or service client needs
+to pass user, auth, device, channel, and platform metadata to skills:
+
+```python
+from thalovant import ThalovantClient, build_client_context
+
+context = build_client_context(
+    user_id="operator-42",
+    user_name="Ada",
+    auth_token="access-token",
+    auth_provider="oidc",
+    roles=["operator"],
+    platform="mobile",
+    source="line-a-tablet-3",
+    channel="chat",
+)
+
+with ThalovantClient.from_identity_file("_identity.json") as client:
+    reply = client.ask("Show the next instruction.", context=context)
+```
+
+Provider-specific fields can still be passed through `context` or `metadata`.
+The SDK keeps the public helper generic.
+
+## Actions And Exact Inputs
+
+Use `send_action` for button/quick-reply payloads, and `send_code` for exact
+values such as QR codes, serial numbers, asset IDs, or scanned labels:
+
+```python
+with client.conversation(session_id="work-session") as convo:
+    convo.send_action('/choose{"id":"42"}', title="Choose item")
+    convo.send_code("SN-001-XYZ", kind="qr", label="serial")
+```
+
+Both helpers still emit normal `recognizer_loop:utterance` events, but add
+generic `input` metadata so downstream skills can distinguish typed/scanned
+values from speech transcription.
+
+## Rich Responses
+
+Assistant responses can include text, choices, images, attachments, and tables.
+Use `reply.display_items()` or `event.display_items()` to render a UI without
+hand-parsing common rich media payloads:
+
+```python
+reply = client.ask("Show matching parts.")
+
+for item in reply.display_items(max_text_chars=600):
+    if item.kind == "text":
+        print(item.text)
+    elif item.kind == "choices":
+        print([choice["title"] for choice in item.data])
+```
 
 ## Agents
 

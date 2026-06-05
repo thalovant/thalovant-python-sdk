@@ -23,6 +23,8 @@ Common methods:
 - `doctor() -> ThalovantDoctorReport`
 - `ask(text, timeout=12.0, lang="en-us", context=None, session_id=None, request_id=None) -> ThalovantReply`
 - `send_utterance(text, lang="en-us", context=None, session_id=None, request_id=None)`
+- `send_action(payload, title=None, lang="en-us", context=None, session_id=None, request_id=None)`
+- `send_code(value, kind="code", label=None, lang="en-us", context=None, session_id=None, request_id=None)`
 - `conversation(session_id=None, lang="en-us", context=None) -> ThalovantConversation`
 - `on(event_name, handler, context=None, session_id=None, request_id=None, predicate=None) -> ThalovantSubscription`
 - `wait_for_event(event_name, timeout=12.0, predicate=None, context=None, session_id=None, request_id=None) -> ThalovantEvent`
@@ -44,6 +46,8 @@ Methods:
 
 - `ask(...)`
 - `send_utterance(...)`
+- `send_action(...)`
+- `send_code(...)`
 - `emit(...)`
 - `on(...)`
 - `wait_for_event(...)`
@@ -99,6 +103,7 @@ Fields:
 Helpers:
 
 - `text`
+- `display_text`
 - `utterances`
 - `session_id`
 - `site_id`
@@ -108,12 +113,15 @@ Helpers:
 - `is_policy_denied`
 - `matches_context(...)`
 - `as_dict()`
+- `rich_media`
+- `display_items(max_text_chars=None)`
 
 ### `ThalovantReply`
 
 Fields and helpers:
 
 - `text`
+- `display_text`
 - `utterances`
 - `handled`
 - `ok`
@@ -122,6 +130,27 @@ Fields and helpers:
 - `events`
 - `failure_event`
 - `as_dict()`
+- `display_items(max_text_chars=None)`
+
+### `ThalovantDisplayItem`
+
+UI-friendly output item:
+
+- `kind`
+- `text`
+- `data`
+- `title`
+- `payload`
+- `url`
+- `silent`
+- `as_dict()`
+
+## Context Helpers
+
+- `build_client_context(...)`
+
+Builds generic user/auth/device/channel/platform metadata for web, mobile,
+kiosk, service, and enterprise clients.
 
 ### `ThalovantHealth`
 

@@ -29,6 +29,7 @@ from .events import (
     _event_from_message,
     _event_matches_context,
     _failure_reason,
+    _merge_context,
     _new_request_id,
     _runtime_bus_context,
     _runtime_crypto_key,
@@ -46,7 +47,7 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindHTTPTransport, Transport
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.3.0"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.0"
 
 
 class ThalovantClient:
@@ -319,6 +320,64 @@ class ThalovantClient:
             request_context,
         )
 
+    def send_action(
+        self,
+        payload: str,
+        *,
+        title: str | None = None,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        """Emit a selected action or quick-reply payload as an utterance."""
+
+        prompt = payload.strip()
+        if not prompt:
+            raise ValueError("send_action() requires a non-empty payload.")
+        action_context = _merge_context(
+            context,
+            {"input": {"kind": "action", "title": title, "payload": prompt}},
+        )
+        return self.send_utterance(
+            prompt,
+            lang=lang,
+            context=action_context,
+            session_id=session_id,
+            request_id=request_id,
+        )
+
+    def send_code(
+        self,
+        value: str,
+        *,
+        kind: str = "code",
+        label: str | None = None,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        """Emit an exact scanned/typed code value without speech transcription loss."""
+
+        code = value.strip()
+        if not code:
+            raise ValueError("send_code() requires a non-empty value.")
+        request_id = request_id or _new_request_id()
+        request_context = _context_with_correlation(
+            _merge_context(
+                context,
+                {"input": {"kind": kind, "label": label, "value": code, "exact": True}},
+            ),
+            session_id=session_id,
+            site_id=self.identity.site_id,
+            lang=lang,
+            request_id=request_id,
+        )
+        data = _utterance_payload(code, lang)
+        data["input"] = {"kind": kind, "label": label, "value": code, "exact": True}
+        return self.emit(EVENT_RECOGNIZER_LOOP_UTTERANCE, data, request_context)
+
     def ask(
         self,
         text: str,
@@ -500,7 +559,7 @@ class ThalovantClient:
             raise ValueError("default_master must include a host")
         if self.identity.default_port <= 0:
             raise ValueError("default_port must be positive")
-        return f"{self.identity.default_master}:{self.identity.default_port}"
+        return self.identity.endpoint_base()
 
     def _doctor_connect(self) -> str:
         self.connect()
@@ -663,6 +722,48 @@ class AsyncThalovantClient:
         return await asyncio.to_thread(
             self._client.send_utterance,
             text,
+            lang=lang,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+        )
+
+    async def send_action(
+        self,
+        payload: str,
+        *,
+        title: str | None = None,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return await asyncio.to_thread(
+            self._client.send_action,
+            payload,
+            title=title,
+            lang=lang,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+        )
+
+    async def send_code(
+        self,
+        value: str,
+        *,
+        kind: str = "code",
+        label: str | None = None,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        return await asyncio.to_thread(
+            self._client.send_code,
+            value,
+            kind=kind,
+            label=label,
             lang=lang,
             context=context,
             session_id=session_id,

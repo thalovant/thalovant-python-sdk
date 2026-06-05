@@ -50,6 +50,22 @@ def test_loads_identity_aliases():
     assert identity.default_port == 5680
 
 
+def test_identity_supports_reverse_proxy_path():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "key": "key",
+            "password": "password",
+            "site": "site",
+            "host": "wss://hub.example.com/base/",
+            "port": 443,
+            "path": "/hivemind/public",
+        }
+    )
+
+    assert identity.default_path == "/hivemind/public"
+    assert identity.endpoint_base() == "https://hub.example.com:443/base/hivemind/public"
+
+
 def test_rejects_missing_required_field():
     with pytest.raises(ThalovantIdentityError, match="access_key"):
         ThalovantIdentity.from_mapping(

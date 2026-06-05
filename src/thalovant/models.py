@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .events import ThalovantEvent
+from .rich import ThalovantDisplayItem, strip_ssml
 
 
 @dataclass(frozen=True)
@@ -48,14 +49,32 @@ class ThalovantReply:
     def ok(self) -> bool:
         return self.handled and self.failure_event is None
 
+    @property
+    def display_text(self) -> str:
+        """Reply text suitable for visual display."""
+
+        return strip_ssml(self.text)
+
+    def display_items(self, *, max_text_chars: int | None = None) -> tuple[ThalovantDisplayItem, ...]:
+        """Aggregate UI-friendly items from the reply's events."""
+
+        items: list[ThalovantDisplayItem] = []
+        for event in self.events:
+            items.extend(event.display_items(max_text_chars=max_text_chars))
+        if not items and self.text:
+            items.append(ThalovantDisplayItem(kind="text", text=self.display_text))
+        return tuple(items)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "text": self.text,
+            "display_text": self.display_text,
             "utterances": list(self.utterances),
             "handled": self.handled,
             "ok": self.ok,
             "session_id": self.session_id,
             "request_id": self.request_id,
+            "display_items": [item.as_dict() for item in self.display_items()],
             "failure_event": self.failure_event.as_dict() if self.failure_event else None,
             "events": [event.as_dict() for event in self.events],
         }
