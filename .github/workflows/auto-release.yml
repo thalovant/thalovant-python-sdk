@@ -9,6 +9,7 @@ env:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: auto-release-python-${{ github.ref }}
@@ -18,6 +19,11 @@ jobs:
   release:
     name: Release unpublished version
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/thalovant
+    env:
+      PYPI_API_TOKEN_FROM_SECRET: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,6 +75,72 @@ jobs:
       - name: Check distribution metadata
         if: steps.tag.outputs.exists == 'false'
         run: python -m twine check dist/*
+
+      - name: Check whether version is already on PyPI
+        if: steps.tag.outputs.exists == 'false'
+        id: registry
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["PACKAGE_VERSION"]
+          url = f"https://pypi.org/pypi/thalovant/{version}/json"
+          try:
+              with urllib.request.urlopen(url) as response:
+                  exists = response.status == 200
+          except urllib.error.HTTPError as error:
+              if error.code == 404:
+                  exists = False
+              else:
+                  raise
+
+          print(f"exists={str(exists).lower()}")
+          PY
+
+      - name: Publish skipped
+        if: steps.tag.outputs.exists == 'false' && steps.registry.outputs.exists == 'true'
+        run: echo "thalovant ${{ steps.version.outputs.version }} is already published on PyPI."
+
+      - name: Publish to PyPI with API token
+        if: steps.tag.outputs.exists == 'false' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish to PyPI with trusted publishing
+        if: steps.tag.outputs.exists == 'false' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET == ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Verify PyPI version
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["PACKAGE_VERSION"]
+          url = f"https://pypi.org/pypi/thalovant/{version}/json"
+          for attempt in range(1, 13):
+              try:
+                  with urllib.request.urlopen(url) as response:
+                      if response.status == 200:
+                          print(f"Verified thalovant {version} on PyPI.")
+                          raise SystemExit(0)
+              except urllib.error.HTTPError as error:
+                  if error.code != 404:
+                      raise
+              time.sleep(10)
+
+          raise SystemExit(f"thalovant {version} was not visible on PyPI after waiting.")
+          PY
 
       - name: Create GitHub release
         if: steps.tag.outputs.exists == 'false'
