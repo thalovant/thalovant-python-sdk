@@ -204,10 +204,11 @@ handshake completion, and the live HTTP polling thread.
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md)
-- [Concepts](docs/concepts.md)
-- [CLI](docs/cli.md)
-- [API Reference](docs/api-reference.md)
+The documentation website is built with MkDocs Material:
+
+- Website: <https://thalovant.github.io/thalovant-python-sdk/>
+- Local preview: `pip install -e ".[docs]" && mkdocs serve`
+- Build check: `mkdocs build --strict`
 
 ## Notes
 

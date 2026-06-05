@@ -1,7 +1,7 @@
 # API Reference
 
-This is a concise reference for the public SDK surface. See the README and
-quickstart for runnable examples.
+This is a concise reference for the public SDK surface. For generated API docs,
+open the reference pages under **Generated Reference** in the navigation.
 
 ## Clients
 

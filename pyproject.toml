@@ -37,7 +37,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://thalovant.com"
-Documentation = "https://github.com/thalovant/thalovant-python-sdk#readme"
+Documentation = "https://thalovant.github.io/thalovant-python-sdk/"
 Repository = "https://github.com/thalovant/thalovant-python-sdk"
 Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 
@@ -50,12 +50,17 @@ dev = [
     "pytest>=8.0",
     "twine>=6.0",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.25",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/thalovant"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "LICENSE", "README.md", "pyproject.toml"]
+include = ["src", "tests", "docs", "LICENSE", "README.md", "mkdocs.yml", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
