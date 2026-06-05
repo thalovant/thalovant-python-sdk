@@ -108,11 +108,11 @@ def main() -> int:
 
         base_version = version_at(package_kind, base_sha)
         if base_version == version:
-            print("Release-relevant files changed without a version bump:")
+            print("Release-relevant files changed; auto-release will bump the patch version after merge:")
             for file_path in relevant:
                 print(f"  - {file_path}")
-            print(f"Current version is still {version}. Bump {version_path(package_kind)}.")
-            return 1
+            print(f"Current version is {version}.")
+            return 0
 
         print(f"Release-relevant changes include a version bump: {base_version} -> {version}.")
         return 0
@@ -133,11 +133,10 @@ def main() -> int:
             print(f"{version_path(package_kind)} establishes the existing {current_tag} baseline.")
             return 0
 
-        print(f"Release-relevant files changed since {latest_tag}, but {current_tag} already exists:")
+        print(f"Release-relevant files changed since {latest_tag}; auto-release will bump past {current_tag}:")
         for file_path in relevant:
             print(f"  - {file_path}")
-        print(f"Bump {version_path(package_kind)} so auto-release can publish a new version.")
-        return 1
+        return 0
 
     print(f"Release-relevant changes will be published as {current_tag}.")
     return 0

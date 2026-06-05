@@ -34,53 +34,125 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Read package version
-        id: version
+      - name: Plan automatic release
+        id: plan
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
           import tomllib
-          with open("pyproject.toml", "rb") as pyproject:
-              version = tomllib.load(pyproject)["project"]["version"]
-          print(f"version={version}")
-          print(f"tag=v{version}")
+
+          relevant_paths = ("src", "pyproject.toml", "README.md", "LICENSE")
+
+          def git(*args: str, check: bool = True) -> str:
+              result = subprocess.run(
+                  ["git", *args],
+                  check=check,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+              )
+              return result.stdout.strip()
+
+          def tag_exists(tag: str) -> bool:
+              return subprocess.run(
+                  ["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"],
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+              ).returncode == 0
+
+          def version() -> str:
+              with open("pyproject.toml", "rb") as pyproject:
+                  return tomllib.load(pyproject)["project"]["version"]
+
+          def changed_since_latest_tag() -> list[str]:
+              latest = subprocess.run(
+                  ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              if latest.returncode != 0:
+                  return ["<initial-release>"]
+              return [
+                  line
+                  for line in git("diff", "--name-only", f"{latest.stdout.strip()}..HEAD").splitlines()
+                  if line
+              ]
+
+          def is_relevant(path: str) -> bool:
+              return any(path == prefix or path.startswith(f"{prefix}/") for prefix in relevant_paths)
+
+          def bump_patch(current: str) -> str:
+              match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", current)
+              if not match:
+                  raise SystemExit(f"Cannot auto-bump non-standard version: {current}")
+              major, minor, patch = (int(part) for part in match.groups())
+              return f"{major}.{minor}.{patch + 1}"
+
+          def replace(path: str, old: str, new: str) -> None:
+              file_path = pathlib.Path(path)
+              file_path.write_text(file_path.read_text().replace(old, new))
+
+          changed = changed_since_latest_tag()
+          if changed != ["<initial-release>"] and not any(is_relevant(path) for path in changed):
+              current = version()
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write("release_needed=false\n")
+                  output.write(f"version={current}\n")
+                  output.write(f"tag=v{current}\n")
+                  output.write(f"release_sha={git('rev-parse', 'HEAD')}\n")
+              print("No release-relevant SDK changes since the latest tag.")
+              raise SystemExit(0)
+
+          current = version()
+          current_tag = f"v{current}"
+          if tag_exists(current_tag):
+              next_version = bump_patch(current)
+              replace("pyproject.toml", f'version = "{current}"', f'version = "{next_version}"')
+              replace("src/thalovant/__init__.py", f'__version__ = "{current}"', f'__version__ = "{next_version}"')
+              replace("src/thalovant/client.py", f"ThalovantPythonSDK/{current}", f"ThalovantPythonSDK/{next_version}")
+              git("config", "user.name", "github-actions[bot]")
+              git("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
+              git("add", "pyproject.toml", "src/thalovant/__init__.py", "src/thalovant/client.py")
+              git("commit", "-m", f"release: bump Python SDK to {next_version}")
+              git("push", "origin", "HEAD:main")
+              current = next_version
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("release_needed=true\n")
+              output.write(f"version={current}\n")
+              output.write(f"tag=v{current}\n")
+              output.write(f"release_sha={git('rev-parse', 'HEAD')}\n")
           PY
 
-      - name: Check existing tag
-        id: tag
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Install package and release tooling
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Run tests
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         run: python -m pytest -q
 
       - name: Build distributions
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         run: |
           rm -rf dist
           python -m build
 
       - name: Check distribution metadata
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         run: python -m twine check dist/*
 
       - name: Check whether version is already on PyPI
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         id: registry
         env:
-          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.plan.outputs.version }}
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import os
@@ -102,23 +174,23 @@ jobs:
           PY
 
       - name: Publish skipped
-        if: steps.tag.outputs.exists == 'false' && steps.registry.outputs.exists == 'true'
-        run: echo "thalovant ${{ steps.version.outputs.version }} is already published on PyPI."
+        if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'true'
+        run: echo "thalovant ${{ steps.plan.outputs.version }} is already published on PyPI."
 
       - name: Publish to PyPI with API token
-        if: steps.tag.outputs.exists == 'false' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET != ''
+        if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET != ''
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
       - name: Publish to PyPI with trusted publishing
-        if: steps.tag.outputs.exists == 'false' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET == ''
+        if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET == ''
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Verify PyPI version
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         env:
-          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.plan.outputs.version }}
         run: |
           python - <<'PY'
           import os
@@ -143,8 +215,9 @@ jobs:
           PY
 
       - name: Create GitHub release
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.plan.outputs.release_needed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes "Release $TAG"
+          TAG: ${{ steps.plan.outputs.tag }}
+          RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
+        run: gh release create "$TAG" --target "$RELEASE_SHA" --title "$TAG" --notes "Release $TAG"

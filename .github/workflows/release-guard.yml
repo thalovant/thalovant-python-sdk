@@ -10,7 +10,7 @@ env:
 
 jobs:
   version:
-    name: Require version bump for SDK changes
+    name: Check SDK release plan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
