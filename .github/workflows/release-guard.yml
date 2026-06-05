@@ -1,0 +1,31 @@
+name: Release Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  version:
+    name: Require version bump for SDK changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release version
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PACKAGE_KIND: python
+          RELEASE_RELEVANT_PATHS: |
+            src
+            pyproject.toml
+            README.md
+            LICENSE
+        run: python .github/scripts/release_guard.py
