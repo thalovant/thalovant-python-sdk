@@ -13,7 +13,13 @@ hivemind-listener         -> OVOS / skills / hub runtime
 ## Install
 
 ```bash
-pip install .
+pip install thalovant
+```
+
+For local SDK development:
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
