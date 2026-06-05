@@ -206,7 +206,7 @@ handshake completion, and the live HTTP polling thread.
 
 The documentation website is built with MkDocs Material:
 
-- Website: <https://thalovant.github.io/thalovant-python-sdk/>
+- Website: <https://crispy-barnacle-r35yop4.pages.github.io/>
 - Local preview: `pip install -e ".[docs]" && mkdocs serve`
 - Build check: `mkdocs build --strict`
 

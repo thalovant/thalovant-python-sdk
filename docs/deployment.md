@@ -37,10 +37,11 @@ the workflow:
 
 In GitHub repository settings, set Pages source to **GitHub Actions**.
 
-The default site URL in `mkdocs.yml` is:
+The current GitHub Pages URL in `mkdocs.yml` is:
 
 ```text
-https://thalovant.github.io/thalovant-python-sdk/
+https://crispy-barnacle-r35yop4.pages.github.io/
 ```
 
-If a custom docs domain is added later, update `site_url` in `mkdocs.yml`.
+This repository currently uses GitHub's generated Pages domain for the private
+repo. If a custom docs domain is added later, update `site_url` in `mkdocs.yml`.

@@ -37,7 +37,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://thalovant.com"
-Documentation = "https://thalovant.github.io/thalovant-python-sdk/"
+Documentation = "https://crispy-barnacle-r35yop4.pages.github.io/"
 Repository = "https://github.com/thalovant/thalovant-python-sdk"
 Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 
