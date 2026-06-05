@@ -31,7 +31,7 @@ from .models import (
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "AsyncThalovantAgent",

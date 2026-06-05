@@ -47,7 +47,7 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindHTTPTransport, Transport
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.0"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.1"
 
 
 class ThalovantClient:

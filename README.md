@@ -10,7 +10,7 @@ Python SDK / CLI          -> direct hub HTTPS data-plane connection
 Hub runtime               -> skills, events, and replies
 ```
 
-Full documentation: <https://docs.thalovant.com/developers/sdks/python/>
+Full documentation: [docs.thalovant.com/developers/sdks/python](https://docs.thalovant.com/developers/sdks/python/)
 
 ## Install
 
@@ -265,7 +265,7 @@ handshake completion, and the live HTTP polling thread.
 
 The canonical public documentation lives on the Thalovant docs site:
 
-- Website: <https://docs.thalovant.com/developers/sdks/python/>
+- Website: [docs.thalovant.com/developers/sdks/python](https://docs.thalovant.com/developers/sdks/python/)
 
 This repository also keeps generated API reference material for maintainers:
 
