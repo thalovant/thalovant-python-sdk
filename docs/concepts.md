@@ -4,11 +4,11 @@
 
 Thalovant is the control plane for identity and policy. The Python SDK is not a
 message proxy. It uses Thalovant-provisioned identity material and then connects
-directly to a HiveMind hub listener through `hivemind-http-protocol`.
+directly to a HiveMind hub listener through the selected hub data-plane path.
 
 ```text
 Thalovant API / dashboard -> identity, ACL, policy, lifecycle
-Python SDK / CLI          -> direct HiveMind HTTPS/HTTP data plane
+Python SDK / CLI          -> direct HiveMind hub data plane
 hivemind-listener         -> OVOS bus and skills runtime
 ```
 
@@ -23,8 +23,11 @@ The SDK accepts the identity fields already used by HiveMind clients:
 - `default_master`
 - `default_port`
 
-`default_master` should normally be an HTTPS public hub endpoint for public hubs.
-`default_port` should normally be `443`.
+`default_master` remains the backward-compatible hub endpoint. Newer payloads
+may also include `data_plane_endpoints` for `https`, `wss`, and `mqtt`, plus
+`protocols.wss/http/mqtt.enabled` flags.
+
+The current Python runtime transport uses the HTTPS HTTP-protocol endpoint.
 
 ## Sessions And Request Correlation
 

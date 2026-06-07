@@ -28,10 +28,11 @@ from .models import (
     ThalovantHealth,
     ThalovantReply,
 )
+from .protocols import HubDataPlaneEndpoints, HubProtocol, HubProtocolSettings
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -44,6 +45,9 @@ __all__ = [
     "EVENT_UTTERANCE_HANDLED",
     "EventHandler",
     "EventPredicate",
+    "HubDataPlaneEndpoints",
+    "HubProtocol",
+    "HubProtocolSettings",
     "ThalovantDisplayItem",
     "ThalovantAgent",
     "ThalovantClient",

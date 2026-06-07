@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import urlsplit, urlunsplit
 
 from .errors import ThalovantIdentityError
+from .protocols import HubDataPlaneEndpoints, HubProtocol, HubProtocolSettings
 
 
 _MISSING = object()
@@ -26,6 +26,10 @@ class ThalovantIdentity:
     default_port: int = 5679
     default_path: str = ""
     crypto_key: str | None = None
+    data_plane_endpoints: HubDataPlaneEndpoints = field(
+        default_factory=HubDataPlaneEndpoints
+    )
+    protocols: HubProtocolSettings = field(default_factory=HubProtocolSettings)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ThalovantIdentity":
@@ -35,9 +39,13 @@ class ThalovantIdentity:
         try:
             raw = json.loads(identity_path.read_text(encoding="utf-8"))
         except OSError as exc:
-            raise ThalovantIdentityError(f"Unable to read identity file: {identity_path}") from exc
+            raise ThalovantIdentityError(
+                f"Unable to read identity file: {identity_path}"
+            ) from exc
         except json.JSONDecodeError as exc:
-            raise ThalovantIdentityError(f"Identity file is not valid JSON: {identity_path}") from exc
+            raise ThalovantIdentityError(
+                f"Identity file is not valid JSON: {identity_path}"
+            ) from exc
 
         if not isinstance(raw, Mapping):
             raise ThalovantIdentityError("Identity file must contain a JSON object.")
@@ -60,6 +68,13 @@ class ThalovantIdentity:
                 or env.get(f"{prefix}DEFAULT_PORT"),
                 "default_path": env.get(f"{prefix}HUB_HTTP_PATH")
                 or env.get(f"{prefix}DEFAULT_PATH"),
+                "data_plane_endpoints": {
+                    "https": env.get(f"{prefix}HUB_HTTPS_HOST")
+                    or env.get(f"{prefix}HUB_HTTP_HOST"),
+                    "wss": env.get(f"{prefix}HUB_WSS_HOST")
+                    or env.get(f"{prefix}HUB_WEBSOCKET_HOST"),
+                    "mqtt": env.get(f"{prefix}HUB_MQTT_HOST"),
+                },
             }
         )
 
@@ -75,7 +90,9 @@ class ThalovantIdentity:
             aliases=("host", "hub_http_host", "master"),
         )
         site_id = _required_string(values, "site_id", aliases=("siteId", "site"))
-        default_port = _int_value(values, "default_port", aliases=("port", "hub_http_port"))
+        default_port = _int_value(
+            values, "default_port", aliases=("port", "hub_http_port")
+        )
         default_path = _optional_string(
             values,
             "default_path",
@@ -91,24 +108,35 @@ class ThalovantIdentity:
             default_path=_normalize_path(default_path),
             site_id=site_id,
             crypto_key=crypto_key,
+            data_plane_endpoints=HubDataPlaneEndpoints.from_mapping(values),
+            protocols=HubProtocolSettings.from_mapping(values),
         )
 
     def endpoint_base(self) -> str:
-        """Return the HTTP endpoint base URL including port and optional path."""
+        """Return the HTTPS HTTP-protocol endpoint base used by SDK transports."""
 
-        master = self.default_master.replace("wss://", "https://", 1).replace("ws://", "http://", 1)
-        parsed = urlsplit(master)
-        if parsed.scheme and parsed.netloc:
-            netloc = parsed.netloc
-            if ":" not in netloc.rsplit("@", 1)[-1]:
-                netloc = f"{netloc}:{self.default_port}"
-            path = "/".join(
-                part.strip("/")
-                for part in (parsed.path, self.default_path)
-                if part and part.strip("/")
-            )
-            return urlunsplit((parsed.scheme, netloc, f"/{path}" if path else "", "", ""))
-        return f"{master.rstrip('/')}:{self.default_port}{self.default_path}"
+        return self.data_plane_endpoints.http_base(
+            self.default_master,
+            self.default_port,
+            self.default_path,
+        )
+
+    def endpoint_for(self, protocol: HubProtocol) -> str | None:
+        """Return a public data-plane endpoint for a protocol when known."""
+
+        if protocol == "https":
+            return self.endpoint_base()
+        return self.data_plane_endpoints.endpoint_for(protocol)
+
+    def enabled_protocols(self) -> tuple[HubProtocol, ...]:
+        """Return enabled hub protocols in preferred client order."""
+
+        return self.protocols.enabled_protocols()
+
+    def supports_protocol(self, protocol: HubProtocol) -> bool:
+        """Return whether the identity says a protocol is enabled."""
+
+        return self.protocols.is_enabled(protocol)
 
     def as_dict(self, *, include_secrets: bool = False) -> dict[str, Any]:
         """Return a serializable identity summary."""
@@ -119,6 +147,11 @@ class ThalovantIdentity:
             "default_port": self.default_port,
             "default_path": self.default_path,
         }
+        endpoints = self.data_plane_endpoints.as_dict(
+            redact_credentials=not include_secrets
+        )
+        if endpoints:
+            data["data_plane_endpoints"] = endpoints
         if include_secrets:
             data.update(
                 {
@@ -138,7 +171,9 @@ def _value(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()) -
     return _MISSING
 
 
-def _required_string(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()) -> str:
+def _required_string(
+    values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()
+) -> str:
     value = _optional_string(values, key, aliases=aliases)
     if value is None:
         accepted = ", ".join((key, *aliases))
@@ -158,7 +193,9 @@ def _optional_string(
     return normalized or None
 
 
-def _int_value(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()) -> int | None:
+def _int_value(
+    values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()
+) -> int | None:
     value = _value(values, key, aliases)
     if value is _MISSING or value in (None, ""):
         return None
@@ -166,7 +203,9 @@ def _int_value(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = (
         return int(value)
     except (TypeError, ValueError) as exc:
         accepted = ", ".join((key, *aliases))
-        raise ThalovantIdentityError(f"Identity field must be an integer: {accepted}") from exc
+        raise ThalovantIdentityError(
+            f"Identity field must be an integer: {accepted}"
+        ) from exc
 
 
 def _normalize_path(path: str | None) -> str:

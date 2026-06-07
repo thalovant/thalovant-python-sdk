@@ -1,5 +1,5 @@
 site_name: Thalovant Python SDK
-site_description: Python SDK and CLI for direct Thalovant hub HTTPS clients and agents.
+site_description: Python SDK and CLI for direct Thalovant hub data-plane clients and agents.
 site_url: https://docs.thalovant.com/developers/sdks/python/
 repo_name: thalovant/thalovant-python-sdk
 repo_url: https://github.com/thalovant/thalovant-python-sdk
@@ -100,5 +100,6 @@ nav:
           - Context: reference/context.md
           - Rich Output: reference/rich.md
           - Identity: reference/identity.md
+          - Protocols: reference/protocols.md
           - Models: reference/models.md
           - Errors: reference/errors.md

@@ -47,7 +47,7 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindHTTPTransport, Transport
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.1"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.2"
 
 
 class ThalovantClient:
@@ -419,7 +419,9 @@ class ThalovantClient:
                 if attempt + 1 >= attempts:
                     break
                 self.close()
-        raise ThalovantConnectionError("HiveMind HTTP transport failed while waiting for reply.") from last_error
+        raise ThalovantConnectionError(
+            "HiveMind HTTP transport failed while waiting for reply."
+        ) from last_error
 
     def _ask_once(
         self,
@@ -464,7 +466,9 @@ class ThalovantClient:
 
         def handle_failure(message: Any) -> None:
             nonlocal failure_event
-            event = remember(getattr(message, "msg_type", None) or EVENT_INTENT_FAILURE, message)
+            event = remember(
+                getattr(message, "msg_type", None) or EVENT_INTENT_FAILURE, message
+            )
             if event is None:
                 return
             failure_event = event
@@ -527,12 +531,18 @@ class ThalovantClient:
             self.connect()
             try:
                 return operation()
-            except (ConnectionAbortedError, RuntimeError, ThalovantConnectionError) as exc:
+            except (
+                ConnectionAbortedError,
+                RuntimeError,
+                ThalovantConnectionError,
+            ) as exc:
                 last_error = exc
                 if attempt + 1 >= attempts:
                     break
                 self.close()
-        raise ThalovantConnectionError("HiveMind HTTP transport failed after reconnect.") from last_error
+        raise ThalovantConnectionError(
+            "HiveMind HTTP transport failed after reconnect."
+        ) from last_error
 
     def _raise_if_transport_stopped(self) -> None:
         if self._transport.is_connected():
@@ -541,7 +551,9 @@ class ThalovantClient:
         detail = f": {error}" if error else ""
         raise ThalovantConnectionError(f"HiveMind HTTP transport stopped{detail}")
 
-    def _remove_subscription(self, event_name: str, handler: Callable[[Any], None]) -> None:
+    def _remove_subscription(
+        self, event_name: str, handler: Callable[[Any], None]
+    ) -> None:
         try:
             self._transport.remove_mycroft(event_name, handler)
         except ThalovantConnectionError:

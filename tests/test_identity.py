@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from thalovant import ThalovantIdentity, ThalovantIdentityError
+from thalovant import HubDataPlaneEndpoints, ThalovantIdentity, ThalovantIdentityError
 
 
 def test_loads_identity_from_file(tmp_path):
@@ -63,7 +63,57 @@ def test_identity_supports_reverse_proxy_path():
     )
 
     assert identity.default_path == "/hivemind/public"
-    assert identity.endpoint_base() == "https://hub.example.com:443/base/hivemind/public"
+    assert (
+        identity.endpoint_base() == "https://hub.example.com:443/base/hivemind/public"
+    )
+
+
+def test_identity_uses_protocol_aware_data_plane_endpoints():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "key": "key",
+            "password": "password",
+            "site": "site",
+            "host": "wss://hub.example.com",
+            "port": 443,
+            "path": "/hivemind/public",
+            "data_plane_endpoints": {
+                "https": "https://api.example.com/hivemind/public",
+                "wss": "wss://socket.example.com/hivemind/public",
+                "mqtt": "mqtts://mqtt.example.com:8883",
+            },
+            "protocols": {
+                "wss": {"enabled": True},
+                "http": {"enabled": True},
+                "mqtt": {"enabled": True},
+            },
+        }
+    )
+
+    assert identity.endpoint_base() == "https://api.example.com:443/hivemind/public"
+    assert identity.endpoint_for("wss") == "wss://socket.example.com/hivemind/public"
+    assert identity.endpoint_for("mqtt") == "mqtts://mqtt.example.com:8883"
+    assert identity.enabled_protocols() == ("wss", "https", "mqtt")
+    assert identity.supports_protocol("https")
+
+
+def test_builds_data_plane_endpoints_from_hub_resource():
+    endpoints = HubDataPlaneEndpoints.from_hub(
+        {
+            "domain": "jokes.thalovant.io",
+            "spec": {
+                "protocols": {
+                    "wss": {"enabled": True},
+                    "http": {"enabled": True},
+                    "mqtt": {"enabled": False},
+                }
+            },
+        }
+    )
+
+    assert endpoints.wss == "wss://jokes.thalovant.io"
+    assert endpoints.https == "https://jokes.thalovant.io"
+    assert endpoints.mqtt is None
 
 
 def test_rejects_missing_required_field():

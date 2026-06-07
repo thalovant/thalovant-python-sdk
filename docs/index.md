@@ -1,7 +1,7 @@
 # Thalovant Python SDK
 
 Build Python clients and agents that connect directly to Thalovant HiveMind hubs
-over HTTPS.
+over the hub data plane.
 
 ```bash
 pip install thalovant
@@ -36,7 +36,7 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 ```mermaid
 flowchart LR
     API[Thalovant API / dashboard<br/>identity and policy]
-    SDK[Python SDK / CLI<br/>direct HTTPS data plane]
+    SDK[Python SDK / CLI<br/>direct hub data plane]
     Hub[hivemind-listener<br/>OVOS bus and skills]
 
     API -->|provisions identity| SDK
@@ -91,7 +91,8 @@ does not proxy data-plane messages through the Thalovant API.
 
 ## What The SDK Gives You
 
-- Direct HiveMind HTTP/HTTPS transport using existing HiveMind client identity.
+- Direct HiveMind HTTPS transport using existing HiveMind client identity.
+- Protocol-aware identity helpers for WSS, HTTPS, and MQTT endpoints.
 - `ask`, `send_utterance`, `listen`, and `emit` primitives.
 - Conversation-scoped session and request correlation.
 - Sync and async clients.

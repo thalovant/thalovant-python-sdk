@@ -2,11 +2,11 @@
 
 The Thalovant Python SDK is the developer layer for direct Thalovant hub access.
 Thalovant provisions client identities and policy; this SDK connects directly to
-the hub endpoint over the HTTPS data plane.
+the hub endpoint over the enabled data-plane protocol.
 
 ```text
-Thalovant API / dashboard -> provision identity and policy
-Python SDK / CLI          -> direct hub HTTPS data-plane connection
+Thalovant API / dashboard -> provision identity, policy, and endpoints
+Python SDK / CLI          -> direct hub data-plane connection
 Hub runtime               -> skills, events, and replies
 ```
 
@@ -64,7 +64,17 @@ The identity file uses the same fields produced for Thalovant hub clients:
   "site_id": "my-client-site",
   "default_master": "https://hub.example.com",
   "default_port": 443,
-  "default_path": "/public"
+  "default_path": "/public",
+  "data_plane_endpoints": {
+    "https": "https://hub.example.com/public",
+    "wss": "wss://hub.example.com/public",
+    "mqtt": "mqtts://mqtt.example.com:8883"
+  },
+  "protocols": {
+    "wss": {"enabled": true},
+    "http": {"enabled": true},
+    "mqtt": {"enabled": false}
+  }
 }
 ```
 
@@ -76,6 +86,8 @@ export THALOVANT_PASSWORD=...
 export THALOVANT_CRYPTO_KEY=...
 export THALOVANT_SITE_ID=...
 export THALOVANT_HUB_HTTP_HOST=https://hub.example.com
+export THALOVANT_HUB_WSS_HOST=wss://hub.example.com
+export THALOVANT_HUB_MQTT_HOST=mqtts://mqtt.example.com:8883
 export THALOVANT_HUB_HTTP_PORT=443
 export THALOVANT_HUB_HTTP_PATH=/public
 ```
@@ -88,6 +100,29 @@ with ThalovantClient.from_env() as client:
 ```
 
 Keep identity files secret. They are client credentials, not public API keys.
+
+## Protocols
+
+The SDK understands the same protocol shape returned by the Thalovant API:
+
+- `protocols.wss.enabled` controls the public WebSocket path.
+- `protocols.http.enabled` exposes the HTTP protocol as HTTPS at the edge.
+- `protocols.mqtt.enabled` exposes MQTT over TLS when enabled for the hub.
+
+```python
+from thalovant import ThalovantIdentity
+
+identity = ThalovantIdentity.from_file("_identity.json")
+
+print(identity.enabled_protocols())
+print(identity.endpoint_for("https"))
+print(identity.endpoint_for("wss"))
+print(identity.endpoint_for("mqtt"))
+```
+
+The current Python runtime transport uses the HTTPS HTTP-protocol endpoint.
+WSS and MQTT endpoint helpers are exposed so applications can choose a path
+deliberately and so future transports can share the same identity shape.
 
 ## Conversations
 
@@ -279,7 +314,8 @@ This repository also keeps generated API reference material for maintainers:
 - The Thalovant API remains the control plane for creating clients, rotating or
   revoking identity material, and managing ACL/policy.
 - The data plane is direct hub protocol traffic from this SDK to the hub
-  listener.
+  listener. The SDK reads WSS, HTTPS, and MQTT endpoint metadata from the same
+  identity or hub payload.
 
 ## Publishing
 
