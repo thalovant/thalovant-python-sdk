@@ -31,6 +31,24 @@ Common methods:
 - `listen(event_name, timeout=None, max_events=None, predicate=None, context=None, session_id=None, request_id=None)`
 - `emit(event_type, data=None, context=None)`
 
+## Control Plane
+
+### `ThalovantControlPlane`
+
+Authenticated helper for the Thalovant API.
+
+Methods:
+
+- `login(email, password, scope=None)`
+- `list_hubs(limit=100, cursor=None, owner_id=None)`
+- `get_hub(hub_id)`
+- `create_client(payload, idempotency_key=None)`
+- `create_client_identity(hub, name, site_id=None, spec=None, owner_id=None, active=True, preferred_protocols=("https", "wss", "mqtt"))`
+
+`create_client_identity` generates client secrets locally, sends them once to
+the API, and returns `BootstrapIdentityResult.identity`. API responses may
+contain only Vault-backed secret references.
+
 ### `AsyncThalovantClient`
 
 Async wrapper for asyncio applications. It mirrors the synchronous client with
@@ -184,7 +202,9 @@ Diagnostic report:
 ## Exceptions
 
 - `ThalovantError`
+- `ThalovantAPIError`
 - `ThalovantIdentityError`
 - `ThalovantConnectionError`
 - `ThalovantTimeoutError`
 - `ThalovantRuntimeError`
+- `ThalovantUnsupportedProtocolError`

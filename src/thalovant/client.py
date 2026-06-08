@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
+    ThalovantUnsupportedProtocolError,
     ThalovantConnectionError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
@@ -45,9 +46,10 @@ from .models import (
 )
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindHTTPTransport, Transport
+from .protocols import HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.2"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.3"
 
 
 class ThalovantClient:
@@ -64,6 +66,7 @@ class ThalovantClient:
         reply_settle_seconds: float = 0.25,
         auto_reconnect: bool = True,
         reconnect_attempts: int = 1,
+        protocol: HubProtocol = "https",
         transport: Transport | None = None,
     ) -> None:
         self.identity = identity
@@ -71,6 +74,13 @@ class ThalovantClient:
         self.reply_settle_seconds = reply_settle_seconds
         self.auto_reconnect = auto_reconnect
         self.reconnect_attempts = max(0, reconnect_attempts)
+        if transport is None and protocol != "https":
+            endpoint = identity.endpoint_for(protocol)
+            detail = f" at {endpoint}" if endpoint else ""
+            raise ThalovantUnsupportedProtocolError(
+                f"{protocol.upper()} is enabled{detail}, but this SDK runtime "
+                "currently connects through the HTTPS HiveMind HTTP protocol transport."
+            )
         self._transport = transport or HiveMindHTTPTransport(
             identity,
             useragent=useragent,

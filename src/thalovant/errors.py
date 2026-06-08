@@ -19,3 +19,11 @@ class ThalovantTimeoutError(ThalovantError):
 
 class ThalovantRuntimeError(ThalovantError):
     """Raised when the hub reports that a request could not be handled."""
+
+
+class ThalovantAPIError(ThalovantError):
+    """Raised when the Thalovant control-plane API request fails."""
+
+
+class ThalovantUnsupportedProtocolError(ThalovantError):
+    """Raised when a requested data-plane protocol is not supported locally."""

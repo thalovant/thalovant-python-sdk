@@ -16,6 +16,7 @@ from thalovant import (
     ThalovantHealth,
     ThalovantIdentity,
     ThalovantTimeoutError,
+    ThalovantUnsupportedProtocolError,
     build_client_context,
 )
 from thalovant.client import _runtime_bus_context, _runtime_crypto_key
@@ -155,6 +156,11 @@ def test_emit_sends_low_level_event():
     client.emit("skillmanager.list", {"x": 1}, {"source": "test"})
 
     assert transport.emitted == [("skillmanager.list", {"x": 1}, {"source": "test"})]
+
+
+def test_client_rejects_unsupported_runtime_protocol_without_custom_transport():
+    with pytest.raises(ThalovantUnsupportedProtocolError, match="MQTT"):
+        ThalovantClient(identity(), protocol="mqtt")
 
 
 def test_on_receives_normalized_events_and_unsubscribes():

@@ -101,5 +101,6 @@ nav:
           - Rich Output: reference/rich.md
           - Identity: reference/identity.md
           - Protocols: reference/protocols.md
+          - Control Plane: reference/control.md
           - Models: reference/models.md
           - Errors: reference/errors.md

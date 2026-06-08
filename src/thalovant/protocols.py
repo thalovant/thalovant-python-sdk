@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 HubProtocol = Literal["wss", "https", "mqtt"]
+DEFAULT_PROTOCOL_PREFERENCE: tuple[HubProtocol, ...] = ("https", "wss", "mqtt")
 
 
 @dataclass(frozen=True)
@@ -175,6 +176,30 @@ class HubDataPlaneEndpoints:
             for key, value in data.items()
             if value
         }
+
+
+@dataclass(frozen=True)
+class SelectedHubEndpoint:
+    """Selected public data-plane endpoint for a hub protocol."""
+
+    protocol: HubProtocol
+    endpoint: str
+
+
+def select_data_plane_endpoint(
+    endpoints: HubDataPlaneEndpoints,
+    protocols: HubProtocolSettings,
+    preferred_protocols: Iterable[HubProtocol] = DEFAULT_PROTOCOL_PREFERENCE,
+) -> SelectedHubEndpoint | None:
+    """Return the first enabled protocol that has a usable endpoint."""
+
+    for protocol in preferred_protocols:
+        if not protocols.is_enabled(protocol):
+            continue
+        endpoint = endpoints.endpoint_for(protocol)
+        if endpoint:
+            return SelectedHubEndpoint(protocol=protocol, endpoint=endpoint)
+    return None
 
 
 def endpoint_from_domain(domain: str, protocol: HubProtocol) -> str:

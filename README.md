@@ -101,6 +101,25 @@ with ThalovantClient.from_env() as client:
 
 Keep identity files secret. They are client credentials, not public API keys.
 
+You can also provision a client identity through the Thalovant API:
+
+```python
+from thalovant import ThalovantControlPlane
+
+api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api.login("you@example.com", "password")
+
+result = api.create_client_identity("hub-id", name="kiosk-1")
+
+with ThalovantClient(result.identity) as client:
+    print(client.ask("Say hello").text)
+```
+
+The SDK generates `apiKey`, `password`, and `cryptoKey` locally and sends them
+to the API once. The API can store them in Vault and return only secret
+references; `result.identity` is the usable local client identity. Do not log
+`result.identity.as_dict(include_secrets=True)`.
+
 ## Protocols
 
 The SDK understands the same protocol shape returned by the Thalovant API:
@@ -123,6 +142,8 @@ print(identity.endpoint_for("mqtt"))
 The current Python runtime transport uses the HTTPS HTTP-protocol endpoint.
 WSS and MQTT endpoint helpers are exposed so applications can choose a path
 deliberately and so future transports can share the same identity shape.
+Requesting a non-HTTPS runtime protocol raises an explicit unsupported-protocol
+error unless you provide your own transport.
 
 ## Conversations
 

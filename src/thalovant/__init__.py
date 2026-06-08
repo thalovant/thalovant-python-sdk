@@ -2,14 +2,17 @@
 
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
+from .control import BootstrapIdentityResult, ThalovantControlPlane
 from .context import build_client_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
+    ThalovantAPIError,
     ThalovantConnectionError,
     ThalovantError,
     ThalovantIdentityError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
+    ThalovantUnsupportedProtocolError,
 )
 from .events import (
     EVENT_INTENT_FAILURE,
@@ -28,16 +31,25 @@ from .models import (
     ThalovantHealth,
     ThalovantReply,
 )
-from .protocols import HubDataPlaneEndpoints, HubProtocol, HubProtocolSettings
+from .protocols import (
+    DEFAULT_PROTOCOL_PREFERENCE,
+    HubDataPlaneEndpoints,
+    HubProtocol,
+    HubProtocolSettings,
+    SelectedHubEndpoint,
+    select_data_plane_endpoint,
+)
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 __all__ = [
     "AsyncThalovantAgent",
     "AsyncThalovantClient",
     "AsyncThalovantConversation",
+    "BootstrapIdentityResult",
+    "DEFAULT_PROTOCOL_PREFERENCE",
     "EVENT_INTENT_FAILURE",
     "EVENT_POLICY_DENIED",
     "EVENT_RECOGNIZER_LOOP_UTTERANCE",
@@ -48,10 +60,13 @@ __all__ = [
     "HubDataPlaneEndpoints",
     "HubProtocol",
     "HubProtocolSettings",
+    "SelectedHubEndpoint",
+    "ThalovantAPIError",
     "ThalovantDisplayItem",
     "ThalovantAgent",
     "ThalovantClient",
     "ThalovantConnectionError",
+    "ThalovantControlPlane",
     "ThalovantConversation",
     "ThalovantDoctorCheck",
     "ThalovantDoctorReport",
@@ -64,6 +79,8 @@ __all__ = [
     "ThalovantRuntimeError",
     "ThalovantSubscription",
     "ThalovantTimeoutError",
+    "ThalovantUnsupportedProtocolError",
     "build_client_context",
+    "select_data_plane_endpoint",
     "strip_ssml",
 ]

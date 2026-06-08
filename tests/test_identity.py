@@ -2,7 +2,13 @@ import json
 
 import pytest
 
-from thalovant import HubDataPlaneEndpoints, ThalovantIdentity, ThalovantIdentityError
+from thalovant import (
+    HubDataPlaneEndpoints,
+    HubProtocolSettings,
+    ThalovantIdentity,
+    ThalovantIdentityError,
+    select_data_plane_endpoint,
+)
 
 
 def test_loads_identity_from_file(tmp_path):
@@ -114,6 +120,22 @@ def test_builds_data_plane_endpoints_from_hub_resource():
     assert endpoints.wss == "wss://jokes.thalovant.io"
     assert endpoints.https == "https://jokes.thalovant.io"
     assert endpoints.mqtt is None
+
+
+def test_selects_first_enabled_endpoint_from_preference():
+    endpoints = HubDataPlaneEndpoints(
+        https="https://hub.example.com/public",
+        wss="wss://hub.example.com/public",
+    )
+    selected = select_data_plane_endpoint(
+        endpoints,
+        HubProtocolSettings(wss=True, http=True),
+        ("mqtt", "wss", "https"),
+    )
+
+    assert selected is not None
+    assert selected.protocol == "wss"
+    assert selected.endpoint == "wss://hub.example.com/public"
 
 
 def test_rejects_missing_required_field():
