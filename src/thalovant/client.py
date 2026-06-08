@@ -49,7 +49,7 @@ from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSS
 from .protocols import HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.6"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.7"
 
 
 def _transport_for_protocol(
@@ -326,7 +326,11 @@ class ThalovantClient:
         """Emit a raw OVOS/HiveMind bus event through the HTTP data plane."""
 
         return self._with_reconnect(
-            lambda: self._transport.emit_event(event_type, data or {}, context or {})
+            lambda: self._transport.emit_event(
+                event_type,
+                data or {},
+                self._context_with_identity_metadata(context),
+            )
         )
 
     def send_utterance(
@@ -345,7 +349,7 @@ class ThalovantClient:
             raise ValueError("send_utterance() requires a non-empty text prompt.")
 
         request_context = _context_with_correlation(
-            context,
+            self._context_with_identity_metadata(context),
             session_id=session_id,
             site_id=self.identity.site_id,
             lang=lang,
@@ -403,7 +407,7 @@ class ThalovantClient:
         request_id = request_id or _new_request_id()
         request_context = _context_with_correlation(
             _merge_context(
-                context,
+                self._context_with_identity_metadata(context),
                 {"input": {"kind": kind, "label": label, "value": code, "exact": True}},
             ),
             session_id=session_id,
@@ -433,7 +437,7 @@ class ThalovantClient:
 
         request_id = request_id or _new_request_id()
         request_context = _context_with_correlation(
-            context,
+            self._context_with_identity_metadata(context),
             session_id=session_id,
             site_id=self.identity.site_id,
             lang=lang,
@@ -587,6 +591,18 @@ class ThalovantClient:
         error = self._transport.last_error()
         detail = f": {error}" if error else ""
         raise ThalovantConnectionError(f"HiveMind transport stopped{detail}")
+
+    def _context_with_identity_metadata(
+        self,
+        context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        merged = dict(context or {})
+        if self.identity.metadata:
+            merged["metadata"] = {
+                **dict(self.identity.metadata),
+                **dict(merged.get("metadata") or {}),
+            }
+        return merged
 
     def _remove_subscription(
         self, event_name: str, handler: Callable[[Any], None]

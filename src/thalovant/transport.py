@@ -333,20 +333,28 @@ class HiveMindHTTPTransport:
                 max_retries: int = 15,
             ) -> None:
                 deadline = time.monotonic() + transport.handshake_timeout
+                proactive_handshake_at = time.monotonic() + min(
+                    1.0, transport.handshake_timeout
+                )
                 while time.monotonic() < deadline:
                     remaining = max(0.0, deadline - time.monotonic())
                     wait_for = min(transport.handshake_poll_interval, remaining)
                     if inner_self.handshake_event.wait(timeout=wait_for):
                         time.sleep(transport.handshake_settle_seconds)
                         return
-                    if inner_self.connected_event.is_set():
+                    should_start_handshake = (
+                        inner_self.connected_event.is_set()
+                        and not _runtime_crypto_key(transport.identity.crypto_key)
+                        and time.monotonic() >= proactive_handshake_at
+                    )
+                    if should_start_handshake:
                         try:
                             inner_self.protocol.start_handshake()
                         except Exception as exc:
                             inner_self.thalovant_last_error = exc
                             transport._last_error = exc
                             raise
-                    else:
+                    elif not inner_self.connected_event.is_set():
                         inner_self.connected_event.wait(timeout=wait_for)
                 raise ThalovantTimeoutError("HiveMind WSS handshake timed out.")
 
@@ -635,9 +643,14 @@ class HiveMindMQTTTransport:
         self.topics = mqtt_topics_for_identity(identity)
         self._client: Any | None = None
         self._connected = threading.Event()
+        self._subscribed = threading.Event()
         self._handshake = threading.Event()
         self._last_error: BaseException | None = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
+        self._crypto_key = _runtime_crypto_key(identity.crypto_key)
+        self._cipher = "AES-GCM"
+        self._json_encoding = "JSON-HEX"
+        self._password_handshake: Any | None = None
 
     def connect(self) -> None:
         if self.is_connected():
@@ -657,6 +670,7 @@ class HiveMindMQTTTransport:
             client.tls_set()
         client.will_set(self.topics.status, "offline", qos=1, retain=True)
         client.on_connect = self._on_connect
+        client.on_subscribe = self._on_subscribe
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
         self._client = client
@@ -666,12 +680,20 @@ class HiveMindMQTTTransport:
         if not self._connected.wait(timeout=self.connect_timeout):
             self.disconnect()
             raise ThalovantTimeoutError("HiveMind MQTT broker connection timed out.")
+        self._subscribed.clear()
         client.subscribe(self.topics.s2c, qos=self.identity.mqtt.qos)
-        client.publish(self.topics.status, "online", qos=1, retain=True)
-        self._send_hive_message(self._hello_message(), encrypt=False)
-        if not self._handshake.wait(timeout=self.handshake_timeout):
+        if not self._subscribed.wait(timeout=self.connect_timeout):
+            error = self.last_error()
             self.disconnect()
-            raise ThalovantTimeoutError("HiveMind MQTT handshake timed out.")
+            detail = f": {error}" if error else ""
+            raise ThalovantTimeoutError(f"HiveMind MQTT subscription timed out{detail}.")
+        client.publish(self.topics.status, "online", qos=1, retain=True)
+        self._send_hive_message(self._hello_message())
+        if not self._handshake.wait(timeout=self.handshake_timeout):
+            error = self.last_error()
+            self.disconnect()
+            detail = f": {error}" if error else ""
+            raise ThalovantTimeoutError(f"HiveMind MQTT handshake timed out{detail}.")
 
     def disconnect(self) -> None:
         client = self._client
@@ -687,6 +709,7 @@ class HiveMindMQTTTransport:
             except Exception:
                 pass
         self._connected.clear()
+        self._subscribed.clear()
         self._handshake.clear()
 
     def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
@@ -722,7 +745,7 @@ class HiveMindMQTTTransport:
             "target_pubkey": None,
             "source_peer": None,
         }
-        return self._send_hive_message(message, encrypt=True)
+        return self._send_hive_message(message)
 
     def healthcheck(self) -> ThalovantHealth:
         return ThalovantHealth(
@@ -749,10 +772,28 @@ class HiveMindMQTTTransport:
             return
         self._connected.set()
 
+    def _on_subscribe(
+        self,
+        _client: Any,
+        _userdata: Any,
+        _mid: Any,
+        reason_codes: Any,
+        _properties: Any = None,
+    ) -> None:
+        codes = reason_codes if isinstance(reason_codes, (list, tuple)) else [reason_codes]
+        failures = [code for code in codes if _reason_code_value(code) >= 128]
+        if failures:
+            self._last_error = ThalovantConnectionError(
+                f"HiveMind MQTT subscribe failed: {failures[0]}"
+            )
+            return
+        self._subscribed.set()
+
     def _on_disconnect(self, _client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
         if _reason_code_value(reason_code) != 0:
             self._last_error = ThalovantConnectionError(f"HiveMind MQTT disconnected: {reason_code}")
         self._connected.clear()
+        self._subscribed.clear()
 
     def _on_message(self, _client: Any, _userdata: Any, message: Any) -> None:
         try:
@@ -762,43 +803,75 @@ class HiveMindMQTTTransport:
             self._connected.clear()
 
     def _handle_raw_message(self, raw: bytes | str) -> None:
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict) and "ciphertext" in parsed:
-            parsed = json.loads(self._decrypt(raw))
-        if not isinstance(parsed, dict):
+        message = self._decode_hive_message(raw)
+        msg_type = _message_type_value(message.msg_type)
+        payload = message.payload if isinstance(message.payload, dict) else {}
+        if msg_type == "hello":
             return
-        msg_type = parsed.get("msg_type")
-        payload = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else {}
-        if msg_type == "handshake":
+        if msg_type in {"handshake", "shake"}:
             self._handle_handshake(payload)
         elif msg_type == "bus":
-            event_name = str(payload.get("type") or "")
+            bus_message = message.payload
+            if hasattr(bus_message, "msg_type"):
+                event_name = str(bus_message.msg_type)
+                data = bus_message.data if isinstance(bus_message.data, dict) else {}
+                context = bus_message.context if isinstance(bus_message.context, dict) else {}
+            else:
+                event_name = str(payload.get("type") or "")
+                data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+                context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
             message = _RuntimeBusMessage(
-                data=payload.get("data") if isinstance(payload.get("data"), dict) else {},
-                context=payload.get("context") if isinstance(payload.get("context"), dict) else {},
+                data=data,
+                context=context,
                 msg_type=event_name,
             )
             for handler in tuple(self._handlers.get(event_name, ())):
                 handler(message)
 
     def _handle_handshake(self, payload: dict[str, Any]) -> None:
-        if payload.get("preshared_key") and not payload.get("handshake") and "envelope" not in payload:
-            if not _runtime_crypto_key(self.identity.crypto_key):
-                raise ThalovantConnectionError("HiveMind requested a preshared key, but identity.crypto_key is missing.")
-            self._send_hive_message(self._hello_message(), encrypt=False)
+        self._select_mqtt_crypto(payload)
+        if "envelope" in payload:
+            if self._password_handshake is None:
+                raise ThalovantConnectionError("HiveMind MQTT password handshake was not started.")
+            self._password_handshake.receive_and_verify(payload["envelope"])
+            self._crypto_key = self._password_handshake.secret
+            self._send_hive_message(self._hello_message())
             self._handshake.set()
             return
-        raise ThalovantConnectionError("Only HiveMind preshared-key MQTT handshakes are supported.")
+        if payload.get("preshared_key") and not payload.get("handshake"):
+            if not self._crypto_key:
+                raise ThalovantConnectionError("HiveMind requested a preshared key, but identity.crypto_key is missing.")
+            self._handshake.set()
+            return
+        if payload.get("password") and self.identity.password:
+            from poorman_handshake import PasswordHandShake
 
-    def _send_hive_message(self, message: dict[str, Any], *, encrypt: bool) -> Any:
+            self._password_handshake = PasswordHandShake(self.identity.password)
+            self._send_hive_message(
+                {
+                    "msg_type": "shake",
+                    "payload": {
+                        "binarize": False,
+                        "encodings": ["JSON-HEX"],
+                        "ciphers": ["AES-GCM"],
+                        "envelope": self._password_handshake.generate_handshake(),
+                    },
+                    "metadata": {},
+                    "route": [],
+                    "node": None,
+                    "target_site_id": None,
+                    "target_pubkey": None,
+                    "source_peer": None,
+                }
+            )
+            return
+        raise ThalovantConnectionError("Unsupported HiveMind MQTT handshake request.")
+
+    def _send_hive_message(self, message: dict[str, Any]) -> Any:
         client = self._client
         if client is None or not client.is_connected():
             raise ThalovantConnectionError("HiveMind MQTT transport is not connected.")
-        payload = json.dumps(message, separators=(",", ":"))
-        if encrypt and self._handshake.is_set() and self.identity.crypto_key:
-            payload = self._encrypt(payload)
+        payload = self._encode_hive_message(message)
         result = client.publish(
             self.topics.c2s,
             payload,
@@ -824,21 +897,71 @@ class HiveMindMQTTTransport:
             "source_peer": None,
         }
 
-    def _encrypt(self, payload: str) -> str:
-        from hivemind_bus_client.encryption import encrypt_as_json
+    def _encode_hive_message(self, message: dict[str, Any]) -> bytes:
+        from hivemind_bus_client.client import get_bitstring
+        from hivemind_bus_client.encryption import encrypt_bin
+        from hivemind_bus_client.message import HiveMessage
 
-        key = _runtime_crypto_key(self.identity.crypto_key)
-        if not key:
-            raise ThalovantConnectionError("HiveMind MQTT encryption requires identity.crypto_key.")
-        return encrypt_as_json(key, payload, cipher="AES-GCM", encoding="JSON-HEX")
+        hive_message = HiveMessage(**message)
+        bitstring = get_bitstring(
+            hive_type=hive_message.msg_type,
+            payload=hive_message.payload,
+            compressed=False,
+            hivemeta=hive_message.metadata,
+            binary_type=hive_message.bin_type,
+        ).bytes
+        if self._crypto_key:
+            return encrypt_bin(self._crypto_key, bitstring, cipher=self._cipher)
+        return bitstring
 
-    def _decrypt(self, payload: str) -> str:
-        from hivemind_bus_client.encryption import decrypt_from_json
+    def _decode_hive_message(self, raw: bytes | str) -> Any:
+        from hivemind_bus_client.client import decode_bitstring
+        from hivemind_bus_client.encryption import decrypt_bin, decrypt_from_json
+        from hivemind_bus_client.message import HiveMessage
 
-        key = _runtime_crypto_key(self.identity.crypto_key)
-        if not key:
-            raise ThalovantConnectionError("HiveMind MQTT decryption requires identity.crypto_key.")
-        return decrypt_from_json(key, payload, cipher="AES-GCM", encoding="JSON-HEX")
+        text = raw if isinstance(raw, str) else None
+        if isinstance(raw, bytes):
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = None
+
+        if text:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict) and "ciphertext" in parsed:
+                if not self._crypto_key:
+                    raise ThalovantConnectionError("HiveMind MQTT encrypted payload requires a crypto key.")
+                decrypted = decrypt_from_json(
+                    self._crypto_key,
+                    text,
+                    cipher=self._cipher,
+                    encoding=self._json_encoding,
+                )
+                return HiveMessage(**json.loads(decrypted))
+            if isinstance(parsed, dict) and "msg_type" in parsed:
+                return HiveMessage(**parsed)
+
+        payload = raw.encode("utf-8") if isinstance(raw, str) else raw
+        if self._crypto_key:
+            payload = decrypt_bin(self._crypto_key, payload, cipher=self._cipher)
+        return decode_bitstring(payload)
+
+    def _select_mqtt_crypto(self, payload: dict[str, Any]) -> None:
+        cipher = _enum_value(payload.get("cipher"))
+        if cipher:
+            self._cipher = cipher
+        ciphers = [_enum_value(cipher) for cipher in payload.get("ciphers", [])]
+        if "AES-GCM" in ciphers:
+            self._cipher = "AES-GCM"
+        encoding = _enum_value(payload.get("encoding"))
+        if encoding:
+            self._json_encoding = encoding
+        encodings = [_enum_value(encoding) for encoding in payload.get("encodings", [])]
+        if "JSON-HEX" in encodings:
+            self._json_encoding = "JSON-HEX"
 
     @staticmethod
     def _load_mqtt_module() -> Any:
@@ -903,6 +1026,9 @@ def mqtt_topics_for_identity(identity: ThalovantIdentity) -> MqttTopicSet:
             return MqttTopicSet(_sibling_mqtt_topic(raw, "c2s"), _sibling_mqtt_topic(raw, "s2c"), raw)
         parts = raw.split("/")
         base = "/".join(parts[:-1]) if parts[-1] in {identity.access_key, credentials.username, satellite_id} else raw
+        hub_id = credentials.hub_id.strip("/") if credentials.hub_id else ""
+        if hub_id and hub_id not in base.split("/"):
+            base = f"{base}/{hub_id}"
     elif credentials.hub_id:
         base = f"hivemind/{credentials.hub_id.strip('/')}"
     else:
@@ -921,6 +1047,15 @@ def _sibling_mqtt_topic(topic: str, segment: str) -> str:
 def _safe_mqtt_client_id(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9_-]", "-", value)[:48]
     return normalized or uuid.uuid4().hex
+
+
+def _message_type_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _enum_value(value: Any) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw) if raw else ""
 
 
 def _reason_code_value(reason_code: Any) -> int:

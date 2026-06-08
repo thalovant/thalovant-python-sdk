@@ -101,6 +101,7 @@ class ThalovantIdentity:
     )
     protocols: HubProtocolSettings = field(default_factory=HubProtocolSettings)
     mqtt: MqttBrokerCredentials | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ThalovantIdentity":
@@ -195,6 +196,7 @@ class ThalovantIdentity:
             data_plane_endpoints=HubDataPlaneEndpoints.from_mapping(values),
             protocols=HubProtocolSettings.from_mapping(values),
             mqtt=MqttBrokerCredentials.from_mapping(values.get("mqtt")),
+            metadata=_metadata_value(values),
         )
 
     def endpoint_base(self) -> str:
@@ -247,6 +249,8 @@ class ThalovantIdentity:
             )
         if self.mqtt:
             data["mqtt"] = self.mqtt.as_dict(include_secrets=include_secrets)
+        if self.metadata:
+            data["metadata"] = dict(self.metadata)
         return data
 
 
@@ -324,6 +328,11 @@ def _qos_value(values: Mapping[str, Any], key: str, *, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed in {0, 1} else default
+
+
+def _metadata_value(values: Mapping[str, Any]) -> dict[str, Any]:
+    raw = values.get("metadata")
+    return dict(raw) if isinstance(raw, Mapping) else {}
 
 
 def _normalize_path(path: str | None) -> str:

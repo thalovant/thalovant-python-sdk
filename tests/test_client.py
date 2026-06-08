@@ -193,6 +193,44 @@ def test_ask_emits_utterance_and_collects_speak():
     assert transport.handlers["ovos.utterance.handled"] == []
 
 
+def test_ask_includes_identity_metadata():
+    transport = FakeTransport(answer="The answer")
+    sdk_identity = ThalovantIdentity(
+        access_key="key",
+        password="password",
+        crypto_key="crypto",
+        site_id="site",
+        default_master="http://hub.local",
+        default_port=5679,
+        metadata={"thalovant_owner_id": "owner-1", "plan": "paid"},
+    )
+    client = ThalovantClient(sdk_identity, transport=transport, reply_settle_seconds=0)
+
+    client.ask("what is up?", context={"metadata": {"channel": "test"}})
+
+    _, _, context = transport.emitted[0]
+    assert context["metadata"] == {
+        "thalovant_owner_id": "owner-1",
+        "plan": "paid",
+        "channel": "test",
+    }
+
+
+def test_identity_preserves_metadata_from_mapping():
+    sdk_identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "key",
+            "password": "password",
+            "site_id": "site",
+            "default_master": "https://hub.local",
+            "metadata": {"thalovant_owner_id": "owner-1"},
+        }
+    )
+
+    assert sdk_identity.metadata == {"thalovant_owner_id": "owner-1"}
+    assert sdk_identity.as_dict()["metadata"] == {"thalovant_owner_id": "owner-1"}
+
+
 def test_emit_sends_low_level_event():
     transport = FakeTransport()
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
@@ -224,6 +262,31 @@ def test_client_uses_mqtt_transport(monkeypatch):
     assert created["identity"].mqtt is not None
     assert created["kwargs"]["useragent"].startswith("ThalovantPythonSDK/")
     assert mqtt_topics_for_identity(identity_with_mqtt()) == (
+        "hivemind/hub/c2s/key",
+        "hivemind/hub/s2c/key",
+        "hivemind/hub/status/key",
+    )
+
+
+def test_mqtt_topics_include_hub_id_when_prefix_is_generic():
+    identity = ThalovantIdentity(
+        access_key="key",
+        password="password",
+        crypto_key="0123456789abcdef",
+        site_id="site",
+        default_master="https://hub.local",
+        default_port=443,
+        protocols=HubProtocolSettings(wss=True, http=True, mqtt=True),
+        mqtt=MqttBrokerCredentials(
+            endpoint="mqtts://mqtt.example.com:8883",
+            username="key",
+            password="broker-password",
+            topic_prefix="hivemind",
+            hub_id="hub",
+        ),
+    )
+
+    assert mqtt_topics_for_identity(identity) == (
         "hivemind/hub/c2s/key",
         "hivemind/hub/s2c/key",
         "hivemind/hub/status/key",
