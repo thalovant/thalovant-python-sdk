@@ -10,6 +10,8 @@ import pytest
 from thalovant import (
     AsyncThalovantClient,
     EVENT_SPEAK,
+    HubDataPlaneEndpoints,
+    HubProtocolSettings,
     ThalovantAgent,
     ThalovantClient,
     ThalovantConnectionError,
@@ -20,6 +22,7 @@ from thalovant import (
     build_client_context,
 )
 from thalovant.client import _runtime_bus_context, _runtime_crypto_key
+from thalovant.transport import HiveMindWSSTransport
 
 
 @dataclass
@@ -122,6 +125,22 @@ def identity() -> ThalovantIdentity:
     )
 
 
+def identity_with_wss() -> ThalovantIdentity:
+    return ThalovantIdentity(
+        access_key="key",
+        password="password",
+        crypto_key="crypto",
+        site_id="site",
+        default_master="https://hub.local",
+        default_port=443,
+        data_plane_endpoints=HubDataPlaneEndpoints(
+            https="https://hub.local/hivemind/public",
+            wss="wss://hub.local/hivemind/public",
+        ),
+        protocols=HubProtocolSettings(wss=True, http=True),
+    )
+
+
 def test_ask_emits_utterance_and_collects_speak():
     transport = FakeTransport(answer="The answer")
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
@@ -161,6 +180,46 @@ def test_emit_sends_low_level_event():
 def test_client_rejects_unsupported_runtime_protocol_without_custom_transport():
     with pytest.raises(ThalovantUnsupportedProtocolError, match="MQTT"):
         ThalovantClient(identity(), protocol="mqtt")
+
+
+def test_client_uses_wss_transport(monkeypatch):
+    created: dict[str, Any] = {}
+
+    class FakeWSSTransport(FakeTransport):
+        def __init__(self, identity: ThalovantIdentity, **kwargs: Any):
+            super().__init__()
+            created["identity"] = identity
+            created["kwargs"] = kwargs
+
+    monkeypatch.setattr("thalovant.client.HiveMindWSSTransport", FakeWSSTransport)
+
+    client = ThalovantClient(identity_with_wss(), protocol="wss")
+    client.connect()
+
+    assert created["identity"].endpoint_for("wss") == "wss://hub.local/hivemind/public"
+    assert created["kwargs"]["useragent"].startswith("ThalovantPythonSDK/")
+
+
+def test_wss_transport_authorized_url_preserves_endpoint_path_and_query():
+    transport = HiveMindWSSTransport(
+        ThalovantIdentity(
+            access_key="key",
+            password="password",
+            site_id="site",
+            default_master="https://hub.local",
+            default_port=443,
+            data_plane_endpoints=HubDataPlaneEndpoints(
+                wss="wss://hub.local/hivemind/public?x=1&authorization=old"
+            ),
+            protocols=HubProtocolSettings(wss=True),
+        ),
+        useragent="ua",
+    )
+
+    assert (
+        transport._authorized_wss_url(key="key", useragent="ua")
+        == "wss://hub.local/hivemind/public?x=1&authorization=dWE6a2V5"
+    )
 
 
 def test_on_receives_normalized_events_and_unsubscribes():

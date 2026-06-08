@@ -45,11 +45,46 @@ from .models import (
     ThalovantReply,
 )
 from .subscriptions import ThalovantSubscription
-from .transport import HiveMindHTTPTransport, Transport
+from .transport import HiveMindHTTPTransport, HiveMindWSSTransport, Transport
 from .protocols import HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.3"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.4"
+
+
+def _transport_for_protocol(
+    identity: ThalovantIdentity,
+    *,
+    protocol: HubProtocol,
+    useragent: str,
+    connect_timeout: float,
+    handshake_timeout: float,
+    send_timeout: float,
+) -> Transport:
+    kwargs = {
+        "useragent": useragent,
+        "connect_timeout": connect_timeout,
+        "handshake_timeout": handshake_timeout,
+        "send_timeout": send_timeout,
+    }
+    if protocol == "https":
+        return HiveMindHTTPTransport(identity, **kwargs)
+    if protocol == "wss":
+        endpoint = identity.endpoint_for("wss")
+        if not endpoint:
+            raise ThalovantUnsupportedProtocolError(
+                "WSS is enabled, but the identity does not include a WSS endpoint."
+            )
+        return HiveMindWSSTransport(identity, **kwargs)
+    if protocol == "mqtt":
+        endpoint = identity.endpoint_for("mqtt")
+        detail = f" at {endpoint}" if endpoint else ""
+        raise ThalovantUnsupportedProtocolError(
+            "MQTT endpoint metadata is available"
+            f"{detail}, but native MQTT runtime is not enabled in this SDK yet. "
+            "Use HTTPS or WSS until per-client MQTT broker credentials and ACLs are provisioned."
+        )
+    raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
 
 
 class ThalovantClient:
@@ -74,15 +109,9 @@ class ThalovantClient:
         self.reply_settle_seconds = reply_settle_seconds
         self.auto_reconnect = auto_reconnect
         self.reconnect_attempts = max(0, reconnect_attempts)
-        if transport is None and protocol != "https":
-            endpoint = identity.endpoint_for(protocol)
-            detail = f" at {endpoint}" if endpoint else ""
-            raise ThalovantUnsupportedProtocolError(
-                f"{protocol.upper()} is enabled{detail}, but this SDK runtime "
-                "currently connects through the HTTPS HiveMind HTTP protocol transport."
-            )
-        self._transport = transport or HiveMindHTTPTransport(
+        self._transport = transport or _transport_for_protocol(
             identity,
+            protocol=protocol,
             useragent=useragent,
             connect_timeout=connect_timeout,
             handshake_timeout=handshake_timeout,

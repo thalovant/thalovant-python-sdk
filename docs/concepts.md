@@ -27,7 +27,9 @@ The SDK accepts the identity fields already used by HiveMind clients:
 may also include `data_plane_endpoints` for `https`, `wss`, and `mqtt`, plus
 `protocols.wss/http/mqtt.enabled` flags.
 
-The current Python runtime transport uses the HTTPS HTTP-protocol endpoint.
+The Python runtime supports HTTPS and WSS data-plane transports. MQTT endpoint
+metadata is available for broker diagnostics, but native MQTT runtime stays
+guarded until Thalovant provisions per-client broker credentials and ACLs.
 
 ## Sessions And Request Correlation
 

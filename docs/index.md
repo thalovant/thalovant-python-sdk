@@ -40,7 +40,7 @@ flowchart LR
     Hub[hivemind-listener<br/>OVOS bus and skills]
 
     API -->|provisions identity| SDK
-    SDK -->|hivemind-http-protocol| Hub
+    SDK -->|HTTPS or WSS| Hub
 ```
 
 Thalovant is the control plane. The SDK is the developer convenience layer. It
@@ -91,7 +91,7 @@ does not proxy data-plane messages through the Thalovant API.
 
 ## What The SDK Gives You
 
-- Direct HiveMind HTTPS transport using existing HiveMind client identity.
+- Direct HiveMind HTTPS and WSS transports using existing HiveMind client identity.
 - Protocol-aware identity helpers for WSS, HTTPS, and MQTT endpoints.
 - `ask`, `send_utterance`, `listen`, and `emit` primitives.
 - Conversation-scoped session and request correlation.

@@ -185,17 +185,19 @@ class ThalovantControlPlane:
     ) -> SelectedHubEndpoint:
         """Validate that a bootstrap result can be used by the current SDK runtime."""
 
-        if protocol != "https":
+        if protocol == "mqtt":
             raise ThalovantUnsupportedProtocolError(
-                f"{protocol.upper()} endpoint metadata is available, but this SDK runtime "
-                "currently connects through the HTTPS HiveMind HTTP protocol transport."
+                "MQTT endpoint metadata is available, but native MQTT runtime is not enabled "
+                "until per-client broker credentials and ACLs are provisioned."
             )
-        endpoint = result.identity.endpoint_for("https")
+        if protocol not in {"https", "wss"}:
+            raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
+        endpoint = result.identity.endpoint_for(protocol)
         if not endpoint:
             raise ThalovantUnsupportedProtocolError(
-                "This hub does not expose an HTTPS endpoint for the SDK runtime."
+                f"This hub does not expose a {protocol.upper()} endpoint for the SDK runtime."
             )
-        return SelectedHubEndpoint(protocol="https", endpoint=endpoint)
+        return SelectedHubEndpoint(protocol=protocol, endpoint=endpoint)
 
     def _request(
         self,

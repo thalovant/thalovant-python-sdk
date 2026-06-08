@@ -42,7 +42,7 @@ from .protocols import (
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 __all__ = [
     "AsyncThalovantAgent",

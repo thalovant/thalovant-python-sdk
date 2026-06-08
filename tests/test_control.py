@@ -1,4 +1,6 @@
-from thalovant import ThalovantControlPlane
+import pytest
+
+from thalovant import ThalovantControlPlane, ThalovantUnsupportedProtocolError
 
 
 class FakeResponse:
@@ -68,5 +70,11 @@ def test_control_plane_bootstrap_generates_local_identity_secrets():
     assert result.identity.site_id == "kiosk"
     assert result.identity.endpoint_for("https") == "https://jokes.thalovant.io:443"
     assert result.selected_protocol == "https"
+    assert (
+        api.require_runtime_protocol(result, protocol="wss").endpoint
+        == "wss://jokes.thalovant.io"
+    )
+    with pytest.raises(ThalovantUnsupportedProtocolError, match="MQTT"):
+        api.require_runtime_protocol(result, protocol="mqtt")
     assert "access_key" not in result.as_dict()["identity"]
     assert result.as_dict(include_secrets=True)["identity"]["access_key"]
