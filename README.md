@@ -70,13 +70,20 @@ The identity file uses the same fields produced for Thalovant hub clients:
     "wss": "wss://hub.example.com/public",
     "mqtt": "mqtts://mqtt.example.com:8883"
   },
-  "protocols": {
-    "wss": {"enabled": true},
-    "http": {"enabled": true},
-    "mqtt": {"enabled": false}
-  }
-}
-```
+	  "protocols": {
+	    "wss": {"enabled": true},
+	    "http": {"enabled": true},
+	    "mqtt": {"enabled": false}
+	  },
+	  "mqtt": {
+	    "endpoint": "mqtts://mqtt.example.com:8883",
+	    "username": "client-access-key",
+	    "password": "client-broker-password",
+	    "topic_prefix": "hivemind/hub/client-access-key",
+	    "tls": true
+	  }
+	}
+	```
 
 Environment variables are also supported:
 
@@ -88,6 +95,9 @@ export THALOVANT_SITE_ID=...
 export THALOVANT_HUB_HTTP_HOST=https://hub.example.com
 export THALOVANT_HUB_WSS_HOST=wss://hub.example.com
 export THALOVANT_HUB_MQTT_HOST=mqtts://mqtt.example.com:8883
+export THALOVANT_MQTT_USERNAME=...
+export THALOVANT_MQTT_PASSWORD=...
+export THALOVANT_MQTT_TOPIC_PREFIX=hivemind/hub/client
 export THALOVANT_HUB_HTTP_PORT=443
 export THALOVANT_HUB_HTTP_PATH=/public
 ```
@@ -117,7 +127,9 @@ with ThalovantClient(result.identity) as client:
 
 The SDK generates `apiKey`, `password`, and `cryptoKey` locally and sends them
 to the API once. The API can store them in Vault and return only secret
-references; `result.identity` is the usable local client identity. Do not log
+references. When MQTT is enabled for the hub, the API also returns a per-client
+broker password and ACL-scoped topic prefix on `result.identity.mqtt`.
+`result.identity` is the usable local client identity. Do not log
 `result.identity.as_dict(include_secrets=True)`.
 
 ## Protocols
@@ -145,9 +157,9 @@ The Python runtime supports HTTPS and WSS:
 client = ThalovantClient(identity, protocol="wss")
 ```
 
-MQTT endpoint metadata is exposed for broker diagnostics and future client
-transports. Native MQTT runtime remains guarded until per-client broker
-credentials and ACLs are provisioned.
+MQTT broker credentials are exposed on `identity.mqtt` when the hub enables
+MQTT. Native MQTT runtime remains guarded in this Python SDK until the upstream
+HiveMind MQTT client transport is ready.
 
 ## Conversations
 

@@ -47,7 +47,9 @@ Methods:
 
 `create_client_identity` generates client secrets locally, sends them once to
 the API, and returns `BootstrapIdentityResult.identity`. API responses may
-contain only Vault-backed secret references.
+contain only Vault-backed secret references on normal resources. One-time
+identity responses include MQTT broker credentials on `identity.mqtt` when the
+hub exposes MQTT.
 
 ### `AsyncThalovantClient`
 

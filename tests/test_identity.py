@@ -103,6 +103,33 @@ def test_identity_uses_protocol_aware_data_plane_endpoints():
     assert identity.supports_protocol("https")
 
 
+def test_identity_loads_mqtt_credentials_and_redacts_by_default():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "key",
+            "password": "password",
+            "site_id": "site",
+            "default_master": "wss://hub.example.com",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://mqtt.example.com:8883",
+                "username": "key",
+                "password": "broker-password",
+                "topic_prefix": "hivemind/hub/key",
+            },
+        }
+    )
+
+    assert identity.mqtt is not None
+    assert identity.mqtt.endpoint == "mqtts://mqtt.example.com:8883"
+    assert identity.mqtt.username == "key"
+    assert identity.as_dict()["mqtt"] == {
+        "endpoint": "mqtts://mqtt.example.com:8883",
+        "tls": True,
+    }
+    assert identity.as_dict(include_secrets=True)["mqtt"]["password"] == "broker-password"
+
+
 def test_builds_data_plane_endpoints_from_hub_resource():
     endpoints = HubDataPlaneEndpoints.from_hub(
         {

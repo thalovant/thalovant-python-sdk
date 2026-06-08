@@ -24,7 +24,7 @@ from .events import (
     EventPredicate,
     ThalovantEvent,
 )
-from .identity import ThalovantIdentity
+from .identity import MqttBrokerCredentials, ThalovantIdentity
 from .models import (
     ThalovantDoctorCheck,
     ThalovantDoctorReport,
@@ -42,7 +42,7 @@ from .protocols import (
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -60,6 +60,7 @@ __all__ = [
     "HubDataPlaneEndpoints",
     "HubProtocol",
     "HubProtocolSettings",
+    "MqttBrokerCredentials",
     "SelectedHubEndpoint",
     "ThalovantAPIError",
     "ThalovantDisplayItem",

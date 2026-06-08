@@ -16,6 +16,48 @@ _MISSING = object()
 
 
 @dataclass(frozen=True)
+class MqttBrokerCredentials:
+    """Per-client MQTT broker credentials returned by the Thalovant API."""
+
+    endpoint: str
+    username: str
+    password: str
+    topic_prefix: str | None = None
+    tls: bool = True
+
+    @classmethod
+    def from_mapping(cls, values: Mapping[str, Any] | None) -> "MqttBrokerCredentials | None":
+        if not isinstance(values, Mapping):
+            return None
+        endpoint = _optional_string(values, "endpoint", aliases=("broker_url", "brokerUrl"))
+        username = _optional_string(values, "username", aliases=("broker_username", "brokerUsername"))
+        password = _optional_string(values, "password", aliases=("broker_password", "brokerPassword"))
+        if not endpoint or not username or not password:
+            return None
+        topic_prefix = _optional_string(values, "topic_prefix", aliases=("topicPrefix",))
+        return cls(
+            endpoint=endpoint,
+            username=username,
+            password=password,
+            topic_prefix=topic_prefix,
+            tls=_bool_value(values, "tls", default=endpoint.startswith("mqtts://")),
+        )
+
+    def as_dict(self, *, include_secrets: bool = False) -> dict[str, Any]:
+        data: dict[str, Any] = {"endpoint": self.endpoint, "tls": self.tls}
+        if include_secrets:
+            data.update(
+                {
+                    "username": self.username,
+                    "password": self.password,
+                }
+            )
+            if self.topic_prefix:
+                data["topic_prefix"] = self.topic_prefix
+        return data
+
+
+@dataclass(frozen=True)
 class ThalovantIdentity:
     """HiveMind identity material provisioned by Thalovant."""
 
@@ -30,6 +72,7 @@ class ThalovantIdentity:
         default_factory=HubDataPlaneEndpoints
     )
     protocols: HubProtocolSettings = field(default_factory=HubProtocolSettings)
+    mqtt: MqttBrokerCredentials | None = None
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ThalovantIdentity":
@@ -75,6 +118,13 @@ class ThalovantIdentity:
                     or env.get(f"{prefix}HUB_WEBSOCKET_HOST"),
                     "mqtt": env.get(f"{prefix}HUB_MQTT_HOST"),
                 },
+                "mqtt": {
+                    "endpoint": env.get(f"{prefix}MQTT_ENDPOINT")
+                    or env.get(f"{prefix}HUB_MQTT_HOST"),
+                    "username": env.get(f"{prefix}MQTT_USERNAME"),
+                    "password": env.get(f"{prefix}MQTT_PASSWORD"),
+                    "topic_prefix": env.get(f"{prefix}MQTT_TOPIC_PREFIX"),
+                },
             }
         )
 
@@ -110,6 +160,7 @@ class ThalovantIdentity:
             crypto_key=crypto_key,
             data_plane_endpoints=HubDataPlaneEndpoints.from_mapping(values),
             protocols=HubProtocolSettings.from_mapping(values),
+            mqtt=MqttBrokerCredentials.from_mapping(values.get("mqtt")),
         )
 
     def endpoint_base(self) -> str:
@@ -160,6 +211,8 @@ class ThalovantIdentity:
                     "crypto_key": self.crypto_key,
                 }
             )
+        if self.mqtt:
+            data["mqtt"] = self.mqtt.as_dict(include_secrets=include_secrets)
         return data
 
 
@@ -206,6 +259,26 @@ def _int_value(
         raise ThalovantIdentityError(
             f"Identity field must be an integer: {accepted}"
         ) from exc
+
+
+def _bool_value(
+    values: Mapping[str, Any],
+    key: str,
+    *,
+    default: bool,
+    aliases: tuple[str, ...] = (),
+) -> bool:
+    value = _value(values, key, aliases)
+    if value is _MISSING or value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _normalize_path(path: str | None) -> str:

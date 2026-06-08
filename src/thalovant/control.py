@@ -159,17 +159,24 @@ class ThalovantControlPlane:
         endpoints = HubDataPlaneEndpoints.from_hub(hub_resource)
         selected = select_data_plane_endpoint(endpoints, protocols, preferred_protocols)
 
-        identity = ThalovantIdentity(
-            access_key=api_key,
-            password=password,
-            crypto_key=crypto_key,
-            site_id=site,
-            default_master=_default_master(hub_resource, endpoints, selected),
-            default_port=443,
-            default_path="",
-            data_plane_endpoints=endpoints,
-            protocols=protocols,
-        )
+        initial_identify = client.get("initial_identify") if isinstance(client, Mapping) else None
+        if isinstance(initial_identify, Mapping):
+            identity_payload = dict(initial_identify)
+            identity_payload["data_plane_endpoints"] = endpoints.as_dict()
+            identity_payload["protocols"] = protocols.as_dict()
+            identity = ThalovantIdentity.from_mapping(identity_payload)
+        else:
+            identity = ThalovantIdentity(
+                access_key=api_key,
+                password=password,
+                crypto_key=crypto_key,
+                site_id=site,
+                default_master=_default_master(hub_resource, endpoints, selected),
+                default_port=443,
+                default_path="",
+                data_plane_endpoints=endpoints,
+                protocols=protocols,
+            )
         return BootstrapIdentityResult(
             identity=identity,
             hub=hub_resource,
@@ -187,8 +194,8 @@ class ThalovantControlPlane:
 
         if protocol == "mqtt":
             raise ThalovantUnsupportedProtocolError(
-                "MQTT endpoint metadata is available, but native MQTT runtime is not enabled "
-                "until per-client broker credentials and ACLs are provisioned."
+                "MQTT broker credentials are exposed on identity.mqtt when the hub enables MQTT, "
+                "but native MQTT runtime transport is not enabled in this SDK yet."
             )
         if protocol not in {"https", "wss"}:
             raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")

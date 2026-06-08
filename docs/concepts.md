@@ -25,11 +25,13 @@ The SDK accepts the identity fields already used by HiveMind clients:
 
 `default_master` remains the backward-compatible hub endpoint. Newer payloads
 may also include `data_plane_endpoints` for `https`, `wss`, and `mqtt`, plus
-`protocols.wss/http/mqtt.enabled` flags.
+`protocols.wss/http/mqtt.enabled` flags. When MQTT is enabled for a hub,
+identity payloads can also include `mqtt.endpoint`, `mqtt.username`,
+`mqtt.password`, and `mqtt.topic_prefix` for that client.
 
-The Python runtime supports HTTPS and WSS data-plane transports. MQTT endpoint
-metadata is available for broker diagnostics, but native MQTT runtime stays
-guarded until Thalovant provisions per-client broker credentials and ACLs.
+The Python runtime supports HTTPS and WSS data-plane transports. MQTT broker
+credentials are available for broker-aware clients, but native MQTT runtime
+stays guarded in this SDK until the upstream MQTT client transport is ready.
 
 ## Sessions And Request Correlation
 
