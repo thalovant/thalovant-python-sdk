@@ -45,11 +45,11 @@ from .models import (
     ThalovantReply,
 )
 from .subscriptions import ThalovantSubscription
-from .transport import HiveMindHTTPTransport, HiveMindWSSTransport, Transport
+from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSSTransport, Transport
 from .protocols import HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.4"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.6"
 
 
 def _transport_for_protocol(
@@ -77,13 +77,11 @@ def _transport_for_protocol(
             )
         return HiveMindWSSTransport(identity, **kwargs)
     if protocol == "mqtt":
-        endpoint = identity.endpoint_for("mqtt")
-        detail = f" at {endpoint}" if endpoint else ""
-        raise ThalovantUnsupportedProtocolError(
-            "MQTT endpoint metadata is available"
-            f"{detail}, but native MQTT runtime is not enabled in this SDK yet. "
-            "Use HTTPS or WSS until per-client MQTT broker credentials and ACLs are provisioned."
-        )
+        if identity.mqtt is None:
+            raise ThalovantUnsupportedProtocolError(
+                "MQTT is enabled, but the identity does not include MQTT broker credentials."
+            )
+        return HiveMindMQTTTransport(identity, **kwargs)
     raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
 
 
@@ -459,7 +457,7 @@ class ThalovantClient:
                     break
                 self.close()
         raise ThalovantConnectionError(
-            "HiveMind HTTP transport failed while waiting for reply."
+            "HiveMind transport failed while waiting for reply."
         ) from last_error
 
     def _ask_once(
@@ -580,7 +578,7 @@ class ThalovantClient:
                     break
                 self.close()
         raise ThalovantConnectionError(
-            "HiveMind HTTP transport failed after reconnect."
+            "HiveMind transport failed after reconnect."
         ) from last_error
 
     def _raise_if_transport_stopped(self) -> None:
@@ -588,7 +586,7 @@ class ThalovantClient:
             return
         error = self._transport.last_error()
         detail = f": {error}" if error else ""
-        raise ThalovantConnectionError(f"HiveMind HTTP transport stopped{detail}")
+        raise ThalovantConnectionError(f"HiveMind transport stopped{detail}")
 
     def _remove_subscription(
         self, event_name: str, handler: Callable[[Any], None]

@@ -11,7 +11,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 
 @dataclass(frozen=True)
 class ThalovantHealth:
-    """Snapshot of the SDK's live HiveMind HTTP transport state."""
+    """Snapshot of the SDK's live HiveMind transport state."""
 
     connected: bool
     handshake_complete: bool

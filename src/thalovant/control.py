@@ -192,12 +192,11 @@ class ThalovantControlPlane:
     ) -> SelectedHubEndpoint:
         """Validate that a bootstrap result can be used by the current SDK runtime."""
 
-        if protocol == "mqtt":
+        if protocol == "mqtt" and result.identity.mqtt is None:
             raise ThalovantUnsupportedProtocolError(
-                "MQTT broker credentials are exposed on identity.mqtt when the hub enables MQTT, "
-                "but native MQTT runtime transport is not enabled in this SDK yet."
+                "MQTT is enabled, but the API did not return client-scoped MQTT broker credentials."
             )
-        if protocol not in {"https", "wss"}:
+        if protocol not in {"https", "wss", "mqtt"}:
             raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
         endpoint = result.identity.endpoint_for(protocol)
         if not endpoint:

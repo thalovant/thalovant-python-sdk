@@ -23,6 +23,12 @@ class MqttBrokerCredentials:
     username: str
     password: str
     topic_prefix: str | None = None
+    hub_id: str | None = None
+    c2s_topic: str | None = None
+    s2c_topic: str | None = None
+    status_topic: str | None = None
+    hash_topics: bool = False
+    qos: int = 1
     tls: bool = True
 
     @classmethod
@@ -35,11 +41,21 @@ class MqttBrokerCredentials:
         if not endpoint or not username or not password:
             return None
         topic_prefix = _optional_string(values, "topic_prefix", aliases=("topicPrefix",))
+        hub_id = _optional_string(values, "hub_id", aliases=("hubId",))
+        c2s_topic = _optional_string(values, "c2s_topic", aliases=("c2sTopic",))
+        s2c_topic = _optional_string(values, "s2c_topic", aliases=("s2cTopic",))
+        status_topic = _optional_string(values, "status_topic", aliases=("statusTopic",))
         return cls(
             endpoint=endpoint,
             username=username,
             password=password,
             topic_prefix=topic_prefix,
+            hub_id=hub_id,
+            c2s_topic=c2s_topic,
+            s2c_topic=s2c_topic,
+            status_topic=status_topic,
+            hash_topics=_bool_value(values, "hash_topics", aliases=("hashTopics",), default=False),
+            qos=_qos_value(values, "qos", default=1),
             tls=_bool_value(values, "tls", default=endpoint.startswith("mqtts://")),
         )
 
@@ -54,6 +70,18 @@ class MqttBrokerCredentials:
             )
             if self.topic_prefix:
                 data["topic_prefix"] = self.topic_prefix
+            if self.hub_id:
+                data["hub_id"] = self.hub_id
+            if self.c2s_topic:
+                data["c2s_topic"] = self.c2s_topic
+            if self.s2c_topic:
+                data["s2c_topic"] = self.s2c_topic
+            if self.status_topic:
+                data["status_topic"] = self.status_topic
+            if self.hash_topics:
+                data["hash_topics"] = True
+            if self.qos != 1:
+                data["qos"] = self.qos
         return data
 
 
@@ -124,6 +152,12 @@ class ThalovantIdentity:
                     "username": env.get(f"{prefix}MQTT_USERNAME"),
                     "password": env.get(f"{prefix}MQTT_PASSWORD"),
                     "topic_prefix": env.get(f"{prefix}MQTT_TOPIC_PREFIX"),
+                    "hub_id": env.get(f"{prefix}MQTT_HUB_ID"),
+                    "c2s_topic": env.get(f"{prefix}MQTT_C2S_TOPIC"),
+                    "s2c_topic": env.get(f"{prefix}MQTT_S2C_TOPIC"),
+                    "status_topic": env.get(f"{prefix}MQTT_STATUS_TOPIC"),
+                    "hash_topics": env.get(f"{prefix}MQTT_HASH_TOPICS"),
+                    "qos": env.get(f"{prefix}MQTT_QOS"),
                 },
             }
         )
@@ -279,6 +313,17 @@ def _bool_value(
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _qos_value(values: Mapping[str, Any], key: str, *, default: int) -> int:
+    value = _value(values, key)
+    if value is _MISSING or value in (None, ""):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed in {0, 1} else default
 
 
 def _normalize_path(path: str | None) -> str:

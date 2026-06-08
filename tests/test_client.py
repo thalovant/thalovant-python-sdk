@@ -12,6 +12,7 @@ from thalovant import (
     EVENT_SPEAK,
     HubDataPlaneEndpoints,
     HubProtocolSettings,
+    MqttBrokerCredentials,
     ThalovantAgent,
     ThalovantClient,
     ThalovantConnectionError,
@@ -23,6 +24,7 @@ from thalovant import (
 )
 from thalovant.client import _runtime_bus_context, _runtime_crypto_key
 from thalovant.transport import HiveMindWSSTransport
+from thalovant.transport import mqtt_topics_for_identity
 
 
 @dataclass
@@ -141,6 +143,29 @@ def identity_with_wss() -> ThalovantIdentity:
     )
 
 
+def identity_with_mqtt() -> ThalovantIdentity:
+    return ThalovantIdentity(
+        access_key="key",
+        password="password",
+        crypto_key="0123456789abcdef",
+        site_id="site",
+        default_master="https://hub.local",
+        default_port=443,
+        data_plane_endpoints=HubDataPlaneEndpoints(
+            https="https://hub.local/hivemind/public",
+            wss="wss://hub.local/hivemind/public",
+            mqtt="mqtts://mqtt.example.com:8883",
+        ),
+        protocols=HubProtocolSettings(wss=True, http=True, mqtt=True),
+        mqtt=MqttBrokerCredentials(
+            endpoint="mqtts://mqtt.example.com:8883",
+            username="key",
+            password="broker-password",
+            topic_prefix="hivemind/hub/key",
+        ),
+    )
+
+
 def test_ask_emits_utterance_and_collects_speak():
     transport = FakeTransport(answer="The answer")
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
@@ -180,6 +205,29 @@ def test_emit_sends_low_level_event():
 def test_client_rejects_unsupported_runtime_protocol_without_custom_transport():
     with pytest.raises(ThalovantUnsupportedProtocolError, match="MQTT"):
         ThalovantClient(identity(), protocol="mqtt")
+
+
+def test_client_uses_mqtt_transport(monkeypatch):
+    created: dict[str, Any] = {}
+
+    class FakeMQTTTransport(FakeTransport):
+        def __init__(self, identity: ThalovantIdentity, **kwargs: Any):
+            super().__init__()
+            created["identity"] = identity
+            created["kwargs"] = kwargs
+
+    monkeypatch.setattr("thalovant.client.HiveMindMQTTTransport", FakeMQTTTransport)
+
+    client = ThalovantClient(identity_with_mqtt(), protocol="mqtt")
+    client.connect()
+
+    assert created["identity"].mqtt is not None
+    assert created["kwargs"]["useragent"].startswith("ThalovantPythonSDK/")
+    assert mqtt_topics_for_identity(identity_with_mqtt()) == (
+        "hivemind/hub/c2s/key",
+        "hivemind/hub/s2c/key",
+        "hivemind/hub/status/key",
+    )
 
 
 def test_client_uses_wss_transport(monkeypatch):

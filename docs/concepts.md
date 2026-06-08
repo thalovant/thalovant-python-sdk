@@ -29,9 +29,8 @@ may also include `data_plane_endpoints` for `https`, `wss`, and `mqtt`, plus
 identity payloads can also include `mqtt.endpoint`, `mqtt.username`,
 `mqtt.password`, and `mqtt.topic_prefix` for that client.
 
-The Python runtime supports HTTPS and WSS data-plane transports. MQTT broker
-credentials are available for broker-aware clients, but native MQTT runtime
-stays guarded in this SDK until the upstream MQTT client transport is ready.
+The Python runtime supports HTTPS, WSS, and MQTT data-plane transports. MQTT
+requires the per-client broker credentials returned on `identity.mqtt`.
 
 ## Sessions And Request Correlation
 

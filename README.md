@@ -151,15 +151,14 @@ print(identity.endpoint_for("wss"))
 print(identity.endpoint_for("mqtt"))
 ```
 
-The Python runtime supports HTTPS and WSS:
+The Python runtime supports HTTPS, WSS, and MQTT:
 
 ```python
 client = ThalovantClient(identity, protocol="wss")
+client = ThalovantClient(identity, protocol="mqtt")
 ```
 
-MQTT broker credentials are exposed on `identity.mqtt` when the hub enables
-MQTT. Native MQTT runtime remains guarded in this Python SDK until the upstream
-HiveMind MQTT client transport is ready.
+MQTT requires the per-client broker credentials returned on `identity.mqtt`.
 
 ## Conversations
 
@@ -351,8 +350,7 @@ This repository also keeps generated API reference material for maintainers:
 - The Thalovant API remains the control plane for creating clients, rotating or
   revoking identity material, and managing ACL/policy.
 - The data plane is direct hub protocol traffic from this SDK to the hub
-  listener. The SDK supports HTTPS and WSS runtime transports and reads MQTT
-  endpoint metadata for broker diagnostics.
+  listener. The SDK supports HTTPS, WSS, and MQTT runtime transports.
 
 ## Publishing
 

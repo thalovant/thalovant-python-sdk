@@ -91,7 +91,7 @@ does not proxy data-plane messages through the Thalovant API.
 
 ## What The SDK Gives You
 
-- Direct HiveMind HTTPS and WSS transports using existing HiveMind client identity.
+- Direct HiveMind HTTPS, WSS, and MQTT transports using existing HiveMind client identity.
 - Protocol-aware identity helpers for WSS, HTTPS, and MQTT endpoints.
 - `ask`, `send_utterance`, `listen`, and `emit` primitives.
 - Conversation-scoped session and request correlation.

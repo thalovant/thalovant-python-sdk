@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import hashlib
+import json
+import re
+import threading
 import time
-from typing import Any, Callable, Protocol
+import uuid
+from typing import Any, Callable, NamedTuple, Protocol
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .errors import (
@@ -602,6 +607,248 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
             pass
 
 
+class MqttTopicSet(NamedTuple):
+    c2s: str
+    s2c: str
+    status: str
+
+
+class HiveMindMQTTTransport:
+    """MQTT broker-mediated HiveMind transport following hivemind-mqtt-protocol."""
+
+    def __init__(
+        self,
+        identity: ThalovantIdentity,
+        *,
+        useragent: str,
+        connect_timeout: float = 4.0,
+        handshake_timeout: float = 6.0,
+        send_timeout: float = 8.0,
+        **_: Any,
+    ) -> None:
+        self.identity = identity
+        self.useragent = useragent
+        self.connect_timeout = connect_timeout
+        self.handshake_timeout = handshake_timeout
+        self.send_timeout = send_timeout
+        self.session_id = f"thalovant-python-mqtt-{uuid.uuid4().hex}"
+        self.topics = mqtt_topics_for_identity(identity)
+        self._client: Any | None = None
+        self._connected = threading.Event()
+        self._handshake = threading.Event()
+        self._last_error: BaseException | None = None
+        self._handlers: dict[str, list[Callable[[Any], None]]] = {}
+
+    def connect(self) -> None:
+        if self.is_connected():
+            return
+        if self.identity.mqtt is None:
+            raise ThalovantConnectionError("The identity does not include MQTT broker credentials.")
+        mqtt = self._load_mqtt_module()
+        parsed = urlparse(self.identity.mqtt.endpoint)
+        if parsed.scheme not in {"mqtt", "mqtts", "tcp", "ssl"} or not parsed.hostname:
+            raise ThalovantConnectionError("MQTT endpoint must start with mqtt://, mqtts://, tcp://, or ssl://.")
+        client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2,
+            client_id=f"thalovant-{_safe_mqtt_client_id(self.identity.access_key)}",
+        )
+        client.username_pw_set(self.identity.mqtt.username, self.identity.mqtt.password)
+        if self.identity.mqtt.tls or parsed.scheme in {"mqtts", "ssl"}:
+            client.tls_set()
+        client.will_set(self.topics.status, "offline", qos=1, retain=True)
+        client.on_connect = self._on_connect
+        client.on_disconnect = self._on_disconnect
+        client.on_message = self._on_message
+        self._client = client
+        self._last_error = None
+        client.connect(parsed.hostname, parsed.port or (8883 if parsed.scheme in {"mqtts", "ssl"} else 1883), keepalive=60)
+        client.loop_start()
+        if not self._connected.wait(timeout=self.connect_timeout):
+            self.disconnect()
+            raise ThalovantTimeoutError("HiveMind MQTT broker connection timed out.")
+        client.subscribe(self.topics.s2c, qos=self.identity.mqtt.qos)
+        client.publish(self.topics.status, "online", qos=1, retain=True)
+        self._send_hive_message(self._hello_message(), encrypt=False)
+        if not self._handshake.wait(timeout=self.handshake_timeout):
+            self.disconnect()
+            raise ThalovantTimeoutError("HiveMind MQTT handshake timed out.")
+
+    def disconnect(self) -> None:
+        client = self._client
+        self._client = None
+        if client is not None:
+            try:
+                client.publish(self.topics.status, "offline", qos=1, retain=True)
+            except Exception:
+                pass
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:
+                pass
+        self._connected.clear()
+        self._handshake.clear()
+
+    def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
+        self._handlers.setdefault(event_name, []).append(handler)
+
+    def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
+        self._handlers[event_name] = [
+            entry for entry in self._handlers.get(event_name, []) if entry is not handler
+        ]
+
+    def emit_event(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Any:
+        message = {
+            "msg_type": "bus",
+            "payload": {
+                "type": event_type,
+                "data": data,
+                "context": _runtime_bus_context(
+                    context,
+                    useragent=self.useragent,
+                    session_id=self.session_id,
+                    site_id=self.identity.site_id,
+                ),
+            },
+            "metadata": {},
+            "route": [],
+            "node": None,
+            "target_site_id": None,
+            "target_pubkey": None,
+            "source_peer": None,
+        }
+        return self._send_hive_message(message, encrypt=True)
+
+    def healthcheck(self) -> ThalovantHealth:
+        return ThalovantHealth(
+            connected=self._connected.is_set(),
+            handshake_complete=self._handshake.is_set(),
+            transport_alive=self.is_connected(),
+            last_error=str(self._last_error) if self._last_error else None,
+        )
+
+    def is_connected(self) -> bool:
+        client = self._client
+        try:
+            broker_connected = bool(client and client.is_connected())
+        except Exception:
+            broker_connected = False
+        return self._connected.is_set() and self._handshake.is_set() and broker_connected
+
+    def last_error(self) -> BaseException | None:
+        return self._last_error
+
+    def _on_connect(self, _client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
+        if _reason_code_value(reason_code) != 0:
+            self._last_error = ThalovantConnectionError(f"HiveMind MQTT connect failed: {reason_code}")
+            return
+        self._connected.set()
+
+    def _on_disconnect(self, _client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
+        if _reason_code_value(reason_code) != 0:
+            self._last_error = ThalovantConnectionError(f"HiveMind MQTT disconnected: {reason_code}")
+        self._connected.clear()
+
+    def _on_message(self, _client: Any, _userdata: Any, message: Any) -> None:
+        try:
+            self._handle_raw_message(message.payload)
+        except Exception as exc:
+            self._last_error = exc
+            self._connected.clear()
+
+    def _handle_raw_message(self, raw: bytes | str) -> None:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and "ciphertext" in parsed:
+            parsed = json.loads(self._decrypt(raw))
+        if not isinstance(parsed, dict):
+            return
+        msg_type = parsed.get("msg_type")
+        payload = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else {}
+        if msg_type == "handshake":
+            self._handle_handshake(payload)
+        elif msg_type == "bus":
+            event_name = str(payload.get("type") or "")
+            message = _RuntimeBusMessage(
+                data=payload.get("data") if isinstance(payload.get("data"), dict) else {},
+                context=payload.get("context") if isinstance(payload.get("context"), dict) else {},
+                msg_type=event_name,
+            )
+            for handler in tuple(self._handlers.get(event_name, ())):
+                handler(message)
+
+    def _handle_handshake(self, payload: dict[str, Any]) -> None:
+        if payload.get("preshared_key") and not payload.get("handshake") and "envelope" not in payload:
+            if not _runtime_crypto_key(self.identity.crypto_key):
+                raise ThalovantConnectionError("HiveMind requested a preshared key, but identity.crypto_key is missing.")
+            self._send_hive_message(self._hello_message(), encrypt=False)
+            self._handshake.set()
+            return
+        raise ThalovantConnectionError("Only HiveMind preshared-key MQTT handshakes are supported.")
+
+    def _send_hive_message(self, message: dict[str, Any], *, encrypt: bool) -> Any:
+        client = self._client
+        if client is None or not client.is_connected():
+            raise ThalovantConnectionError("HiveMind MQTT transport is not connected.")
+        payload = json.dumps(message, separators=(",", ":"))
+        if encrypt and self._handshake.is_set() and self.identity.crypto_key:
+            payload = self._encrypt(payload)
+        result = client.publish(
+            self.topics.c2s,
+            payload,
+            qos=self.identity.mqtt.qos if self.identity.mqtt else 1,
+            retain=False,
+        )
+        result.wait_for_publish(timeout=self.send_timeout)
+        return result
+
+    def _hello_message(self) -> dict[str, Any]:
+        return {
+            "msg_type": "hello",
+            "payload": {
+                "pubkey": "",
+                "session": {"session_id": self.session_id},
+                "site_id": self.identity.site_id,
+            },
+            "metadata": {},
+            "route": [],
+            "node": None,
+            "target_site_id": None,
+            "target_pubkey": None,
+            "source_peer": None,
+        }
+
+    def _encrypt(self, payload: str) -> str:
+        from hivemind_bus_client.encryption import encrypt_as_json
+
+        key = _runtime_crypto_key(self.identity.crypto_key)
+        if not key:
+            raise ThalovantConnectionError("HiveMind MQTT encryption requires identity.crypto_key.")
+        return encrypt_as_json(key, payload, cipher="AES-GCM", encoding="JSON-HEX")
+
+    def _decrypt(self, payload: str) -> str:
+        from hivemind_bus_client.encryption import decrypt_from_json
+
+        key = _runtime_crypto_key(self.identity.crypto_key)
+        if not key:
+            raise ThalovantConnectionError("HiveMind MQTT decryption requires identity.crypto_key.")
+        return decrypt_from_json(key, payload, cipher="AES-GCM", encoding="JSON-HEX")
+
+    @staticmethod
+    def _load_mqtt_module() -> Any:
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError as exc:
+            raise ThalovantConnectionError("Install paho-mqtt before using MQTT runtime transport.") from exc
+        return mqtt
+
+
 @dataclass(frozen=True)
 class _HiveMindDeps:
     HiveMindHTTPClient: Any
@@ -622,3 +869,66 @@ def _endpoint_host(parsed: Any) -> str:
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return host
+
+
+@dataclass(frozen=True)
+class _RuntimeBusMessage:
+    data: dict[str, Any]
+    context: dict[str, Any]
+    msg_type: str
+
+
+def mqtt_topics_for_identity(identity: ThalovantIdentity) -> MqttTopicSet:
+    credentials = identity.mqtt
+    if credentials is None:
+        raise ThalovantConnectionError("The identity does not include MQTT broker credentials.")
+    satellite_id = (
+        hashlib.sha256(identity.access_key.encode("utf-8")).hexdigest()[:16]
+        if credentials.hash_topics
+        else identity.access_key
+    )
+    if credentials.c2s_topic and credentials.s2c_topic:
+        return MqttTopicSet(
+            credentials.c2s_topic,
+            credentials.s2c_topic,
+            credentials.status_topic or _sibling_mqtt_topic(credentials.c2s_topic, "status"),
+        )
+    raw = credentials.topic_prefix.strip("/") if credentials.topic_prefix else ""
+    if raw:
+        if "/c2s/" in raw:
+            return MqttTopicSet(raw, _sibling_mqtt_topic(raw, "s2c"), _sibling_mqtt_topic(raw, "status"))
+        if "/s2c/" in raw:
+            return MqttTopicSet(_sibling_mqtt_topic(raw, "c2s"), raw, _sibling_mqtt_topic(raw, "status"))
+        if "/status/" in raw:
+            return MqttTopicSet(_sibling_mqtt_topic(raw, "c2s"), _sibling_mqtt_topic(raw, "s2c"), raw)
+        parts = raw.split("/")
+        base = "/".join(parts[:-1]) if parts[-1] in {identity.access_key, credentials.username, satellite_id} else raw
+    elif credentials.hub_id:
+        base = f"hivemind/{credentials.hub_id.strip('/')}"
+    else:
+        raise ThalovantConnectionError("MQTT credentials must include topic_prefix, hub_id, or explicit c2s/s2c topics.")
+    return MqttTopicSet(
+        f"{base}/c2s/{satellite_id}",
+        f"{base}/s2c/{satellite_id}",
+        f"{base}/status/{satellite_id}",
+    )
+
+
+def _sibling_mqtt_topic(topic: str, segment: str) -> str:
+    return re.sub(r"/(?:c2s|s2c|status)/", f"/{segment}/", topic, count=1)
+
+
+def _safe_mqtt_client_id(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_-]", "-", value)[:48]
+    return normalized or uuid.uuid4().hex
+
+
+def _reason_code_value(reason_code: Any) -> int:
+    try:
+        return int(reason_code)
+    except (TypeError, ValueError):
+        value = getattr(reason_code, "value", 0)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0

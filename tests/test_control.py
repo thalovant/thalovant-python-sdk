@@ -140,6 +140,7 @@ def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():
     assert result.identity.mqtt.endpoint == "mqtts://broker.thalovant.io:8883"
     assert result.identity.mqtt.password == "broker-password"
     assert result.identity.endpoint_for("mqtt") == "mqtts://broker.thalovant.io:8883"
+    assert api.require_runtime_protocol(result, protocol="mqtt").endpoint == "mqtts://broker.thalovant.io:8883"
     assert result.as_dict()["identity"]["mqtt"] == {
         "endpoint": "mqtts://broker.thalovant.io:8883",
         "tls": True,

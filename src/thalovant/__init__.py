@@ -41,8 +41,9 @@ from .protocols import (
 )
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
+from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.5"
+__version__ = "0.4.6"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -61,7 +62,9 @@ __all__ = [
     "HubProtocol",
     "HubProtocolSettings",
     "MqttBrokerCredentials",
+    "MqttTopicSet",
     "SelectedHubEndpoint",
+    "HiveMindMQTTTransport",
     "ThalovantAPIError",
     "ThalovantDisplayItem",
     "ThalovantAgent",
@@ -82,6 +85,7 @@ __all__ = [
     "ThalovantTimeoutError",
     "ThalovantUnsupportedProtocolError",
     "build_client_context",
+    "mqtt_topics_for_identity",
     "select_data_plane_endpoint",
     "strip_ssml",
 ]
