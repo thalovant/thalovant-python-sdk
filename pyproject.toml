@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thalovant"
-version = "0.4.10"
+version = "0.4.11"
 description = "Python SDK and CLI for direct Thalovant hub data-plane clients and agents"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Thalovant" }]
