@@ -41,7 +41,9 @@ Methods:
 
 - `login(email, password, scope=None)`
 - `list_hubs(limit=100, cursor=None, owner_id=None)`
+- `list_public_hubs(limit=24, cursor=None)`
 - `get_hub(hub_id)`
+- `get_public_hub(hub_ref)`
 - `create_client(payload, idempotency_key=None)`
 - `create_client_identity(hub, name, site_id=None, spec=None, owner_id=None, active=True, preferred_protocols=("https", "wss", "mqtt"))`
 

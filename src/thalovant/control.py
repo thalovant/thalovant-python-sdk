@@ -22,7 +22,7 @@ from .protocols import (
     select_data_plane_endpoint,
 )
 
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.3"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.8"
 
 
 @dataclass(frozen=True)
@@ -97,10 +97,28 @@ class ThalovantControlPlane:
             params["owner_id"] = owner_id
         return self._request("GET", "/v1/hubs", params=params)
 
+    def list_public_hubs(
+        self,
+        *,
+        limit: int = 24,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List public, active hubs available for discovery without API auth."""
+
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/v1/public/hubs", params=params, auth=False)
+
     def get_hub(self, hub_id: str) -> dict[str, Any]:
         """Fetch one hub resource."""
 
         return self._request("GET", f"/v1/hubs/{hub_id}")
+
+    def get_public_hub(self, hub_ref: str) -> dict[str, Any]:
+        """Fetch one public hub by slug or id without API auth."""
+
+        return self._request("GET", f"/v1/public/hubs/{hub_ref}", auth=False)
 
     def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""

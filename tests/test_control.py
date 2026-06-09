@@ -21,6 +21,35 @@ class FakeSession:
         self.requests.append((method, url, kwargs))
         if url.endswith("/v1/auth/token"):
             return FakeResponse(200, {"access_token": "token", "expires_in": 3600})
+        if url.endswith("/v1/public/hubs"):
+            assert "authorization" not in kwargs["headers"]
+            assert kwargs["params"] == {"limit": 12}
+            return FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "hub-public",
+                            "name": "joke-garden",
+                            "slug": "joke-garden",
+                            "title": "Joke Garden",
+                        }
+                    ],
+                    "meta": {"count": 1, "next": None},
+                    "links": {"next": None},
+                },
+            )
+        if url.endswith("/v1/public/hubs/joke-garden"):
+            assert "authorization" not in kwargs["headers"]
+            return FakeResponse(
+                200,
+                {
+                    "id": "hub-public",
+                    "name": "joke-garden",
+                    "slug": "joke-garden",
+                    "title": "Joke Garden",
+                },
+            )
         if url.endswith("/v1/hubs/hub-1"):
             return FakeResponse(
                 200,
@@ -127,6 +156,17 @@ def test_control_plane_bootstrap_generates_local_identity_secrets():
         api.require_runtime_protocol(result, protocol="mqtt")
     assert "access_key" not in result.as_dict()["identity"]
     assert result.as_dict(include_secrets=True)["identity"]["access_key"]
+
+
+def test_control_plane_lists_public_hubs_without_auth():
+    session = FakeSession()
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+
+    page = api.list_public_hubs(limit=12)
+    hub = api.get_public_hub("joke-garden")
+
+    assert page["data"][0]["slug"] == "joke-garden"
+    assert hub["title"] == "Joke Garden"
 
 
 def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():

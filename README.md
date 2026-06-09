@@ -114,10 +114,14 @@ Keep identity files secret. They are client credentials, not public API keys.
 You can also provision a client identity through the Thalovant API:
 
 ```python
-from thalovant import ThalovantControlPlane
+from thalovant import ThalovantClient, ThalovantControlPlane
 
 api = ThalovantControlPlane("https://dash.thalovant.com/api")
 api.login("you@example.com", "password")
+
+public_hubs = api.list_public_hubs(limit=12)
+for hub in public_hubs["data"]:
+    print(hub["slug"], hub["title"])
 
 result = api.create_client_identity("hub-id", name="kiosk-1")
 
