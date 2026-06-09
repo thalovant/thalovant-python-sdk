@@ -9,7 +9,7 @@ pip install thalovant
 ```python
 from thalovant import ThalovantClient, ThalovantControlPlane
 
-api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api = ThalovantControlPlane()
 api.login("you@example.com", "password")
 
 result = api.create_client_identity("hub-id", name="python-demo-client")
@@ -44,6 +44,9 @@ with ThalovantClient(result.identity, protocol="wss") as client:
 The Thalovant API provisions identities, policies, and endpoints. Runtime
 messages go directly from the SDK to the hub data plane.
 
+`ThalovantControlPlane()` uses `https://api.thalovant.com` by default. Pass a
+different URL only for local development or a self-hosted control plane.
+
 Authenticated control-plane API actions require API access on the workspace.
 
 ## Common Workflows
@@ -53,7 +56,7 @@ Authenticated control-plane API actions require API access on the workspace.
     ```python
     from thalovant import ThalovantControlPlane
 
-    api = ThalovantControlPlane("https://dash.thalovant.com/api")
+    api = ThalovantControlPlane()
     page = api.list_public_hubs(limit=12)
 
     for hub in page["data"]:

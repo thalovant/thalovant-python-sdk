@@ -39,7 +39,7 @@ This is the normal first integration flow.
 ```python
 from thalovant import ThalovantClient, ThalovantControlPlane
 
-api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api = ThalovantControlPlane()
 
 # Public hub discovery does not require auth.
 public_hubs = api.list_public_hubs(limit=12)
@@ -60,6 +60,9 @@ with ThalovantClient(result.identity, protocol="wss") as client:
     print(reply.text)
 ```
 
+`ThalovantControlPlane()` uses `https://api.thalovant.com` by default. Pass a
+different URL only for local development or a self-hosted control plane.
+
 Keep `result.identity` secret. It contains the client credentials used by the
 hub. Do not log `result.identity.as_dict(include_secrets=True)`.
 
@@ -68,7 +71,7 @@ hub. Do not log `result.identity.as_dict(include_secrets=True)`.
 Authenticated accounts can list owned or visible hubs:
 
 ```python
-api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api = ThalovantControlPlane()
 api.login("you@example.com", "password")
 
 page = api.list_hubs(limit=50)

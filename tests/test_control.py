@@ -158,6 +158,18 @@ def test_control_plane_bootstrap_generates_local_identity_secrets():
     assert result.as_dict(include_secrets=True)["identity"]["access_key"]
 
 
+def test_control_plane_uses_public_api_default_and_normalizes_v1_root():
+    assert ThalovantControlPlane().api_url == "https://api.thalovant.com/"
+    assert (
+        ThalovantControlPlane("https://api.thalovant.com/v1").api_url
+        == "https://api.thalovant.com/"
+    )
+    assert (
+        ThalovantControlPlane("https://dash.example.com/api/v1").api_url
+        == "https://dash.example.com/api/"
+    )
+
+
 def test_control_plane_lists_public_hubs_without_auth():
     session = FakeSession()
     api = ThalovantControlPlane("https://dash.example.com/api", session=session)

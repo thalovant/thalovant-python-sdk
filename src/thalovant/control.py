@@ -22,7 +22,8 @@ from .protocols import (
     select_data_plane_endpoint,
 )
 
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.8"
+DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.9"
 
 
 @dataclass(frozen=True)
@@ -55,14 +56,14 @@ class ThalovantControlPlane:
 
     def __init__(
         self,
-        api_url: str,
+        api_url: str = DEFAULT_CONTROL_API_URL,
         *,
         access_token: str | None = None,
         timeout: float = 10.0,
         user_agent: str = DEFAULT_CONTROL_USER_AGENT,
         session: requests.Session | None = None,
     ) -> None:
-        self.api_url = api_url.rstrip("/") + "/"
+        self.api_url = _normalize_control_api_url(api_url)
         self.access_token = access_token
         self.timeout = timeout
         self.user_agent = user_agent
@@ -271,6 +272,15 @@ class ThalovantControlPlane:
 
 def _new_secret() -> str:
     return secrets.token_urlsafe(32)
+
+
+def _normalize_control_api_url(api_url: str) -> str:
+    """Normalize the API root while accepting versioned roots for convenience."""
+
+    trimmed = (api_url or DEFAULT_CONTROL_API_URL).strip().rstrip("/")
+    if trimmed.endswith("/v1"):
+        trimmed = trimmed[:-3]
+    return trimmed.rstrip("/") + "/"
 
 
 def _required_str(values: Mapping[str, Any], key: str) -> str:

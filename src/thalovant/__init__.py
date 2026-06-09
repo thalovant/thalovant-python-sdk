@@ -2,7 +2,7 @@
 
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
-from .control import BootstrapIdentityResult, ThalovantControlPlane
+from .control import BootstrapIdentityResult, DEFAULT_CONTROL_API_URL, ThalovantControlPlane
 from .context import build_client_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
@@ -51,6 +51,7 @@ __all__ = [
     "AsyncThalovantConversation",
     "BootstrapIdentityResult",
     "DEFAULT_PROTOCOL_PREFERENCE",
+    "DEFAULT_CONTROL_API_URL",
     "EVENT_INTENT_FAILURE",
     "EVENT_POLICY_DENIED",
     "EVENT_RECOGNIZER_LOOP_UTTERANCE",

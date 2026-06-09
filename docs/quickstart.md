@@ -15,7 +15,7 @@ Public discovery does not require a login.
 ```python
 from thalovant import ThalovantControlPlane
 
-api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api = ThalovantControlPlane()
 
 page = api.list_public_hubs(limit=12)
 for hub in page["data"]:
