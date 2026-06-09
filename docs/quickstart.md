@@ -1,7 +1,6 @@
 # Quickstart
 
-This guide verifies a Thalovant identity, sends an utterance, and listens for a
-hub event.
+This guide takes you from discovery to a live hub request.
 
 ## 1. Install
 
@@ -9,65 +8,114 @@ hub event.
 pip install thalovant
 ```
 
-For local development from this repository:
+## 2. Discover Public Hubs
 
-```bash
-pip install -e ".[dev]"
+Public discovery does not require a login.
+
+```python
+from thalovant import ThalovantControlPlane
+
+api = ThalovantControlPlane("https://dash.thalovant.com/api")
+
+page = api.list_public_hubs(limit=12)
+for hub in page["data"]:
+    print(hub["id"], hub["slug"], hub["title"])
 ```
 
-## 2. Save An Identity
+Use `api.get_public_hub("joke-garden")` to load one hub by slug or id.
 
-Save the identity created by Thalovant as `_identity.json`:
+## 3. Create A Client Identity
 
-```json
-{
-  "access_key": "client-access-key",
-  "password": "client-password",
-  "crypto_key": "optional-preshared-key",
-  "site_id": "my-client-site",
-  "default_master": "https://hub.example.com",
-  "default_port": 443
-}
+Authenticate with an account that has API access, then create a client identity
+for the hub you want to use.
+
+```python
+api.login("you@example.com", "password")
+
+result = api.create_client_identity(
+    "hub-id",
+    name="python-demo-client",
+    preferred_protocols=("wss", "https", "mqtt"),
+)
+
+identity = result.identity
 ```
 
-The identity is secret. Do not commit it.
+The SDK generates client secrets locally and sends them to the API once. Treat
+the returned identity like a password.
 
-## 3. Run Diagnostics
+To list hubs visible to the authenticated account:
 
-```bash
-thalovant --identity _identity.json doctor
+```python
+page = api.list_hubs(limit=50)
+for hub in page["data"]:
+    print(hub["id"], hub["slug"], hub["title"])
 ```
-
-The doctor command checks identity shape, endpoint configuration, authentication,
-handshake completion, and the live polling thread.
 
 ## 4. Ask The Hub
 
 ```python
 from thalovant import ThalovantClient
 
-with ThalovantClient.from_identity_file("_identity.json") as client:
+with ThalovantClient(identity, protocol="wss") as client:
     reply = client.ask("Tell me a short clean joke.")
     print(reply.text)
 ```
 
-## 5. Use A Conversation
+## 5. Save The Identity
 
-Use a conversation when a client or agent sends related turns:
+Save identities only in a secret store or a local file ignored by git.
+
+```python
+import json
+from pathlib import Path
+
+Path("_identity.json").write_text(
+    json.dumps(identity.as_dict(include_secrets=True), indent=2),
+    encoding="utf-8",
+)
+```
+
+Later:
 
 ```python
 from thalovant import ThalovantClient
 
+with ThalovantClient.from_identity_file("_identity.json") as client:
+    print(client.ask("What can you help with?").text)
+```
+
+## 6. Choose A Protocol
+
+```python
+print(identity.enabled_protocols())
+print(identity.endpoint_for("wss"))
+print(identity.endpoint_for("https"))
+print(identity.endpoint_for("mqtt"))
+```
+
+Connect explicitly:
+
+```python
+with ThalovantClient(identity, protocol="https") as client:
+    print(client.ask("Reply over HTTPS.").text)
+```
+
+MQTT requires `identity.mqtt`. If it is missing, create or download a fresh
+identity after MQTT is enabled on the hub.
+
+## 7. Use A Conversation
+
+Use a conversation when related turns should share one session.
+
+```python
 with ThalovantClient.from_identity_file("_identity.json") as client:
     with client.conversation(lang="en-us") as convo:
         print(convo.ask("Remember that my favorite color is blue.").text)
         print(convo.ask("What color did I mention?").text)
 ```
 
-The conversation reuses a stable session id and adds request correlation
-metadata automatically.
-
-## 6. Listen For Events
+## 8. Listen For Events
 
 ```python
 from thalovant import EVENT_SPEAK, ThalovantClient
@@ -78,3 +126,12 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 ```
 
 Use `timeout` and `max_events` in scripts so they do not block forever.
+
+## 9. Run Diagnostics
+
+```bash
+thalovant --identity _identity.json doctor
+```
+
+`doctor` checks the identity, endpoint selection, authentication, handshake,
+and transport health.

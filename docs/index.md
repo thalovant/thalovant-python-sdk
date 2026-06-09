@@ -1,24 +1,27 @@
 # Thalovant Python SDK
 
-Build Python clients and agents that connect directly to Thalovant HiveMind hubs
-over the hub data plane.
+Build Python clients and agents that connect directly to Thalovant hubs.
 
 ```bash
 pip install thalovant
 ```
 
 ```python
-from thalovant import ThalovantClient
+from thalovant import ThalovantClient, ThalovantControlPlane
 
-with ThalovantClient.from_identity_file("_identity.json") as client:
-    reply = client.ask("Tell me a short clean joke.")
-    print(reply.text)
+api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api.login("you@example.com", "password")
+
+result = api.create_client_identity("hub-id", name="python-demo-client")
+
+with ThalovantClient(result.identity, protocol="wss") as client:
+    print(client.ask("Tell me a short clean joke.").text)
 ```
 
 <div class="thalovant-home-grid" markdown>
 
 [:material-rocket-launch-outline: Quickstart](quickstart.md)
-: Verify an identity, run diagnostics, ask the hub, and listen for events.
+: Discover a hub, create a client identity, connect, and ask.
 
 [:material-account-voice: Agents](guides/conversations-and-agents.md)
 : Build long-running sync or async workers with decorators and scoped sessions.
@@ -31,22 +34,31 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 
 </div>
 
-## How It Fits
+## How It Works
 
-```mermaid
-flowchart LR
-    API[Thalovant API / dashboard<br/>identity and policy]
-    SDK[Python SDK / CLI<br/>direct hub data plane]
-    Hub[hivemind-listener<br/>OVOS bus and skills]
+1. Use `ThalovantControlPlane` to discover public hubs and create a client identity.
+2. Store the returned identity securely.
+3. Use `ThalovantClient` or `AsyncThalovantClient` to connect directly to the hub.
+4. Choose `wss`, `https`, or `mqtt` based on what the hub exposes.
 
-    API -->|provisions identity| SDK
-    SDK -->|HTTPS or WSS| Hub
-```
+The Thalovant API provisions identities, policies, and endpoints. Runtime
+messages go directly from the SDK to the hub data plane.
 
-Thalovant is the control plane. The SDK is the developer convenience layer. It
-does not proxy data-plane messages through the Thalovant API.
+Authenticated control-plane API actions require API access on the workspace.
 
 ## Common Workflows
+
+=== "Discover"
+
+    ```python
+    from thalovant import ThalovantControlPlane
+
+    api = ThalovantControlPlane("https://dash.thalovant.com/api")
+    page = api.list_public_hubs(limit=12)
+
+    for hub in page["data"]:
+        print(hub["id"], hub["slug"], hub["title"])
+    ```
 
 === "Ask"
 
@@ -57,15 +69,15 @@ does not proxy data-plane messages through the Thalovant API.
         print(client.ask("What time is it?").text)
     ```
 
-=== "Conversation"
+=== "Protocols"
 
     ```python
-    from thalovant import ThalovantClient
+    identity = result.identity
 
-    with ThalovantClient.from_identity_file("_identity.json") as client:
-        with client.conversation(lang="en-us") as convo:
-            print(convo.ask("Remember that my favorite color is blue.").text)
-            print(convo.ask("What color did I mention?").text)
+    print(identity.enabled_protocols())
+
+    with ThalovantClient(identity, protocol="mqtt") as client:
+        print(client.ask("Reply over MQTT.").text)
     ```
 
 === "Agent"
@@ -82,20 +94,14 @@ does not proxy data-plane messages through the Thalovant API.
     agent.run_forever()
     ```
 
-=== "CLI"
-
-    ```bash
-    thalovant --identity _identity.json doctor
-    thalovant --identity _identity.json ask "Tell me a joke"
-    ```
-
 ## What The SDK Gives You
 
-- Direct HiveMind HTTPS, WSS, and MQTT transports using existing HiveMind client identity.
-- Protocol-aware identity helpers for WSS, HTTPS, and MQTT endpoints.
+- Public hub discovery through the Thalovant API.
+- Client identity provisioning with secrets generated locally.
+- Direct HTTPS, WSS, and MQTT hub transports.
 - `ask`, `send_utterance`, `listen`, and `emit` primitives.
-- Conversation-scoped session and request correlation.
+- Conversation-scoped sessions and request correlation.
+- Generic user, device, auth, channel, and platform context helpers.
 - Sync and async clients.
 - Sync and async long-running agent runners.
 - CLI diagnostics and smoke tests.
-- Typed package marker for IDEs and type checkers.

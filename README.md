@@ -1,16 +1,24 @@
 # Thalovant Python SDK
 
-The Thalovant Python SDK is the developer layer for direct Thalovant hub access.
-Thalovant provisions client identities and policy; this SDK connects directly to
-the hub endpoint over the enabled data-plane protocol.
+Python SDK for connecting apps, services, kiosks, and agents to Thalovant hubs.
+
+The control API is used to discover hubs and provision a client identity. After
+that, the SDK talks directly to the hub data plane over HTTPS, WSS, or MQTTS.
 
 ```text
-Thalovant API / dashboard -> provision identity, policy, and endpoints
-Python SDK / CLI          -> direct hub data-plane connection
-Hub runtime               -> skills, events, and replies
+Thalovant API      -> discover hubs, create client identity
+Python SDK         -> connect to the hub data plane
+Hub runtime        -> skills, events, replies
 ```
 
-Full documentation: [docs.thalovant.com/developers/sdks/python](https://docs.thalovant.com/developers/sdks/python/)
+Full docs: <https://docs.thalovant.com/developers/sdks/python/>
+
+## What You Need
+
+- A Thalovant account with API access for authenticated control-plane actions.
+- A hub id or slug.
+- A client identity for that hub. You can create one through the API or use one
+  downloaded from the dashboard.
 
 ## Install
 
@@ -26,167 +34,167 @@ pip install -e ".[dev]"
 
 ## Quick Start
 
-Download or copy the client identity created in Thalovant, then:
+This is the normal first integration flow.
+
+```python
+from thalovant import ThalovantClient, ThalovantControlPlane
+
+api = ThalovantControlPlane("https://dash.thalovant.com/api")
+
+# Public hub discovery does not require auth.
+public_hubs = api.list_public_hubs(limit=12)
+for hub in public_hubs["data"]:
+    print(hub["id"], hub["slug"], hub["title"])
+
+# Auth is required when creating a client identity.
+api.login("you@example.com", "password")
+
+result = api.create_client_identity(
+    "hub-id",
+    name="python-demo-client",
+    preferred_protocols=("wss", "https", "mqtt"),
+)
+
+with ThalovantClient(result.identity, protocol="wss") as client:
+    reply = client.ask("Tell me a short clean joke.")
+    print(reply.text)
+```
+
+Keep `result.identity` secret. It contains the client credentials used by the
+hub. Do not log `result.identity.as_dict(include_secrets=True)`.
+
+## List Your Hubs
+
+Authenticated accounts can list owned or visible hubs:
+
+```python
+api = ThalovantControlPlane("https://dash.thalovant.com/api")
+api.login("you@example.com", "password")
+
+page = api.list_hubs(limit=50)
+for hub in page["data"]:
+    print(hub["id"], hub["slug"], hub["title"])
+```
+
+## Use An Existing Identity
+
+If you already downloaded an identity from the dashboard or stored one from a
+previous provisioning step:
 
 ```python
 from thalovant import ThalovantClient
 
 with ThalovantClient.from_identity_file("_identity.json") as client:
-    reply = client.ask("Tell me a short clean joke.")
+    reply = client.ask("What can this hub do?")
     print(reply.text)
 ```
 
-For async apps and agent runtimes:
-
-```python
-import asyncio
-from thalovant import AsyncThalovantClient
-
-
-async def main():
-    async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
-        reply = await client.ask("What time is it?")
-        print(reply.text)
-
-
-asyncio.run(main())
-```
-
-## Identity
-
-The identity file uses the same fields produced for Thalovant hub clients:
-
-```json
-{
-  "access_key": "client-access-key",
-  "password": "client-password",
-  "crypto_key": "optional-preshared-key",
-  "site_id": "my-client-site",
-  "default_master": "https://hub.example.com",
-  "default_port": 443,
-  "default_path": "/public",
-  "data_plane_endpoints": {
-    "https": "https://hub.example.com/public",
-    "wss": "wss://hub.example.com/public",
-    "mqtt": "mqtts://mqtt.example.com:8883"
-  },
-	  "protocols": {
-	    "wss": {"enabled": true},
-	    "http": {"enabled": true},
-	    "mqtt": {"enabled": false}
-	  },
-	  "mqtt": {
-	    "endpoint": "mqtts://mqtt.example.com:8883",
-	    "username": "client-access-key",
-	    "password": "client-broker-password",
-	    "topic_prefix": "hivemind/hub/client-access-key",
-	    "tls": true
-	  }
-	}
-	```
-
-Environment variables are also supported:
+Environment variables are supported too:
 
 ```bash
 export THALOVANT_ACCESS_KEY=...
 export THALOVANT_PASSWORD=...
 export THALOVANT_CRYPTO_KEY=...
 export THALOVANT_SITE_ID=...
-export THALOVANT_HUB_HTTP_HOST=https://hub.example.com
+export THALOVANT_HUB_HTTPS_HOST=https://hub.example.com
 export THALOVANT_HUB_WSS_HOST=wss://hub.example.com
-export THALOVANT_HUB_MQTT_HOST=mqtts://mqtt.example.com:8883
+export THALOVANT_HUB_MQTT_HOST=mqtts://mqtt.thalovant.com:8883
 export THALOVANT_MQTT_USERNAME=...
 export THALOVANT_MQTT_PASSWORD=...
-export THALOVANT_MQTT_TOPIC_PREFIX=hivemind/hub/client
-export THALOVANT_HUB_HTTP_PORT=443
-export THALOVANT_HUB_HTTP_PATH=/public
+export THALOVANT_MQTT_TOPIC_PREFIX=hivemind/hub-id/client-id
 ```
 
 ```python
 from thalovant import ThalovantClient
 
-with ThalovantClient.from_env() as client:
-    print(client.ask("Tell me a joke").text)
+with ThalovantClient.from_env(protocol="https") as client:
+    print(client.ask("Say hello.").text)
 ```
 
-Keep identity files secret. They are client credentials, not public API keys.
+## Save A Provisioned Identity
 
-You can also provision a client identity through the Thalovant API:
+Only save identities in a secret store or local developer file that is ignored
+by git.
 
 ```python
-from thalovant import ThalovantClient, ThalovantControlPlane
+import json
+from pathlib import Path
 
-api = ThalovantControlPlane("https://dash.thalovant.com/api")
-api.login("you@example.com", "password")
-
-public_hubs = api.list_public_hubs(limit=12)
-for hub in public_hubs["data"]:
-    print(hub["slug"], hub["title"])
-
-result = api.create_client_identity("hub-id", name="kiosk-1")
-
-with ThalovantClient(result.identity) as client:
-    print(client.ask("Say hello").text)
+Path("_identity.json").write_text(
+    json.dumps(result.identity.as_dict(include_secrets=True), indent=2),
+    encoding="utf-8",
+)
 ```
-
-The SDK generates `apiKey`, `password`, and `cryptoKey` locally and sends them
-to the API once. The API can store them in Vault and return only secret
-references. When MQTT is enabled for the hub, the API also returns a per-client
-broker password and ACL-scoped topic prefix on `result.identity.mqtt`.
-`result.identity` is the usable local client identity. Do not log
-`result.identity.as_dict(include_secrets=True)`.
 
 ## Protocols
 
-The SDK understands the same protocol shape returned by the Thalovant API:
+Hubs may expose one or more public data-plane protocols:
 
-- `protocols.wss.enabled` controls the public WebSocket path.
-- `protocols.http.enabled` exposes the HTTP protocol as HTTPS at the edge.
-- `protocols.mqtt.enabled` exposes MQTT over TLS when enabled for the hub.
+- `wss`: secure realtime WebSocket, the default public path.
+- `https`: request/response HTTP protocol exposed as HTTPS.
+- `mqtt`: broker-mediated MQTT over TLS. Requires per-client broker credentials.
+
+Inspect what an identity supports:
 
 ```python
-from thalovant import ThalovantIdentity
-
-identity = ThalovantIdentity.from_file("_identity.json")
+identity = result.identity
 
 print(identity.enabled_protocols())
-print(identity.endpoint_for("https"))
 print(identity.endpoint_for("wss"))
+print(identity.endpoint_for("https"))
 print(identity.endpoint_for("mqtt"))
+print(identity.mqtt.endpoint if identity.mqtt else None)
 ```
 
-The Python runtime supports HTTPS, WSS, and MQTT:
+Connect with a specific protocol:
 
 ```python
-client = ThalovantClient(identity, protocol="wss")
-client = ThalovantClient(identity, protocol="mqtt")
+from thalovant import ThalovantClient
+
+for protocol in ("wss", "https", "mqtt"):
+    if not result.identity.supports_protocol(protocol):
+        continue
+    if protocol == "mqtt" and result.identity.mqtt is None:
+        continue
+
+    with ThalovantClient(result.identity, protocol=protocol) as client:
+        print(protocol, client.ask(f"Reply over {protocol}.").text)
 ```
 
-MQTT requires the per-client broker credentials returned on `identity.mqtt`.
+MQTT identities include a broker endpoint, username, password, TLS flag, and
+topic prefix. The broker credentials are scoped to that client and should be
+treated like a password.
 
 ## Conversations
 
-Use a conversation when multiple messages should share a stable session and
-correlation context:
+Use a conversation when several turns should share one session.
 
 ```python
 from thalovant import ThalovantClient
 
 with ThalovantClient.from_identity_file("_identity.json") as client:
     with client.conversation(lang="en-us") as convo:
-        first = convo.ask("Remember that my favorite color is blue.")
-        second = convo.ask("What color did I mention?")
-        print(second.text)
+        print(convo.ask("Remember that my favorite color is blue.").text)
+        print(convo.ask("What color did I mention?").text)
 ```
 
-Conversation helpers add session and request metadata automatically. When the
-hub echoes that metadata, SDK listeners filter unrelated events from other
-sessions.
+## Events
+
+You can wait for, stream, or subscribe to hub events.
+
+```python
+from thalovant import EVENT_SPEAK, ThalovantClient
+
+with ThalovantClient.from_identity_file("_identity.json") as client:
+    for event in client.listen(EVENT_SPEAK, timeout=30, max_events=1):
+        print(event.text)
+```
+
+Use timeouts in scripts so they do not wait forever.
 
 ## Client Context
 
-Use `build_client_context` when a web, mobile, kiosk, or service client needs
-to pass user, device, channel, and platform metadata to skills:
+Context lets skills know which app, device, user, or channel made the request.
 
 ```python
 from thalovant import ThalovantClient, build_client_context
@@ -203,15 +211,12 @@ context = build_client_context(
 
 with ThalovantClient.from_identity_file("_identity.json") as client:
     reply = client.ask("Show the next instruction.", context=context)
+    print(reply.text)
 ```
-
-Provider-specific fields can still be passed through `context` or `metadata`.
-The SDK keeps the public helper generic.
 
 ## Actions And Exact Inputs
 
-Use `send_action` for button/quick-reply payloads, and `send_code` for exact
-values such as QR codes, serial numbers, asset IDs, or scanned labels:
+Use actions for button payloads and codes for exact typed or scanned values.
 
 ```python
 with client.conversation(session_id="work-session") as convo:
@@ -219,15 +224,9 @@ with client.conversation(session_id="work-session") as convo:
     convo.send_code("SN-001-XYZ", kind="qr", label="serial")
 ```
 
-Both helpers still emit normal `recognizer_loop:utterance` events, but add
-generic `input` metadata so downstream skills can distinguish typed/scanned
-values from speech transcription.
-
 ## Rich Responses
 
-Assistant responses can include text, choices, images, attachments, and tables.
-Use `reply.display_items()` or `event.display_items()` to render a UI without
-hand-parsing common rich media payloads:
+Replies can include text, choices, tables, images, or attachments.
 
 ```python
 reply = client.ask("Show matching parts.")
@@ -239,130 +238,46 @@ for item in reply.display_items(max_text_chars=600):
         print([choice["title"] for choice in item.data])
 ```
 
-## Agents
-
-Use `ThalovantAgent` for long-running synchronous workers:
-
-```python
-from thalovant import ThalovantAgent, EVENT_SPEAK
-
-agent = ThalovantAgent.from_identity_file("_identity.json")
-
-
-@agent.on(EVENT_SPEAK)
-def handle_speak(event):
-    print(event.text)
-
-
-agent.run_forever()
-```
-
-Async agents work the same way:
+## Async Apps
 
 ```python
 import asyncio
-from thalovant import AsyncThalovantAgent, EVENT_SPEAK
-
-agent = AsyncThalovantAgent.from_identity_file("_identity.json")
+from thalovant import AsyncThalovantClient
 
 
-@agent.on(EVENT_SPEAK)
-async def handle_speak(event):
-    print(event.text)
+async def main():
+    async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
+        reply = await client.ask("What time is it?")
+        print(reply.text)
 
 
-asyncio.run(agent.run_forever())
+asyncio.run(main())
 ```
 
-## CLI
-
-The package installs a `thalovant` command for smoke tests and operational
-debugging:
+## CLI Diagnostics
 
 ```bash
 thalovant --identity _identity.json doctor
-thalovant --identity _identity.json health
-thalovant --identity _identity.json ask "Tell me a joke"
-thalovant --identity _identity.json listen speak --timeout 30 --max-events 3
-thalovant --identity _identity.json emit recognizer_loop:utterance \
-  --data '{"utterances":["hello"],"lang":"en-us"}'
 ```
 
-Add `--json` to commands that return structured output.
+The doctor command checks identity shape, endpoint selection, authentication,
+handshake, and transport health.
 
-## Events
+## Common Issues
 
-For common flows, prefer helpers over raw event strings:
+- `Missing Thalovant API access token`: call `api.login(...)` before private
+  control-plane actions, or pass `access_token=` to `ThalovantControlPlane`.
+- `API access requires a paid plan`: upgrade the workspace before using the SDK
+  control-plane API to provision private resources.
+- `Unsupported protocol`: the hub does not expose that protocol, or the
+  identity was created before that protocol was enabled.
+- MQTT fails immediately: create or download a fresh client identity after MQTT
+  is enabled. MQTT needs the per-client `identity.mqtt` credentials.
+- A request times out: increase `timeout` on `ask(...)` or check `doctor()`.
 
-```python
-from thalovant import EVENT_SPEAK, ThalovantClient
+## Development
 
-with ThalovantClient.from_identity_file("_identity.json") as client:
-    for event in client.listen(EVENT_SPEAK, timeout=30, max_events=1):
-        print(event.text)
+```bash
+pip install -e ".[dev]"
+pytest
 ```
-
-Use `emit` when you already know the hub event shape:
-
-```python
-from thalovant import EVENT_RECOGNIZER_LOOP_UTTERANCE, ThalovantClient
-
-with ThalovantClient.from_identity_file("_identity.json") as client:
-    client.emit(
-        EVENT_RECOGNIZER_LOOP_UTTERANCE,
-        {"utterances": ["turn on the lights"], "lang": "en-us"},
-    )
-```
-
-`ThalovantEvent` normalizes common fields:
-
-- `event.text`
-- `event.utterances`
-- `event.session_id`
-- `event.request_id`
-- `event.is_failure`
-- `event.is_policy_denied`
-
-## Diagnostics
-
-Use `doctor()` before debugging application code:
-
-```python
-with ThalovantClient.from_identity_file("_identity.json") as client:
-    report = client.doctor()
-    print(report.format())
-```
-
-The report checks identity shape, endpoint configuration, hub connection,
-handshake completion, and the live HTTP polling thread.
-
-## Documentation
-
-The canonical public documentation lives on the Thalovant docs site:
-
-- Website: [docs.thalovant.com/developers/sdks/python](https://docs.thalovant.com/developers/sdks/python/)
-
-This repository also keeps generated API reference material for maintainers:
-
-- Local preview: `pip install -e ".[docs]" && mkdocs serve`
-- Build check: `mkdocs build --strict`
-
-## Notes
-
-- This SDK is the developer convenience layer. It does not proxy messages
-  through the Thalovant API.
-- The Thalovant API remains the control plane for creating clients, rotating or
-  revoking identity material, and managing ACL/policy.
-- The data plane is direct hub protocol traffic from this SDK to the hub
-  listener. The SDK supports HTTPS, WSS, and MQTT runtime transports.
-
-## Publishing
-
-This repository is configured for PyPI trusted publishing through
-`.github/workflows/publish.yml`. Use these values in the PyPI publisher form:
-
-- PyPI Project Name: `thalovant`
-- Owner: `thalovant`
-- Repository name: `thalovant-python-sdk`
-- Workflow name: `publish.yml`
-- Environment name: `pypi`
