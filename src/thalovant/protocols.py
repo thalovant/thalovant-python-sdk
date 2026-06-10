@@ -7,7 +7,7 @@ from typing import Any, Iterable, Literal, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 HubProtocol = Literal["wss", "https", "mqtt"]
-DEFAULT_PROTOCOL_PREFERENCE: tuple[HubProtocol, ...] = ("https", "wss", "mqtt")
+DEFAULT_PROTOCOL_PREFERENCE: tuple[HubProtocol, ...] = ("wss", "https", "mqtt")
 
 
 @dataclass(frozen=True)

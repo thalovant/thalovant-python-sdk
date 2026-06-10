@@ -81,8 +81,48 @@ for hub in page["data"]:
 
 ## Use An Existing Identity
 
-If you already downloaded an identity from the dashboard or stored one from a
-previous provisioning step:
+For local development, store one or more identities in the protected SDK config:
+
+```bash
+mkdir -p ~/.config/thalovant
+chmod 700 ~/.config/thalovant
+$EDITOR ~/.config/thalovant/config.yaml
+chmod 600 ~/.config/thalovant/config.yaml
+```
+
+```yaml
+profile: prod
+profiles:
+  prod:
+    identity:
+      access_key: ...
+      password: ...
+      site_id: demo-agent
+      default_master: https://jokes.thalovant.io
+      data_plane_endpoints:
+        wss: wss://jokes.thalovant.io/public
+        https: https://jokes.thalovant.io/public
+        mqtt: mqtts://mqtt.thalovant.com:8883
+      mqtt:
+        endpoint: mqtts://mqtt.thalovant.com:8883
+        username: ...
+        password: ...
+        topic_prefix: hubs/hub-id/clients/client-id
+        tls: true
+```
+
+```python
+from thalovant import ThalovantClient
+
+with ThalovantClient.from_config(profile="prod") as client:
+    reply = client.ask("What can this hub do?")
+    print(reply.text)
+```
+
+SDKs reject config files that are readable or writable by other users on Linux
+and macOS. Keep this file out of git.
+
+Raw identity files are supported too:
 
 ```python
 from thalovant import ThalovantClient
@@ -133,7 +173,7 @@ Path("_identity.json").write_text(
 
 Hubs may expose one or more public data-plane protocols:
 
-- `wss`: secure realtime WebSocket, the default public path.
+- `wss`: secure realtime WebSocket, the default public path and SDK preference.
 - `https`: request/response HTTP protocol exposed as HTTPS.
 - `mqtt`: broker-mediated MQTT over TLS. Requires per-client broker credentials.
 
@@ -250,7 +290,7 @@ from thalovant import AsyncThalovantClient
 
 
 async def main():
-    async with AsyncThalovantClient.from_identity_file("_identity.json") as client:
+    async with AsyncThalovantClient.from_config(profile="prod") as client:
         reply = await client.ask("What time is it?")
         print(reply.text)
 
@@ -278,6 +318,29 @@ handshake, and transport health.
 - MQTT fails immediately: create or download a fresh client identity after MQTT
   is enabled. MQTT needs the per-client `identity.mqtt` credentials.
 - A request times out: increase `timeout` on `ask(...)` or check `doctor()`.
+
+## API Shape
+
+- `ThalovantControlPlane()`
+- `ThalovantControlPlane(api_url, access_token=...)` for local or self-hosted control planes
+- `control.login(email, password, scope=None)`
+- `control.list_public_hubs(limit=...)`
+- `control.get_public_hub(hub_ref)`
+- `control.list_hubs(limit=..., owner_id=...)`
+- `control.get_hub(hub_id)`
+- `control.create_client_identity(hub_id, ...)`
+- `ThalovantIdentity.from_config(path=None, profile=None)`
+- `ThalovantIdentity.from_file(path)`
+- `ThalovantClient.from_config(path=None, profile=None)`
+- `ThalovantClient.from_identity_file(path)`
+- `ThalovantClient.from_env()`
+- `ThalovantClient(identity, protocol="wss")`
+- `client.ask(text, context=...)`
+- `client.send_utterance(text, context=...)`
+- `client.send_action(payload, ...)`
+- `client.send_code(value, ...)`
+- `client.listen(event_name, ...)`
+- `client.conversation(...)`
 
 ## Development
 

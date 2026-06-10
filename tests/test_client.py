@@ -23,7 +23,7 @@ from thalovant import (
     build_client_context,
 )
 from thalovant.client import _runtime_bus_context, _runtime_crypto_key
-from thalovant.transport import HiveMindWSSTransport
+from thalovant.transport import HiveMindHTTPTransport, HiveMindWSSTransport
 from thalovant.transport import _mqtt_default_port, _mqtt_tls_enabled
 from thalovant.transport import mqtt_topics_for_identity
 
@@ -267,6 +267,18 @@ def test_client_uses_mqtt_transport(monkeypatch):
         "hivemind/hub/s2c/key",
         "hivemind/hub/status/key",
     )
+
+
+def test_client_prefers_wss_when_no_protocol_is_forced():
+    client = ThalovantClient(identity_with_wss())
+
+    assert isinstance(client._transport, HiveMindWSSTransport)
+
+
+def test_client_falls_back_to_https_when_wss_endpoint_is_missing():
+    client = ThalovantClient(identity())
+
+    assert isinstance(client._transport, HiveMindHTTPTransport)
 
 
 def test_mqtt_topics_include_hub_id_when_prefix_is_generic():

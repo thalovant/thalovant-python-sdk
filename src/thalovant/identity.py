@@ -6,13 +6,29 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import stat
 from typing import Any, Mapping
+
+import yaml
 
 from .errors import ThalovantIdentityError
 from .protocols import HubDataPlaneEndpoints, HubProtocol, HubProtocolSettings
 
 
 _MISSING = object()
+DEFAULT_CONFIG_FILENAME = "config.yaml"
+
+
+def default_config_path() -> Path:
+    """Return the default per-user Thalovant SDK config path."""
+
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    if config_home:
+        return Path(config_home).expanduser() / "thalovant" / DEFAULT_CONFIG_FILENAME
+    appdata = os.environ.get("APPDATA")
+    if os.name == "nt" and appdata:
+        return Path(appdata).expanduser() / "Thalovant" / DEFAULT_CONFIG_FILENAME
+    return Path.home() / ".config" / "thalovant" / DEFAULT_CONFIG_FILENAME
 
 
 @dataclass(frozen=True)
@@ -122,6 +138,31 @@ class ThalovantIdentity:
         if not isinstance(raw, Mapping):
             raise ThalovantIdentityError("Identity file must contain a JSON object.")
         return cls.from_mapping(raw)
+
+    @classmethod
+    def from_config(
+        cls,
+        path: str | Path | None = None,
+        *,
+        profile: str | None = None,
+    ) -> "ThalovantIdentity":
+        """Load identity material from a protected YAML config file."""
+
+        config_path = Path(path).expanduser() if path is not None else default_config_path()
+        _assert_secure_config_file(config_path)
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except OSError as exc:
+            raise ThalovantIdentityError(
+                f"Unable to read Thalovant config file: {config_path}"
+            ) from exc
+        except yaml.YAMLError as exc:
+            raise ThalovantIdentityError(
+                f"Thalovant config file is not valid YAML: {config_path}"
+            ) from exc
+        if not isinstance(raw, Mapping):
+            raise ThalovantIdentityError("Thalovant config file must contain a YAML object.")
+        return cls.from_mapping(_identity_config_mapping(raw, profile=profile))
 
     @classmethod
     def from_env(cls, prefix: str = "THALOVANT_") -> "ThalovantIdentity":
@@ -260,6 +301,45 @@ def _value(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()) -
         if value is not _MISSING:
             return value
     return _MISSING
+
+
+def _identity_config_mapping(
+    values: Mapping[str, Any],
+    *,
+    profile: str | None,
+) -> Mapping[str, Any]:
+    profiles = values.get("profiles")
+    if isinstance(profiles, Mapping):
+        profile_name = (
+            profile
+            or _optional_string(values, "profile", aliases=("default_profile", "defaultProfile"))
+            or "default"
+        )
+        selected = profiles.get(profile_name)
+        if not isinstance(selected, Mapping):
+            raise ThalovantIdentityError(f"Missing Thalovant config profile: {profile_name}")
+        return _profile_identity_mapping(selected)
+    return _profile_identity_mapping(values)
+
+
+def _profile_identity_mapping(values: Mapping[str, Any]) -> Mapping[str, Any]:
+    identity = values.get("identity")
+    if isinstance(identity, Mapping):
+        return identity
+    return values
+
+
+def _assert_secure_config_file(path: Path) -> None:
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError as exc:
+        raise ThalovantIdentityError(
+            f"Unable to read Thalovant config file: {path}"
+        ) from exc
+    if os.name != "nt" and mode & 0o077:
+        raise ThalovantIdentityError(
+            f"Thalovant config file is too permissive: {path}. Run `chmod 600 {path}`."
+        )
 
 
 def _required_string(

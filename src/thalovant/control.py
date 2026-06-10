@@ -23,7 +23,7 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.12"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.13"
 
 
 @dataclass(frozen=True)
@@ -207,10 +207,12 @@ class ThalovantControlPlane:
         self,
         result: BootstrapIdentityResult,
         *,
-        protocol: HubProtocol = "https",
+        protocol: HubProtocol | None = None,
     ) -> SelectedHubEndpoint:
         """Validate that a bootstrap result can be used by the current SDK runtime."""
 
+        if protocol is None:
+            protocol = result.selected_protocol or "wss"
         if protocol == "mqtt" and result.identity.mqtt is None:
             raise ThalovantUnsupportedProtocolError(
                 "MQTT is enabled, but the API did not return client-scoped MQTT broker credentials."

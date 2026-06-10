@@ -24,7 +24,7 @@ from .events import (
     EventPredicate,
     ThalovantEvent,
 )
-from .identity import MqttBrokerCredentials, ThalovantIdentity
+from .identity import MqttBrokerCredentials, ThalovantIdentity, default_config_path
 from .models import (
     ThalovantDoctorCheck,
     ThalovantDoctorReport,
@@ -43,7 +43,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.12"
+__version__ = "0.4.13"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -86,6 +86,7 @@ __all__ = [
     "ThalovantTimeoutError",
     "ThalovantUnsupportedProtocolError",
     "build_client_context",
+    "default_config_path",
     "mqtt_topics_for_identity",
     "select_data_plane_endpoint",
     "strip_ssml",

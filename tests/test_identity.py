@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -9,6 +10,12 @@ from thalovant import (
     ThalovantIdentityError,
     select_data_plane_endpoint,
 )
+
+
+def _secure_config(path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    if os.name != "nt":
+        path.chmod(0o600)
 
 
 def test_loads_identity_from_file(tmp_path):
@@ -35,6 +42,50 @@ def test_loads_identity_from_file(tmp_path):
     assert identity.site_id == "client-site"
     assert identity.default_master == "http://hub.local"
     assert identity.default_port == 5679
+
+
+def test_loads_identity_from_yaml_config_profile(tmp_path):
+    path = tmp_path / "config.yaml"
+    _secure_config(
+        path,
+        """
+version: 1
+profile: prod
+profiles:
+  prod:
+    identity:
+      access_key: key
+      password: password
+      crypto_key: crypto
+      site_id: client-site
+      default_master: https://hub.example.com
+      default_port: 443
+      mqtt:
+        endpoint: mqtts://mqtt.example.com:8883
+        username: key
+        password: broker-password
+        topic_prefix: hivemind/hub/key
+""",
+    )
+
+    identity = ThalovantIdentity.from_config(path)
+
+    assert identity.access_key == "key"
+    assert identity.crypto_key == "crypto"
+    assert identity.default_master == "https://hub.example.com"
+    assert identity.mqtt is not None
+    assert identity.mqtt.password == "broker-password"
+
+
+def test_rejects_permissive_yaml_config(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows ACLs are not represented by POSIX mode bits")
+    path = tmp_path / "config.yaml"
+    path.write_text("identity: {}\n", encoding="utf-8")
+    path.chmod(0o644)
+
+    with pytest.raises(ThalovantIdentityError, match="too permissive"):
+        ThalovantIdentity.from_config(path)
 
 
 def test_loads_identity_aliases():

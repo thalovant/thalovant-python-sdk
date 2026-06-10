@@ -46,10 +46,27 @@ from .models import (
 )
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSSTransport, Transport
-from .protocols import HubProtocol
+from .protocols import DEFAULT_PROTOCOL_PREFERENCE, HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.12"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.13"
+
+
+def _default_runtime_protocol(identity: ThalovantIdentity) -> HubProtocol:
+    for protocol in DEFAULT_PROTOCOL_PREFERENCE:
+        if protocol == "wss":
+            if identity.supports_protocol("wss") and identity.endpoint_for("wss"):
+                return "wss"
+            continue
+        if protocol == "https":
+            if identity.supports_protocol("https") or identity.endpoint_for("https"):
+                return "https"
+            continue
+        if protocol == "mqtt" and identity.supports_protocol("mqtt") and identity.mqtt:
+            return "mqtt"
+    raise ThalovantUnsupportedProtocolError(
+        "The identity does not include a usable WSS, HTTPS, or MQTT endpoint."
+    )
 
 
 def _transport_for_protocol(
@@ -99,7 +116,7 @@ class ThalovantClient:
         reply_settle_seconds: float = 0.25,
         auto_reconnect: bool = True,
         reconnect_attempts: int = 1,
-        protocol: HubProtocol = "https",
+        protocol: HubProtocol | None = None,
         transport: Transport | None = None,
     ) -> None:
         self.identity = identity
@@ -109,7 +126,7 @@ class ThalovantClient:
         self.reconnect_attempts = max(0, reconnect_attempts)
         self._transport = transport or _transport_for_protocol(
             identity,
-            protocol=protocol,
+            protocol=protocol or _default_runtime_protocol(identity),
             useragent=useragent,
             connect_timeout=connect_timeout,
             handshake_timeout=handshake_timeout,
@@ -132,6 +149,18 @@ class ThalovantClient:
         """Create a client from `THALOVANT_*` environment variables."""
 
         return cls(ThalovantIdentity.from_env(), **kwargs)
+
+    @classmethod
+    def from_config(
+        cls,
+        path: str | Path | None = None,
+        *,
+        profile: str | None = None,
+        **kwargs: Any,
+    ) -> "ThalovantClient":
+        """Create a client from the per-user Thalovant YAML config."""
+
+        return cls(ThalovantIdentity.from_config(path, profile=profile), **kwargs)
 
     def __enter__(self) -> "ThalovantClient":
         self.connect()
@@ -658,6 +687,16 @@ class AsyncThalovantClient:
     @classmethod
     def from_env(cls, **kwargs: Any) -> "AsyncThalovantClient":
         return cls(ThalovantIdentity.from_env(), **kwargs)
+
+    @classmethod
+    def from_config(
+        cls,
+        path: str | Path | None = None,
+        *,
+        profile: str | None = None,
+        **kwargs: Any,
+    ) -> "AsyncThalovantClient":
+        return cls(ThalovantIdentity.from_config(path, profile=profile), **kwargs)
 
     async def __aenter__(self) -> "AsyncThalovantClient":
         await self.connect()

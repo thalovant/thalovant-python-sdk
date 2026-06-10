@@ -147,7 +147,8 @@ def test_control_plane_bootstrap_generates_local_identity_secrets():
     assert result.identity.crypto_key
     assert result.identity.site_id == "kiosk"
     assert result.identity.endpoint_for("https") == "https://jokes.thalovant.io:443"
-    assert result.selected_protocol == "https"
+    assert result.selected_protocol == "wss"
+    assert api.require_runtime_protocol(result).endpoint == "wss://jokes.thalovant.io"
     assert (
         api.require_runtime_protocol(result, protocol="wss").endpoint
         == "wss://jokes.thalovant.io"

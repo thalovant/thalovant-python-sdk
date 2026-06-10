@@ -29,6 +29,16 @@ class ThalovantAgent:
         return cls(ThalovantIdentity.from_file(path), **kwargs)
 
     @classmethod
+    def from_config(
+        cls,
+        path: str | Path | None = None,
+        *,
+        profile: str | None = None,
+        **kwargs: Any,
+    ) -> "ThalovantAgent":
+        return cls(ThalovantIdentity.from_config(path, profile=profile), **kwargs)
+
+    @classmethod
     def from_env(cls, **kwargs: Any) -> "ThalovantAgent":
         return cls(ThalovantIdentity.from_env(), **kwargs)
 
@@ -126,6 +136,16 @@ class AsyncThalovantAgent:
     @classmethod
     def from_identity_file(cls, path: str | Path, **kwargs: Any) -> "AsyncThalovantAgent":
         return cls(ThalovantIdentity.from_file(path), **kwargs)
+
+    @classmethod
+    def from_config(
+        cls,
+        path: str | Path | None = None,
+        *,
+        profile: str | None = None,
+        **kwargs: Any,
+    ) -> "AsyncThalovantAgent":
+        return cls(ThalovantIdentity.from_config(path, profile=profile), **kwargs)
 
     @classmethod
     def from_env(cls, **kwargs: Any) -> "AsyncThalovantAgent":
