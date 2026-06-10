@@ -24,6 +24,7 @@ from thalovant import (
 )
 from thalovant.client import _runtime_bus_context, _runtime_crypto_key
 from thalovant.transport import HiveMindWSSTransport
+from thalovant.transport import _mqtt_default_port, _mqtt_tls_enabled
 from thalovant.transport import mqtt_topics_for_identity
 
 
@@ -291,6 +292,20 @@ def test_mqtt_topics_include_hub_id_when_prefix_is_generic():
         "hivemind/hub/s2c/key",
         "hivemind/hub/status/key",
     )
+
+
+def test_mqtt_tls_flag_controls_default_port():
+    credentials = MqttBrokerCredentials(
+        endpoint="mqtt://mqtt.example.com",
+        username="key",
+        password="broker-password",
+        topic_prefix="hivemind/hub",
+        tls=True,
+    )
+
+    assert _mqtt_tls_enabled(credentials, "mqtt") is True
+    assert _mqtt_default_port(tls_enabled=True) == 8883
+    assert _mqtt_default_port(tls_enabled=False) == 1883
 
 
 def test_client_uses_wss_transport(monkeypatch):

@@ -661,12 +661,13 @@ class HiveMindMQTTTransport:
         parsed = urlparse(self.identity.mqtt.endpoint)
         if parsed.scheme not in {"mqtt", "mqtts", "tcp", "ssl"} or not parsed.hostname:
             raise ThalovantConnectionError("MQTT endpoint must start with mqtt://, mqtts://, tcp://, or ssl://.")
+        tls_enabled = _mqtt_tls_enabled(self.identity.mqtt, parsed.scheme)
         client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"thalovant-{_safe_mqtt_client_id(self.identity.access_key)}",
         )
         client.username_pw_set(self.identity.mqtt.username, self.identity.mqtt.password)
-        if self.identity.mqtt.tls or parsed.scheme in {"mqtts", "ssl"}:
+        if tls_enabled:
             client.tls_set()
         client.will_set(self.topics.status, "offline", qos=1, retain=True)
         client.on_connect = self._on_connect
@@ -675,7 +676,7 @@ class HiveMindMQTTTransport:
         client.on_message = self._on_message
         self._client = client
         self._last_error = None
-        client.connect(parsed.hostname, parsed.port or (8883 if parsed.scheme in {"mqtts", "ssl"} else 1883), keepalive=60)
+        client.connect(parsed.hostname, parsed.port or _mqtt_default_port(tls_enabled), keepalive=60)
         client.loop_start()
         if not self._connected.wait(timeout=self.connect_timeout):
             self.disconnect()
@@ -1047,6 +1048,14 @@ def _sibling_mqtt_topic(topic: str, segment: str) -> str:
 def _safe_mqtt_client_id(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9_-]", "-", value)[:48]
     return normalized or uuid.uuid4().hex
+
+
+def _mqtt_tls_enabled(credentials: Any, scheme: str) -> bool:
+    return bool(getattr(credentials, "tls", False)) or scheme in {"mqtts", "ssl"}
+
+
+def _mqtt_default_port(tls_enabled: bool) -> int:
+    return 8883 if tls_enabled else 1883
 
 
 def _message_type_value(value: Any) -> str:
