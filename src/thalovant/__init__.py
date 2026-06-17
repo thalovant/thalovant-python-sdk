@@ -43,7 +43,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.13"
+__version__ = "0.4.14"
 
 __all__ = [
     "AsyncThalovantAgent",
