@@ -18,20 +18,24 @@ def _secure_config(path, content: str) -> None:
         path.chmod(0o600)
 
 
+def _secure_json(path, content: dict) -> None:
+    path.write_text(json.dumps(content), encoding="utf-8")
+    if os.name != "nt":
+        path.chmod(0o600)
+
+
 def test_loads_identity_from_file(tmp_path):
     path = tmp_path / "_identity.json"
-    path.write_text(
-        json.dumps(
-            {
-                "access_key": "key",
-                "password": "password",
-                "crypto_key": "crypto",
-                "site_id": "client-site",
-                "default_master": "http://hub.local/",
-                "default_port": "5679",
-            }
-        ),
-        encoding="utf-8",
+    _secure_json(
+        path,
+        {
+            "access_key": "key",
+            "password": "password",
+            "crypto_key": "crypto",
+            "site_id": "client-site",
+            "default_master": "http://hub.local/",
+            "default_port": "5679",
+        },
     )
 
     identity = ThalovantIdentity.from_file(path)
@@ -42,6 +46,27 @@ def test_loads_identity_from_file(tmp_path):
     assert identity.site_id == "client-site"
     assert identity.default_master == "http://hub.local"
     assert identity.default_port == 5679
+
+
+def test_rejects_permissive_identity_file(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows ACLs are not represented by POSIX mode bits")
+    path = tmp_path / "_identity.json"
+    path.write_text(
+        json.dumps(
+            {
+                "access_key": "key",
+                "password": "password",
+                "site_id": "client-site",
+                "default_master": "http://hub.local/",
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o644)
+
+    with pytest.raises(ThalovantIdentityError, match="too permissive"):
+        ThalovantIdentity.from_file(path)
 
 
 def test_loads_identity_from_yaml_config_profile(tmp_path):

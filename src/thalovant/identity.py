@@ -124,6 +124,7 @@ class ThalovantIdentity:
         """Load identity material from a JSON file."""
 
         identity_path = Path(path).expanduser()
+        _assert_secure_identity_file(identity_path)
         try:
             raw = json.loads(identity_path.read_text(encoding="utf-8"))
         except OSError as exc:
@@ -330,15 +331,21 @@ def _profile_identity_mapping(values: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _assert_secure_config_file(path: Path) -> None:
+    _assert_secure_secret_file(path, "Thalovant config file")
+
+
+def _assert_secure_identity_file(path: Path) -> None:
+    _assert_secure_secret_file(path, "identity file")
+
+
+def _assert_secure_secret_file(path: Path, description: str) -> None:
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
     except OSError as exc:
-        raise ThalovantIdentityError(
-            f"Unable to read Thalovant config file: {path}"
-        ) from exc
+        raise ThalovantIdentityError(f"Unable to read {description}: {path}") from exc
     if os.name != "nt" and mode & 0o077:
         raise ThalovantIdentityError(
-            f"Thalovant config file is too permissive: {path}. Run `chmod 600 {path}`."
+            f"{description.capitalize()} is too permissive: {path}. Run `chmod 600 {path}`."
         )
 
 
