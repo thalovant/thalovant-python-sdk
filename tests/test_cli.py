@@ -59,6 +59,7 @@ def identity_file(tmp_path):
         ),
         encoding="utf-8",
     )
+    path.chmod(0o600)
     return path
 
 
