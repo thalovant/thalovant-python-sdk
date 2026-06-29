@@ -209,12 +209,12 @@ class ThalovantIdentity:
     def from_mapping(cls, values: Mapping[str, Any]) -> "ThalovantIdentity":
         """Normalize identity material from a Thalovant/HiveMind mapping."""
 
-        access_key = _required_string(values, "access_key", aliases=("key", "api_key"))
+        access_key = _required_string(values, "access_key", aliases=("key", "api_key", "apiKey"))
         password = _required_string(values, "password")
         default_master = _required_string(
             values,
             "default_master",
-            aliases=("host", "hub_http_host", "master"),
+            aliases=("defaultMaster", "host", "hub_http_host", "hubHttpHost", "master"),
         )
         site_id = _required_string(values, "site_id", aliases=("siteId", "site"))
         default_port = _int_value(

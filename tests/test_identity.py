@@ -206,6 +206,36 @@ def test_identity_loads_mqtt_credentials_and_redacts_by_default():
     assert identity.as_dict(include_secrets=True)["mqtt"]["password"] == "broker-password"
 
 
+def test_identity_loads_operator_generated_client_config_aliases():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "apiKey": "client-access-key",
+            "password": "client-password",
+            "cryptoKey": "client-crypto",
+            "site_id": "32",
+            "defaultMaster": "https://daily-desk.thalovant.io",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://mqtt.thalovant.com:8883",
+                "brokerUsername": "client-access-key",
+                "brokerPassword": "broker-password",
+                "topicPrefix": "hivemind",
+                "hubId": "hub-alpha",
+            },
+        }
+    )
+
+    assert identity.access_key == "client-access-key"
+    assert identity.crypto_key == "client-crypto"
+    assert identity.site_id == "32"
+    assert identity.default_master == "https://daily-desk.thalovant.io"
+    assert identity.mqtt is not None
+    assert identity.mqtt.username == "client-access-key"
+    assert identity.mqtt.password == "broker-password"
+    assert identity.mqtt.topic_prefix == "hivemind"
+    assert identity.mqtt.hub_id == "hub-alpha"
+
+
 def test_builds_data_plane_endpoints_from_hub_resource():
     endpoints = HubDataPlaneEndpoints.from_hub(
         {
