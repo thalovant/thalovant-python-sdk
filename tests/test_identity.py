@@ -69,6 +69,36 @@ def test_rejects_permissive_identity_file(tmp_path):
         ThalovantIdentity.from_file(path)
 
 
+def test_loads_identity_from_kubernetes_projected_secret(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Kubernetes projected Secret symlinks use POSIX paths")
+    mount = tmp_path / "client-secret"
+    data_dir = mount / "..2026_06_29_00_00_00.000000000"
+    data_dir.mkdir(parents=True)
+    target = data_dir / "client-config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "apiKey": "key",
+                "password": "password",
+                "clientId": "client-site",
+                "defaultMaster": "https://hub.example.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+    target.chmod(0o644)
+    (mount / "..data").symlink_to(data_dir.name)
+    path = mount / "client-config.json"
+    path.symlink_to("..data/client-config.json")
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+    identity = ThalovantIdentity.from_file(path)
+
+    assert identity.access_key == "key"
+    assert identity.site_id == "client-site"
+
+
 def test_loads_identity_from_yaml_config_profile(tmp_path):
     path = tmp_path / "config.yaml"
     _secure_config(

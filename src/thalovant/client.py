@@ -49,7 +49,7 @@ from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSS
 from .protocols import DEFAULT_PROTOCOL_PREFERENCE, HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.14"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.16"
 
 
 def _default_runtime_protocol(identity: ThalovantIdentity) -> HubProtocol:

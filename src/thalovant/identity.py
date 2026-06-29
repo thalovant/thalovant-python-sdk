@@ -216,7 +216,11 @@ class ThalovantIdentity:
             "default_master",
             aliases=("defaultMaster", "host", "hub_http_host", "hubHttpHost", "master"),
         )
-        site_id = _required_string(values, "site_id", aliases=("siteId", "site"))
+        site_id = _required_string(
+            values,
+            "site_id",
+            aliases=("siteId", "site", "client_id", "clientId"),
+        )
         default_port = _int_value(
             values, "default_port", aliases=("port", "hub_http_port")
         )
@@ -343,10 +347,20 @@ def _assert_secure_secret_file(path: Path, description: str) -> None:
         mode = stat.S_IMODE(path.stat().st_mode)
     except OSError as exc:
         raise ThalovantIdentityError(f"Unable to read {description}: {path}") from exc
-    if os.name != "nt" and mode & 0o077:
+    if os.name != "nt" and mode & 0o077 and not _is_kubernetes_projected_secret_file(path):
         raise ThalovantIdentityError(
             f"{description.capitalize()} is too permissive: {path}. Run `chmod 600 {path}`."
         )
+
+
+def _is_kubernetes_projected_secret_file(path: Path) -> bool:
+    if not os.environ.get("KUBERNETES_SERVICE_HOST"):
+        return False
+    try:
+        data_link = path.parent / "..data"
+        return data_link.is_symlink() and path.is_symlink()
+    except OSError:
+        return False
 
 
 def _required_string(
