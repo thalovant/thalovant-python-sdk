@@ -50,6 +50,106 @@ class FakeSession:
                     "title": "Joke Garden",
                 },
             )
+        if url.endswith("/v1/memory"):
+            assert kwargs["headers"]["authorization"] == "Bearer token"
+            if method == "GET":
+                assert kwargs["params"] == {
+                    "scope": "workspace",
+                    "kind": "preference",
+                    "owner_id": "owner-1",
+                    "hub_id": "hub-1",
+                    "q": "timezone",
+                    "include_deleted": "true",
+                    "include_expired": "true",
+                    "limit": 25,
+                    "offset": 50,
+                }
+                return FakeResponse(
+                    200,
+                    {
+                        "data": [{"id": "memory-1", "content": "Use UTC."}],
+                        "meta": {"count": 1, "next": None},
+                        "links": {"next": None},
+                    },
+                )
+            if method == "POST":
+                assert kwargs["json"] == {
+                    "scope": "workspace",
+                    "kind": "preference",
+                    "content": "Use UTC.",
+                    "owner_id": "owner-1",
+                    "hub_id": "hub-1",
+                    "consent_scope": "daily_desk_memory",
+                    "retention_policy": "user_controlled",
+                }
+                return FakeResponse(
+                    201,
+                    {
+                        "id": "memory-1",
+                        "scope": "workspace",
+                        "kind": "preference",
+                        "content": "Use UTC.",
+                    },
+                )
+        if url.endswith("/v1/memory/summary"):
+            assert kwargs["headers"]["authorization"] == "Bearer token"
+            assert kwargs["params"] == {"owner_id": "owner-1"}
+            return FakeResponse(
+                200,
+                {
+                    "total": 1,
+                    "by_scope": {"workspace": 1},
+                    "by_kind": {"preference": 1},
+                    "expired": 0,
+                    "deleted": 0,
+                },
+            )
+        if url.endswith("/v1/memory/memory-1"):
+            assert kwargs["headers"]["authorization"] == "Bearer token"
+            if method == "GET":
+                return FakeResponse(
+                    200,
+                    {
+                        "id": "memory-1",
+                        "scope": "workspace",
+                        "kind": "preference",
+                        "content": "Use UTC.",
+                    },
+                )
+            if method == "PATCH":
+                assert kwargs["json"] == {
+                    "content": "Use America/Toronto.",
+                    "clear_expires_at": True,
+                }
+                return FakeResponse(
+                    200,
+                    {
+                        "id": "memory-1",
+                        "scope": "workspace",
+                        "kind": "preference",
+                        "content": "Use America/Toronto.",
+                    },
+                )
+            if method == "DELETE":
+                return FakeResponse(204, "")
+        if url.endswith("/v1/admin/analytics/overview"):
+            assert kwargs["headers"]["authorization"] == "Bearer token"
+            assert kwargs["params"] == {
+                "range": "30d",
+                "bucket": "1d",
+                "owner_id": "owner-1",
+                "hub_id": "hub-1",
+                "client_id": "client-1",
+                "country": "CA",
+                "message": "speak",
+                "utterance": "hello",
+                "intent": "DailyDeskIntent",
+                "time_start": "2026-05-03T20:00:00Z",
+                "time_end": "2026-05-03T21:00:00Z",
+                "weekday": 6,
+                "hour": 0,
+            }
+            return FakeResponse(200, {"meta": {"scope": "admin"}, "totals": {"utterances": 7}})
         if url.endswith("/v1/hubs/hub-1"):
             return FakeResponse(
                 200,
@@ -180,6 +280,83 @@ def test_control_plane_lists_public_hubs_without_auth():
 
     assert page["data"][0]["slug"] == "joke-garden"
     assert hub["title"] == "Joke Garden"
+
+
+def test_control_plane_manages_memory_items():
+    session = FakeSession()
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api",
+        access_token="token",
+        session=session,
+    )
+
+    page = api.list_memory_items(
+        scope="workspace",
+        kind="preference",
+        owner_id="owner-1",
+        hub_id="hub-1",
+        query="timezone",
+        include_deleted=True,
+        include_expired=True,
+        limit=25,
+        offset=50,
+    )
+    summary = api.get_memory_summary(owner_id="owner-1")
+    created = api.create_memory_item(
+        {
+            "scope": "workspace",
+            "kind": "preference",
+            "content": "Use UTC.",
+            "ownerId": "owner-1",
+            "hubId": "hub-1",
+            "consentScope": "daily_desk_memory",
+            "retentionPolicy": "user_controlled",
+        }
+    )
+    item = api.get_memory_item("memory-1")
+    updated = api.update_memory_item(
+        "memory-1",
+        {
+            "content": "Use America/Toronto.",
+            "clearExpiresAt": True,
+        },
+    )
+    api.delete_memory_item("memory-1")
+
+    assert len(page["data"]) == 1
+    assert summary["total"] == 1
+    assert created["id"] == "memory-1"
+    assert item["content"] == "Use UTC."
+    assert updated["content"] == "Use America/Toronto."
+
+
+def test_control_plane_get_analytics_overview():
+    session = FakeSession()
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api",
+        access_token="token",
+        session=session,
+    )
+
+    overview = api.get_analytics_overview(
+        admin=True,
+        range="30d",
+        bucket="1d",
+        owner_id="owner-1",
+        hub_id="hub-1",
+        client_id="client-1",
+        country="CA",
+        message="speak",
+        utterance="hello",
+        intent="DailyDeskIntent",
+        time_start="2026-05-03T20:00:00Z",
+        time_end="2026-05-03T21:00:00Z",
+        weekday=6,
+        hour=0,
+    )
+
+    assert overview["meta"]["scope"] == "admin"
+    assert overview["totals"]["utterances"] == 7
 
 
 def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():

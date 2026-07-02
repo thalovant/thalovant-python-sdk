@@ -23,7 +23,7 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.13"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.17"
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,104 @@ class ThalovantControlPlane:
         if cursor:
             params["cursor"] = cursor
         return self._request("GET", "/v1/public/hubs", params=params, auth=False)
+
+    def list_memory_items(
+        self,
+        *,
+        scope: str | None = None,
+        kind: str | None = None,
+        owner_id: str | None = None,
+        hub_id: str | None = None,
+        query: str | None = None,
+        include_deleted: bool = False,
+        include_expired: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
+        """List durable memory items visible to the authenticated user."""
+
+        params: dict[str, Any] = {}
+        _set_param(params, "scope", scope)
+        _set_param(params, "kind", kind)
+        _set_param(params, "owner_id", owner_id)
+        _set_param(params, "hub_id", hub_id)
+        _set_param(params, "q", query)
+        if include_deleted:
+            params["include_deleted"] = "true"
+        if include_expired:
+            params["include_expired"] = "true"
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        return self._request("GET", "/v1/memory", params=params)
+
+    def get_memory_summary(self, *, owner_id: str | None = None) -> dict[str, Any]:
+        """Summarize durable memory by scope and kind."""
+
+        params: dict[str, Any] = {}
+        _set_param(params, "owner_id", owner_id)
+        return self._request("GET", "/v1/memory/summary", params=params)
+
+    def create_memory_item(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a durable memory item."""
+
+        return self._request("POST", "/v1/memory", json=_memory_payload(payload))
+
+    def get_memory_item(self, memory_id: str) -> dict[str, Any]:
+        """Fetch one durable memory item by id."""
+
+        return self._request("GET", f"/v1/memory/{memory_id}")
+
+    def update_memory_item(self, memory_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Update a durable memory item."""
+
+        return self._request("PATCH", f"/v1/memory/{memory_id}", json=_memory_payload(payload))
+
+    def delete_memory_item(self, memory_id: str) -> None:
+        """Soft-delete a durable memory item."""
+
+        self._request("DELETE", f"/v1/memory/{memory_id}")
+
+    def get_analytics_overview(
+        self,
+        *,
+        admin: bool = False,
+        range: str | None = None,
+        bucket: str | None = None,
+        owner_id: str | None = None,
+        hub_id: str | None = None,
+        client_id: str | None = None,
+        country: str | None = None,
+        message: str | None = None,
+        utterance: str | None = None,
+        intent: str | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+        weekday: int | None = None,
+        hour: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch the workspace or admin analytics overview used by the dashboard."""
+
+        params: dict[str, Any] = {}
+        _set_param(params, "range", range)
+        _set_param(params, "bucket", bucket)
+        if admin:
+            _set_param(params, "owner_id", owner_id)
+        _set_param(params, "hub_id", hub_id)
+        _set_param(params, "client_id", client_id)
+        _set_param(params, "country", country)
+        _set_param(params, "message", message)
+        _set_param(params, "utterance", utterance)
+        _set_param(params, "intent", intent)
+        _set_param(params, "time_start", time_start)
+        _set_param(params, "time_end", time_end)
+        if weekday is not None:
+            params["weekday"] = weekday
+        if hour is not None:
+            params["hour"] = hour
+        endpoint = "/v1/admin/analytics/overview" if admin else "/v1/analytics/overview"
+        return self._request("GET", endpoint, params=params)
 
     def get_hub(self, hub_id: str) -> dict[str, Any]:
         """Fetch one hub resource."""
@@ -263,6 +361,8 @@ class ThalovantControlPlane:
 
         if response.status_code < 200 or response.status_code >= 300:
             raise ThalovantAPIError(_error_detail(response))
+        if not response.text.strip():
+            return {}
         try:
             body = response.json()
         except ValueError as exc:
@@ -283,6 +383,27 @@ def _normalize_control_api_url(api_url: str) -> str:
     if trimmed.endswith("/v1"):
         trimmed = trimmed[:-3]
     return trimmed.rstrip("/") + "/"
+
+
+def _set_param(params: dict[str, Any], key: str, value: str | None) -> None:
+    if value and value.strip():
+        params[key] = value
+
+
+def _memory_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    data = dict(payload)
+    for source, target in (
+        ("ownerId", "owner_id"),
+        ("hubId", "hub_id"),
+        ("consentScope", "consent_scope"),
+        ("consentVersion", "consent_version"),
+        ("retentionPolicy", "retention_policy"),
+        ("expiresAt", "expires_at"),
+        ("clearExpiresAt", "clear_expires_at"),
+    ):
+        if source in data:
+            data[target] = data.pop(source)
+    return data
 
 
 def _required_str(values: Mapping[str, Any], key: str) -> str:

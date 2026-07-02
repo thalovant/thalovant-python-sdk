@@ -79,6 +79,34 @@ for hub in page["data"]:
     print(hub["id"], hub["slug"], hub["title"])
 ```
 
+## Workspace Analytics
+
+Authenticated accounts can read the same overview used by the dashboard:
+
+```python
+overview = api.get_analytics_overview(range="7d", hub_id="hub-id")
+print(overview["totals"])
+```
+
+## Durable Memory
+
+Private Daily Desk and workspace assistants can manage explicit opt-in memory:
+
+```python
+memory = api.create_memory_item(
+    {
+        "scope": "workspace",
+        "kind": "preference",
+        "content": "Prefer America/Toronto for scheduling.",
+        "tags": ["timezone"],
+    }
+)
+print(memory["id"])
+
+items = api.list_memory_items(scope="workspace", query="timezone")
+print(items["data"])
+```
+
 ## Use An Existing Identity
 
 For local development, store one or more identities in the protected SDK config:
@@ -328,6 +356,13 @@ handshake, and transport health.
 - `control.get_public_hub(hub_ref)`
 - `control.list_hubs(limit=..., owner_id=...)`
 - `control.get_hub(hub_id)`
+- `control.get_analytics_overview(...)`
+- `control.list_memory_items(...)`
+- `control.get_memory_summary(owner_id=...)`
+- `control.create_memory_item(payload)`
+- `control.get_memory_item(memory_id)`
+- `control.update_memory_item(memory_id, payload)`
+- `control.delete_memory_item(memory_id)`
 - `control.create_client_identity(hub_id, ...)`
 - `ThalovantIdentity.from_config(path=None, profile=None)`
 - `ThalovantIdentity.from_file(path)`
