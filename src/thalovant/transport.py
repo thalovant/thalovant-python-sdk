@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -20,7 +21,7 @@ from .errors import (
 )
 from .events import _runtime_bus_context, _runtime_crypto_key
 from .identity import ThalovantIdentity
-from .models import ThalovantHealth
+from .models import ThalovantConnectionInfo, ThalovantHealth
 
 
 class Transport(Protocol):
@@ -40,6 +41,8 @@ class Transport(Protocol):
     ) -> Any: ...
 
     def healthcheck(self) -> ThalovantHealth: ...
+
+    def connection_info(self) -> ThalovantConnectionInfo: ...
 
     def is_connected(self) -> bool: ...
 
@@ -77,13 +80,81 @@ class HiveMindHTTPTransport:
         self._transport_connected = False
         self._deps: _HiveMindDeps | None = None
         self._last_error: BaseException | None = None
+        self._connect_started = 0.0
+        self._transport_opened = 0.0
+        self._connection_info = ThalovantConnectionInfo()
+
+    def connection_info(self) -> ThalovantConnectionInfo:
+        return self._connection_info
+
+    def _begin_connection(self) -> None:
+        self._last_error = None
+        self._connect_started = time.monotonic()
+        self._transport_opened = 0.0
+        self._connection_info = ThalovantConnectionInfo(
+            phase="connecting",
+            started_at=_utc_now(),
+        )
+
+    def _mark_transport_open(self, *, socket: bool = False) -> None:
+        if not self._connect_started:
+            self._begin_connection()
+        if self._transport_opened:
+            return
+        self._transport_opened = time.monotonic()
+        open_ms = _elapsed_ms(self._connect_started, self._transport_opened)
+        self._connection_info = ThalovantConnectionInfo(
+            phase="handshake",
+            started_at=self._connection_info.started_at,
+            transport_open_ms=open_ms,
+            socket_open_ms=open_ms if socket else self._connection_info.socket_open_ms,
+        )
+
+    def _complete_handshake(self) -> None:
+        now = time.monotonic()
+        opened = self._transport_opened or self._connect_started or now
+        started = self._connect_started or opened
+        self._connection_info = ThalovantConnectionInfo(
+            phase="ready",
+            started_at=self._connection_info.started_at,
+            connected_at=_utc_now(),
+            transport_open_ms=self._connection_info.transport_open_ms,
+            socket_open_ms=self._connection_info.socket_open_ms,
+            handshake_ms=_elapsed_ms(opened, now),
+            connect_ms=_elapsed_ms(started, now),
+        )
+
+    def _fail_connection(self, error: BaseException) -> None:
+        self._last_error = error
+        started = self._connect_started or time.monotonic()
+        self._connection_info = ThalovantConnectionInfo(
+            phase="error",
+            started_at=self._connection_info.started_at,
+            transport_open_ms=self._connection_info.transport_open_ms,
+            socket_open_ms=self._connection_info.socket_open_ms,
+            handshake_ms=self._connection_info.handshake_ms,
+            connect_ms=_elapsed_ms(started, time.monotonic()),
+            last_error=str(error),
+        )
+
+    def _mark_closed(self) -> None:
+        self._connection_info = ThalovantConnectionInfo(
+            phase="closed",
+            started_at=self._connection_info.started_at,
+            connected_at=self._connection_info.connected_at,
+            transport_open_ms=self._connection_info.transport_open_ms,
+            socket_open_ms=self._connection_info.socket_open_ms,
+            handshake_ms=self._connection_info.handshake_ms,
+            connect_ms=self._connection_info.connect_ms,
+            last_error=self._connection_info.last_error,
+        )
 
     def connect(self) -> None:
         if self.is_connected():
             return
 
         deps = self._load_deps()
-        self._last_error = None
+        self._begin_connection()
         http_client_class = self._build_http_client_class(deps.HiveMindHTTPClient)
         client = http_client_class(
             key=self.identity.access_key,
@@ -110,26 +181,33 @@ class HiveMindHTTPTransport:
                 timeout=self.connect_timeout,
             )
         except deps.requests.RequestException as exc:
+            self._fail_connection(exc)
             self._shutdown_client(client, transport_connected=False)
             raise ThalovantConnectionError("Could not reach the HiveMind HTTP endpoint.") from exc
 
         if getattr(response, "ok", False) is False:
-            self._shutdown_client(client, transport_connected=False)
             detail = getattr(response, "text", "") or f"HTTP {getattr(response, 'status_code', 'error')}"
-            raise ThalovantConnectionError(f"HiveMind HTTP connect failed: {detail}")
+            error = ThalovantConnectionError(f"HiveMind HTTP connect failed: {detail}")
+            self._fail_connection(error)
+            self._shutdown_client(client, transport_connected=False)
+            raise error
 
         client.connected.set()
+        self._mark_transport_open()
         deadline = time.monotonic() + self.handshake_timeout
         while time.monotonic() < deadline:
             remaining = max(0.0, deadline - time.monotonic())
             if client.handshake_event.wait(timeout=min(self.handshake_poll_interval, remaining)):
                 time.sleep(self.handshake_settle_seconds)
+                self._complete_handshake()
                 self._client = client
                 self._transport_connected = True
                 return
 
+        error = ThalovantTimeoutError("HiveMind HTTP handshake timed out.")
+        self._fail_connection(error)
         self._shutdown_client(client, transport_connected=True)
-        raise ThalovantTimeoutError("HiveMind HTTP handshake timed out.")
+        raise error
 
     def disconnect(self) -> None:
         client = self._client
@@ -138,6 +216,7 @@ class HiveMindHTTPTransport:
         self._shutdown_client(client, transport_connected=self._transport_connected)
         self._client = None
         self._transport_connected = False
+        self._mark_closed()
 
     def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._require_client().on_mycroft(event_name, handler)
@@ -205,6 +284,7 @@ class HiveMindHTTPTransport:
             handshake_complete=handshake_complete,
             transport_alive=transport_alive,
             last_error=str(error) if error else None,
+            connection=self.connection_info(),
         )
 
     def is_connected(self) -> bool:
@@ -339,8 +419,11 @@ class HiveMindHTTPTransport:
                 while time.monotonic() < deadline:
                     remaining = max(0.0, deadline - time.monotonic())
                     wait_for = min(transport.handshake_poll_interval, remaining)
+                    if inner_self.connected_event.is_set():
+                        transport._mark_transport_open(socket=True)
                     if inner_self.handshake_event.wait(timeout=wait_for):
                         time.sleep(transport.handshake_settle_seconds)
+                        transport._complete_handshake()
                         return
                     should_start_handshake = (
                         inner_self.connected_event.is_set()
@@ -489,7 +572,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
             raise ThalovantConnectionError("WSS endpoint must start with ws:// or wss://.")
 
         deps = self._load_deps()
-        self._last_error = None
+        self._begin_connection()
         wss_client_class = self._build_wss_client_class(
             deps.HiveMessageBusClient,
             deps.WebSocketApp,
@@ -514,12 +597,16 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
                 site_id=self.identity.site_id,
             )
         except Exception as exc:
-            self._last_error = exc
+            self._fail_connection(exc)
             self._shutdown_wss_client(client)
             if isinstance(exc, ThalovantTimeoutError):
                 raise
             raise ThalovantConnectionError("HiveMind WSS connect failed.") from exc
 
+        if client.connected_event.is_set():
+            self._mark_transport_open(socket=True)
+        if client.handshake_event.is_set():
+            self._complete_handshake()
         self._client = client
         self._transport_connected = True
 
@@ -530,6 +617,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
         self._shutdown_wss_client(client)
         self._client = None
         self._transport_connected = False
+        self._mark_closed()
 
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._require_client().remove(event_name, handler)
@@ -576,6 +664,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
             handshake_complete=handshake_complete,
             transport_alive=transport_alive,
             last_error=str(error) if error else None,
+            connection=self.connection_info(),
         )
 
     def is_connected(self) -> bool:
@@ -651,10 +740,75 @@ class HiveMindMQTTTransport:
         self._cipher = "AES-GCM"
         self._json_encoding = "JSON-HEX"
         self._password_handshake: Any | None = None
+        self._connect_started = 0.0
+        self._transport_opened = 0.0
+        self._connection_info = ThalovantConnectionInfo()
+
+    def connection_info(self) -> ThalovantConnectionInfo:
+        return self._connection_info
+
+    def _begin_connection(self) -> None:
+        self._last_error = None
+        self._connect_started = time.monotonic()
+        self._transport_opened = 0.0
+        self._connection_info = ThalovantConnectionInfo(
+            phase="connecting",
+            started_at=_utc_now(),
+        )
+
+    def _mark_transport_open(self) -> None:
+        if self._transport_opened:
+            return
+        self._transport_opened = time.monotonic()
+        self._connection_info = ThalovantConnectionInfo(
+            phase="handshake",
+            started_at=self._connection_info.started_at,
+            transport_open_ms=_elapsed_ms(self._connect_started, self._transport_opened),
+        )
+
+    def _complete_handshake(self) -> None:
+        now = time.monotonic()
+        opened = self._transport_opened or self._connect_started or now
+        started = self._connect_started or opened
+        self._connection_info = ThalovantConnectionInfo(
+            phase="ready",
+            started_at=self._connection_info.started_at,
+            connected_at=_utc_now(),
+            transport_open_ms=self._connection_info.transport_open_ms,
+            socket_open_ms=self._connection_info.socket_open_ms,
+            handshake_ms=_elapsed_ms(opened, now),
+            connect_ms=_elapsed_ms(started, now),
+        )
+
+    def _fail_connection(self, error: BaseException) -> None:
+        self._last_error = error
+        started = self._connect_started or time.monotonic()
+        self._connection_info = ThalovantConnectionInfo(
+            phase="error",
+            started_at=self._connection_info.started_at,
+            transport_open_ms=self._connection_info.transport_open_ms,
+            socket_open_ms=self._connection_info.socket_open_ms,
+            handshake_ms=self._connection_info.handshake_ms,
+            connect_ms=_elapsed_ms(started, time.monotonic()),
+            last_error=str(error),
+        )
+
+    def _mark_closed(self) -> None:
+        self._connection_info = ThalovantConnectionInfo(
+            phase="closed",
+            started_at=self._connection_info.started_at,
+            connected_at=self._connection_info.connected_at,
+            transport_open_ms=self._connection_info.transport_open_ms,
+            socket_open_ms=self._connection_info.socket_open_ms,
+            handshake_ms=self._connection_info.handshake_ms,
+            connect_ms=self._connection_info.connect_ms,
+            last_error=self._connection_info.last_error,
+        )
 
     def connect(self) -> None:
         if self.is_connected():
             return
+        self._begin_connection()
         if self.identity.mqtt is None:
             raise ThalovantConnectionError("The identity does not include MQTT broker credentials.")
         mqtt = self._load_mqtt_module()
@@ -679,22 +833,30 @@ class HiveMindMQTTTransport:
         client.connect(parsed.hostname, parsed.port or _mqtt_default_port(tls_enabled), keepalive=60)
         client.loop_start()
         if not self._connected.wait(timeout=self.connect_timeout):
+            error = ThalovantTimeoutError("HiveMind MQTT broker connection timed out.")
             self.disconnect()
-            raise ThalovantTimeoutError("HiveMind MQTT broker connection timed out.")
+            self._fail_connection(error)
+            raise error
         self._subscribed.clear()
         client.subscribe(self.topics.s2c, qos=self.identity.mqtt.qos)
         if not self._subscribed.wait(timeout=self.connect_timeout):
             error = self.last_error()
             self.disconnect()
             detail = f": {error}" if error else ""
-            raise ThalovantTimeoutError(f"HiveMind MQTT subscription timed out{detail}.")
+            timeout = ThalovantTimeoutError(f"HiveMind MQTT subscription timed out{detail}.")
+            self._fail_connection(timeout)
+            raise timeout
         client.publish(self.topics.status, "online", qos=1, retain=True)
         self._send_hive_message(self._hello_message())
+        self._mark_transport_open()
         if not self._handshake.wait(timeout=self.handshake_timeout):
             error = self.last_error()
             self.disconnect()
             detail = f": {error}" if error else ""
-            raise ThalovantTimeoutError(f"HiveMind MQTT handshake timed out{detail}.")
+            timeout = ThalovantTimeoutError(f"HiveMind MQTT handshake timed out{detail}.")
+            self._fail_connection(timeout)
+            raise timeout
+        self._complete_handshake()
 
     def disconnect(self) -> None:
         client = self._client
@@ -712,6 +874,7 @@ class HiveMindMQTTTransport:
         self._connected.clear()
         self._subscribed.clear()
         self._handshake.clear()
+        self._mark_closed()
 
     def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._handlers.setdefault(event_name, []).append(handler)
@@ -754,6 +917,7 @@ class HiveMindMQTTTransport:
             handshake_complete=self._handshake.is_set(),
             transport_alive=self.is_connected(),
             last_error=str(self._last_error) if self._last_error else None,
+            connection=self.connection_info(),
         )
 
     def is_connected(self) -> bool:
@@ -800,7 +964,7 @@ class HiveMindMQTTTransport:
         try:
             self._handle_raw_message(message.payload)
         except Exception as exc:
-            self._last_error = exc
+            self._fail_connection(exc)
             self._connected.clear()
 
     def _handle_raw_message(self, raw: bytes | str) -> None:
@@ -993,6 +1157,14 @@ def _endpoint_host(parsed: Any) -> str:
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return host
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _elapsed_ms(start: float, end: float) -> float:
+    return round(max(0.0, end - start) * 1000, 3)
 
 
 @dataclass(frozen=True)

@@ -56,6 +56,8 @@ result = api.create_client_identity(
 )
 
 with ThalovantClient(result.identity, protocol="wss") as client:
+    info = client.connection_info()
+    print("connected in", info.connect_ms, "ms")
     reply = client.ask("Tell me a short clean joke.")
     print(reply.text)
 ```
@@ -232,6 +234,10 @@ for protocol in ("wss", "https", "mqtt"):
         print(protocol, client.ask(f"Reply over {protocol}.").text)
 ```
 
+Use `client.connect_with_info()` when you need connection telemetry for
+benchmarks or health dashboards. The returned snapshot includes phase,
+socket/open time, handshake time, total connect time, and last error.
+
 MQTT identities include a broker endpoint, username, password, TLS flag, and
 topic prefix. The broker credentials are scoped to that client and should be
 treated like a password. Public identities should use `mqtts://`; the SDK also
@@ -370,6 +376,8 @@ handshake, and transport health.
 - `ThalovantClient.from_identity_file(path)`
 - `ThalovantClient.from_env()`
 - `ThalovantClient(identity, protocol="wss")`
+- `client.connect_with_info()`
+- `client.connection_info()`
 - `client.ask(text, context=...)`
 - `client.send_utterance(text, context=...)`
 - `client.send_action(payload, ...)`

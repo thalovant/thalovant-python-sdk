@@ -23,7 +23,7 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.17"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.18"
 
 
 @dataclass(frozen=True)

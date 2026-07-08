@@ -39,6 +39,7 @@ from .events import (
 )
 from .identity import ThalovantIdentity
 from .models import (
+    ThalovantConnectionInfo,
     ThalovantDoctorCheck,
     ThalovantDoctorReport,
     ThalovantHealth,
@@ -49,7 +50,7 @@ from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSS
 from .protocols import DEFAULT_PROTOCOL_PREFERENCE, HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.17"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.18"
 
 
 def _default_runtime_protocol(identity: ThalovantIdentity) -> HubProtocol:
@@ -194,6 +195,17 @@ class ThalovantClient:
             self.close()
         self._transport.connect()
         self._connected = True
+
+    def connect_with_info(self) -> ThalovantConnectionInfo:
+        """Connect and return the transport timing snapshot."""
+
+        self.connect()
+        return self.connection_info()
+
+    def connection_info(self) -> ThalovantConnectionInfo:
+        """Return connection timing for the current or most recent transport."""
+
+        return self._transport.connection_info()
 
     def close(self) -> None:
         """Disconnect the underlying HiveMind HTTP client."""
@@ -721,6 +733,12 @@ class AsyncThalovantClient:
 
     async def connect(self) -> None:
         await asyncio.to_thread(self._client.connect)
+
+    async def connect_with_info(self) -> ThalovantConnectionInfo:
+        return await asyncio.to_thread(self._client.connect_with_info)
+
+    async def connection_info(self) -> ThalovantConnectionInfo:
+        return await asyncio.to_thread(self._client.connection_info)
 
     async def close(self) -> None:
         await asyncio.to_thread(self._client.close)

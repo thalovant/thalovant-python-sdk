@@ -3,10 +3,46 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from .events import ThalovantEvent
 from .rich import ThalovantDisplayItem, strip_ssml
+
+ThalovantConnectionPhase = Literal[
+    "idle",
+    "connecting",
+    "open",
+    "handshake",
+    "ready",
+    "closed",
+    "error",
+]
+
+
+@dataclass(frozen=True)
+class ThalovantConnectionInfo:
+    """Timing snapshot for the current or most recent transport connection."""
+
+    phase: ThalovantConnectionPhase = "idle"
+    started_at: str | None = None
+    connected_at: str | None = None
+    transport_open_ms: float | None = None
+    socket_open_ms: float | None = None
+    handshake_ms: float | None = None
+    connect_ms: float | None = None
+    last_error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "started_at": self.started_at,
+            "connected_at": self.connected_at,
+            "transport_open_ms": self.transport_open_ms,
+            "socket_open_ms": self.socket_open_ms,
+            "handshake_ms": self.handshake_ms,
+            "connect_ms": self.connect_ms,
+            "last_error": self.last_error,
+        }
 
 
 @dataclass(frozen=True)
@@ -17,6 +53,7 @@ class ThalovantHealth:
     handshake_complete: bool
     transport_alive: bool
     last_error: str | None = None
+    connection: ThalovantConnectionInfo | None = None
 
     @property
     def ok(self) -> bool:
@@ -29,6 +66,7 @@ class ThalovantHealth:
             "handshake_complete": self.handshake_complete,
             "transport_alive": self.transport_alive,
             "last_error": self.last_error,
+            "connection": self.connection.as_dict() if self.connection else None,
         }
 
 

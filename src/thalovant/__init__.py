@@ -26,6 +26,7 @@ from .events import (
 )
 from .identity import MqttBrokerCredentials, ThalovantIdentity, default_config_path
 from .models import (
+    ThalovantConnectionInfo,
     ThalovantDoctorCheck,
     ThalovantDoctorReport,
     ThalovantHealth,
@@ -43,7 +44,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.17"
+__version__ = "0.4.18"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -70,6 +71,7 @@ __all__ = [
     "ThalovantDisplayItem",
     "ThalovantAgent",
     "ThalovantClient",
+    "ThalovantConnectionInfo",
     "ThalovantConnectionError",
     "ThalovantControlPlane",
     "ThalovantConversation",

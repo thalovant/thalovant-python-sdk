@@ -15,6 +15,7 @@ from thalovant import (
     MqttBrokerCredentials,
     ThalovantAgent,
     ThalovantClient,
+    ThalovantConnectionInfo,
     ThalovantConnectionError,
     ThalovantHealth,
     ThalovantIdentity,
@@ -81,11 +82,16 @@ class FakeTransport:
             handler(FakeMessage(data or {}, context=context or {}, msg_type=event_name))
 
     def healthcheck(self) -> ThalovantHealth:
+        connection = self.connection_info()
         return ThalovantHealth(
             connected=self.connected,
             handshake_complete=self.connected,
             transport_alive=self.connected,
+            connection=connection,
         )
+
+    def connection_info(self) -> ThalovantConnectionInfo:
+        return ThalovantConnectionInfo(phase="ready" if self.connected else "idle")
 
     def is_connected(self) -> bool:
         return self.connected
@@ -239,6 +245,28 @@ def test_emit_sends_low_level_event():
     client.emit("skillmanager.list", {"x": 1}, {"source": "test"})
 
     assert transport.emitted == [("skillmanager.list", {"x": 1}, {"source": "test"})]
+
+
+def test_connect_with_info_returns_transport_connection_snapshot():
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    info = client.connect_with_info()
+
+    assert info.phase == "ready"
+    assert client.connection_info().phase == "ready"
+    assert client.healthcheck().connection == info
+
+
+@pytest.mark.asyncio
+async def test_async_connect_with_info_returns_transport_connection_snapshot():
+    transport = FakeTransport()
+    client = AsyncThalovantClient(identity(), transport=transport)
+
+    info = await client.connect_with_info()
+
+    assert info.phase == "ready"
+    assert (await client.connection_info()).phase == "ready"
 
 
 def test_client_rejects_unsupported_runtime_protocol_without_custom_transport():
