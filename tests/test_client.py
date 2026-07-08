@@ -258,15 +258,17 @@ def test_connect_with_info_returns_transport_connection_snapshot():
     assert client.healthcheck().connection == info
 
 
-@pytest.mark.asyncio
-async def test_async_connect_with_info_returns_transport_connection_snapshot():
-    transport = FakeTransport()
-    client = AsyncThalovantClient(identity(), transport=transport)
+def test_async_connect_with_info_returns_transport_connection_snapshot():
+    async def run() -> None:
+        transport = FakeTransport()
+        client = AsyncThalovantClient(identity(), transport=transport)
 
-    info = await client.connect_with_info()
+        info = await client.connect_with_info()
 
-    assert info.phase == "ready"
-    assert (await client.connection_info()).phase == "ready"
+        assert info.phase == "ready"
+        assert (await client.connection_info()).phase == "ready"
+
+    asyncio.run(run())
 
 
 def test_client_rejects_unsupported_runtime_protocol_without_custom_transport():
