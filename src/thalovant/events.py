@@ -11,10 +11,12 @@ from .rich import ThalovantDisplayItem, display_items_from_event_data, rich_medi
 
 EVENT_RECOGNIZER_LOOP_UTTERANCE = "recognizer_loop:utterance"
 EVENT_SPEAK = "speak"
+EVENT_OVOS_UTTERANCE_SPEAK = "ovos.utterance.speak"
 EVENT_UTTERANCE_HANDLED = "ovos.utterance.handled"
 EVENT_INTENT_FAILURE = "complete_intent_failure"
 EVENT_POLICY_DENIED = "hive.policy.denied"
-FAILURE_EVENTS = (EVENT_INTENT_FAILURE, EVENT_POLICY_DENIED)
+EVENT_QUERY_TIMEOUT = "hive.query.timeout"
+FAILURE_EVENTS = (EVENT_INTENT_FAILURE, EVENT_POLICY_DENIED, EVENT_QUERY_TIMEOUT)
 
 EventHandler = Callable[["ThalovantEvent"], Any]
 EventPredicate = Callable[["ThalovantEvent"], bool]

@@ -59,6 +59,26 @@ class ThalovantConversation:
             request_id=request_id,
         )
 
+    def query(
+        self,
+        text: str,
+        *,
+        timeout: float = 12.0,
+        lang: str | None = None,
+        context: dict[str, Any] | None = None,
+        request_id: str | None = None,
+        query_id: str | None = None,
+    ) -> ThalovantReply:
+        return self.client.query(
+            text,
+            timeout=timeout,
+            lang=lang or self.lang,
+            context=self._merged_context(context),
+            session_id=self.session_id,
+            request_id=request_id,
+            query_id=query_id,
+        )
+
     def send_utterance(
         self,
         text: str,
@@ -219,6 +239,26 @@ class AsyncThalovantConversation:
             context=self._merged_context(context),
             session_id=self.session_id,
             request_id=request_id,
+        )
+
+    async def query(
+        self,
+        text: str,
+        *,
+        timeout: float = 12.0,
+        lang: str | None = None,
+        context: dict[str, Any] | None = None,
+        request_id: str | None = None,
+        query_id: str | None = None,
+    ) -> ThalovantReply:
+        return await self.client.query(
+            text,
+            timeout=timeout,
+            lang=lang or self.lang,
+            context=self._merged_context(context),
+            session_id=self.session_id,
+            request_id=request_id,
+            query_id=query_id,
         )
 
     async def send_utterance(

@@ -19,7 +19,9 @@ from .errors import (
 )
 from .events import (
     EVENT_INTENT_FAILURE,
+    EVENT_OVOS_UTTERANCE_SPEAK,
     EVENT_POLICY_DENIED,
+    EVENT_QUERY_TIMEOUT,
     EVENT_RECOGNIZER_LOOP_UTTERANCE,
     EVENT_SPEAK,
     EVENT_UTTERANCE_HANDLED,
@@ -32,6 +34,7 @@ from .events import (
     _failure_reason,
     _merge_context,
     _new_request_id,
+    _new_session_id,
     _runtime_bus_context,
     _runtime_crypto_key,
     _session_id_from_context,
@@ -50,7 +53,7 @@ from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSS
 from .protocols import DEFAULT_PROTOCOL_PREFERENCE, HubProtocol
 
 
-DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.18"
+DEFAULT_USERAGENT = "ThalovantPythonSDK/0.4.19"
 
 
 def _default_runtime_protocol(identity: ThalovantIdentity) -> HubProtocol:
@@ -103,6 +106,84 @@ def _transport_for_protocol(
     raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
 
 
+def _connect_transport_with_timeout(transport: Transport, timeout: float) -> None:
+    done = threading.Event()
+    errors: list[BaseException] = []
+
+    def run_connect() -> None:
+        try:
+            transport.connect()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=run_connect, daemon=True)
+    thread.start()
+    if not done.wait(timeout=timeout):
+        try:
+            transport.disconnect()
+        except Exception:
+            pass
+        raise ThalovantConnectionError(
+            f"Hub connection did not complete within {timeout:g}s."
+        )
+    if errors:
+        raise errors[0]
+
+
+def _message_mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _message_field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _query_id_from_hive_message(message: Any) -> str | None:
+    metadata = _message_mapping(_message_field(message, "metadata"))
+    query_id = metadata.get("query_id") or metadata.get("queryId")
+    return str(query_id) if query_id is not None else None
+
+
+def _event_from_query_hive_message(message: Any) -> ThalovantEvent | None:
+    payload = _message_field(message, "payload")
+    bus_payload = _bus_payload_from_hive_payload(payload)
+    if bus_payload is None:
+        return None
+    return ThalovantEvent(
+        name=str(bus_payload.get("type") or ""),
+        data=_message_mapping(bus_payload.get("data")),
+        context=_message_mapping(bus_payload.get("context")),
+        raw=message,
+    )
+
+
+def _bus_payload_from_hive_payload(payload: Any) -> dict[str, Any] | None:
+    if isinstance(payload, dict):
+        if isinstance(payload.get("type"), str):
+            return {
+                "type": payload["type"],
+                "data": _message_mapping(payload.get("data")),
+                "context": _message_mapping(payload.get("context")),
+            }
+        if "payload" in payload:
+            return _bus_payload_from_hive_payload(payload.get("payload"))
+
+    msg_type = _message_field(payload, "msg_type")
+    if msg_type == "bus":
+        return _bus_payload_from_hive_payload(_message_field(payload, "payload"))
+    if isinstance(msg_type, str):
+        return {
+            "type": msg_type,
+            "data": _message_mapping(_message_field(payload, "data")),
+            "context": _message_mapping(_message_field(payload, "context")),
+        }
+    return None
+
+
 class ThalovantClient:
     """Developer-friendly wrapper around HiveMind's HTTP protocol client."""
 
@@ -123,6 +204,7 @@ class ThalovantClient:
         self.identity = identity
         self.useragent = useragent
         self.reply_settle_seconds = reply_settle_seconds
+        self._hard_connect_timeout = max(0.1, connect_timeout + handshake_timeout + 1.0)
         self.auto_reconnect = auto_reconnect
         self.reconnect_attempts = max(0, reconnect_attempts)
         self._transport = transport or _transport_for_protocol(
@@ -186,20 +268,23 @@ class ThalovantClient:
             context=context,
         )
 
-    def connect(self) -> None:
+    def connect(self, timeout: float | None = None) -> None:
         """Open the HiveMind HTTP connection if needed."""
 
         if self._connected and self._transport.is_connected():
             return
         if self._connected:
             self.close()
-        self._transport.connect()
+        _connect_transport_with_timeout(
+            self._transport,
+            timeout if timeout and timeout > 0 else self._hard_connect_timeout,
+        )
         self._connected = True
 
-    def connect_with_info(self) -> ThalovantConnectionInfo:
+    def connect_with_info(self, timeout: float | None = None) -> ThalovantConnectionInfo:
         """Connect and return the transport timing snapshot."""
 
-        self.connect()
+        self.connect(timeout=timeout)
         return self.connection_info()
 
     def connection_info(self) -> ThalovantConnectionInfo:
@@ -505,6 +590,124 @@ class ThalovantClient:
             "HiveMind transport failed while waiting for reply."
         ) from last_error
 
+    def query(
+        self,
+        text: str,
+        *,
+        timeout: float = 12.0,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+        query_id: str | None = None,
+    ) -> ThalovantReply:
+        """Send a direct HiveMind query frame and wait for its scoped reply."""
+
+        prompt = text.strip()
+        if not prompt:
+            raise ValueError("query() requires a non-empty text prompt.")
+
+        request_id = request_id or _new_request_id()
+        query_id = query_id or request_id
+        request_context = _context_with_correlation(
+            self._context_with_identity_metadata(context),
+            session_id=session_id or _new_session_id(),
+            site_id=self.identity.site_id,
+            lang=lang,
+            request_id=request_id,
+        )
+        self.connect()
+        send_hive_message = getattr(self._transport, "send_hive_message", None)
+        on_hive_message = getattr(self._transport, "on_hive_message", None)
+        remove_hive_message = getattr(self._transport, "remove_hive_message", None)
+        if not (
+            callable(send_hive_message)
+            and callable(on_hive_message)
+            and callable(remove_hive_message)
+        ):
+            raise ThalovantRuntimeError("This transport does not support HiveMind query frames.")
+
+        done = threading.Event()
+        fragments: list[str] = []
+        raw_messages: list[Any] = []
+        events: list[ThalovantEvent] = []
+        failure_event: ThalovantEvent | None = None
+
+        def handle_query_frame(message: Any) -> None:
+            nonlocal failure_event
+            if _query_id_from_hive_message(message) != query_id:
+                return
+            event = _event_from_query_hive_message(message)
+            if event is None:
+                return
+            raw_messages.append(message)
+            events.append(event)
+            if event.name == "hive.query.complete":
+                done.set()
+                return
+            if event.name in {EVENT_SPEAK, EVENT_OVOS_UTTERANCE_SPEAK}:
+                normalized = " ".join(event.text.strip().split())
+                if normalized and (not fragments or fragments[-1] != normalized):
+                    fragments.append(normalized)
+                return
+            if event.is_failure:
+                failure_event = event
+                done.set()
+
+        on_hive_message("query", handle_query_frame)
+        on_hive_message("cascade", handle_query_frame)
+        try:
+            inner = {
+                "msg_type": "bus",
+                "payload": {
+                    "type": EVENT_RECOGNIZER_LOOP_UTTERANCE,
+                    "data": _utterance_payload(prompt, lang),
+                    "context": request_context,
+                },
+                "metadata": {},
+                "route": [],
+                "node": None,
+                "target_site_id": None,
+                "target_pubkey": None,
+                "source_peer": None,
+            }
+            send_hive_message(
+                {
+                    "msg_type": "query",
+                    "payload": inner,
+                    "metadata": {"query_id": query_id},
+                    "route": [],
+                    "node": None,
+                    "target_site_id": None,
+                    "target_pubkey": None,
+                    "source_peer": None,
+                },
+                encrypt=True,
+            )
+            self._wait_for_query(done, timeout=timeout)
+            if self.reply_settle_seconds > 0:
+                time.sleep(self.reply_settle_seconds)
+            if failure_event is not None and not fragments:
+                raise ThalovantRuntimeError(_failure_reason(failure_event))
+            if not fragments:
+                raise ThalovantTimeoutError("Hub finished the query but did not emit a speak reply.")
+            return ThalovantReply(
+                text=" ".join(fragments),
+                utterances=tuple(fragments),
+                handled=failure_event is None,
+                session_id=_session_id_from_context(request_context),
+                request_id=request_id,
+                raw_messages=tuple(raw_messages),
+                events=tuple(events),
+                failure_event=failure_event,
+            )
+        finally:
+            for msg_type in ("query", "cascade"):
+                try:
+                    remove_hive_message(msg_type, handle_query_frame)
+                except ThalovantConnectionError:
+                    pass
+
     def _ask_once(
         self,
         prompt: str,
@@ -559,9 +762,11 @@ class ThalovantClient:
 
         handlers = (
             (EVENT_SPEAK, handle_speak),
+            (EVENT_OVOS_UTTERANCE_SPEAK, handle_speak),
             (EVENT_UTTERANCE_HANDLED, handle_handled),
             (EVENT_INTENT_FAILURE, handle_failure),
             (EVENT_POLICY_DENIED, handle_failure),
+            (EVENT_QUERY_TIMEOUT, handle_failure),
         )
 
         for event_name, handler in handlers:
@@ -605,6 +810,17 @@ class ThalovantClient:
                     f"Hub did not finish handling the utterance within {timeout:g}s."
                 )
             handled.wait(timeout=min(0.1, remaining))
+
+    def _wait_for_query(self, done: threading.Event, *, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        while not done.is_set():
+            self._raise_if_transport_stopped()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ThalovantTimeoutError(
+                    f"Hub did not finish the query within {timeout:g}s."
+                )
+            done.wait(timeout=min(0.1, remaining))
 
     def _with_reconnect(self, operation: Callable[[], Any]) -> Any:
         last_error: BaseException | None = None
@@ -731,11 +947,11 @@ class AsyncThalovantClient:
             context=context,
         )
 
-    async def connect(self) -> None:
-        await asyncio.to_thread(self._client.connect)
+    async def connect(self, timeout: float | None = None) -> None:
+        await asyncio.to_thread(self._client.connect, timeout=timeout)
 
-    async def connect_with_info(self) -> ThalovantConnectionInfo:
-        return await asyncio.to_thread(self._client.connect_with_info)
+    async def connect_with_info(self, timeout: float | None = None) -> ThalovantConnectionInfo:
+        return await asyncio.to_thread(self._client.connect_with_info, timeout=timeout)
 
     async def connection_info(self) -> ThalovantConnectionInfo:
         return await asyncio.to_thread(self._client.connection_info)
@@ -910,6 +1126,28 @@ class AsyncThalovantClient:
             context=context,
             session_id=session_id,
             request_id=request_id,
+        )
+
+    async def query(
+        self,
+        text: str,
+        *,
+        timeout: float = 12.0,
+        lang: str = "en-us",
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+        query_id: str | None = None,
+    ) -> ThalovantReply:
+        return await asyncio.to_thread(
+            self._client.query,
+            text,
+            timeout=timeout,
+            lang=lang,
+            context=context,
+            session_id=session_id,
+            request_id=request_id,
+            query_id=query_id,
         )
 
     async def wait_for_event(

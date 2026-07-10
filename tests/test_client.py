@@ -43,6 +43,8 @@ class FakeTransport:
         self.connected = False
         self.emitted: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         self.handlers: dict[str, list[Callable[[Any], None]]] = {}
+        self.hive_handlers: dict[str, list[Callable[[Any], None]]] = {}
+        self.hive_messages: list[dict[str, Any]] = []
 
     def connect(self) -> None:
         self.connected = True
@@ -57,6 +59,17 @@ class FakeTransport:
         self.handlers[event_name] = [
             entry for entry in self.handlers.get(event_name, []) if entry is not handler
         ]
+
+    def on_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None:
+        self.hive_handlers.setdefault(msg_type, []).append(handler)
+
+    def remove_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None:
+        self.hive_handlers[msg_type] = [
+            entry for entry in self.hive_handlers.get(msg_type, []) if entry is not handler
+        ]
+
+    def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> None:
+        self.hive_messages.append(message)
 
     def emit_event(
         self,
@@ -98,6 +111,54 @@ class FakeTransport:
 
     def last_error(self) -> BaseException | None:
         return None
+
+
+class QueryTransport(FakeTransport):
+    def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> None:
+        super().send_hive_message(message, encrypt=encrypt)
+        query_id = message["metadata"]["query_id"]
+        context = message["payload"]["payload"]["context"]
+        for handler in tuple(self.hive_handlers.get("query", [])):
+            handler(
+                {
+                    "msg_type": "query",
+                    "metadata": {"query_id": query_id},
+                    "payload": {
+                        "msg_type": "bus",
+                        "payload": {
+                            "type": "speak",
+                            "data": {"utterance": "direct answer"},
+                            "context": context,
+                        },
+                    },
+                }
+            )
+            handler(
+                {
+                    "msg_type": "query",
+                    "metadata": {"query_id": query_id},
+                    "payload": {
+                        "type": "hive.query.complete",
+                        "data": {},
+                        "context": context,
+                    },
+                }
+            )
+
+
+class HangingTransport(FakeTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.disconnect_count = 0
+        self.started = threading.Event()
+
+    def connect(self) -> None:
+        self.started.set()
+        threading.Event().wait(timeout=10)
+
+    def disconnect(self) -> None:
+        self.disconnect_count += 1
+        super().disconnect()
 
 
 class FlakyTransport(FakeTransport):
@@ -221,6 +282,39 @@ def test_ask_includes_identity_metadata():
         "plan": "paid",
         "channel": "test",
     }
+
+
+def test_query_uses_direct_hivemind_query_frame():
+    transport = QueryTransport(answer=None)
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
+
+    reply = client.query("what is up?", session_id="query-session")
+
+    assert reply.text == "direct answer"
+    assert reply.request_id
+    assert reply.session_id == "query-session"
+    assert len(transport.hive_messages) == 1
+    frame = transport.hive_messages[0]
+    assert frame["msg_type"] == "query"
+    assert frame["metadata"]["query_id"] == reply.request_id
+    inner = frame["payload"]
+    assert inner["msg_type"] == "bus"
+    assert inner["payload"]["type"] == "recognizer_loop:utterance"
+    assert inner["payload"]["data"] == {"utterances": ["what is up?"], "lang": "en-us"}
+    assert inner["payload"]["context"]["session"]["session_id"] == "query-session"
+    assert transport.hive_handlers["query"] == []
+    assert transport.hive_handlers["cascade"] == []
+
+
+def test_connect_enforces_hard_timeout_and_disconnects_transport():
+    transport = HangingTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    with pytest.raises(ThalovantConnectionError, match="did not complete"):
+        client.connect(timeout=0.02)
+
+    assert transport.started.is_set()
+    assert transport.disconnect_count == 1
 
 
 def test_identity_preserves_metadata_from_mapping():

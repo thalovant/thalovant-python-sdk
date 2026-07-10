@@ -33,6 +33,12 @@ class Transport(Protocol):
 
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None: ...
 
+    def on_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None: ...
+
+    def remove_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None: ...
+
+    def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any: ...
+
     def emit_event(
         self,
         event_type: str,
@@ -243,8 +249,23 @@ class HiveMindHTTPTransport:
             ),
         )
         hive_message = deps.HiveMessage(deps.HiveMessageType.BUS, message)
+        return self._send_hive_message_object(hive_message, encrypt=True)
+
+    def on_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None:
+        self._require_client().on(msg_type, handler)
+
+    def remove_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None:
+        self._require_client().remove(msg_type, handler)
+
+    def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any:
+        deps = self._load_deps()
+        return self._send_hive_message_object(deps.HiveMessage(**message), encrypt=encrypt)
+
+    def _send_hive_message_object(self, hive_message: Any, *, encrypt: bool) -> Any:
+        deps = self._load_deps()
+        client = self._require_live_client()
         payload = deps.serialize_message(hive_message)
-        if client.crypto_key:
+        if encrypt and client.crypto_key:
             payload = deps.encrypt_as_json(
                 client.crypto_key,
                 payload,
@@ -622,6 +643,15 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._require_client().remove(event_name, handler)
 
+    def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any:
+        deps = self._load_deps()
+        client = self._require_live_client()
+        try:
+            return client.emit(deps.HiveMessage(**message))
+        except Exception as exc:
+            self._last_error = exc
+            raise ThalovantConnectionError("Could not send the HiveMind WSS message.") from exc
+
     def emit_event(
         self,
         event_type: str,
@@ -736,6 +766,7 @@ class HiveMindMQTTTransport:
         self._handshake = threading.Event()
         self._last_error: BaseException | None = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
+        self._hive_handlers: dict[str, list[Callable[[Any], None]]] = {}
         self._crypto_key = _runtime_crypto_key(identity.crypto_key)
         self._cipher = "AES-GCM"
         self._json_encoding = "JSON-HEX"
@@ -884,6 +915,17 @@ class HiveMindMQTTTransport:
             entry for entry in self._handlers.get(event_name, []) if entry is not handler
         ]
 
+    def on_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None:
+        self._hive_handlers.setdefault(msg_type, []).append(handler)
+
+    def remove_hive_message(self, msg_type: str, handler: Callable[[Any], None]) -> None:
+        self._hive_handlers[msg_type] = [
+            entry for entry in self._hive_handlers.get(msg_type, []) if entry is not handler
+        ]
+
+    def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any:
+        return self._send_hive_message(message)
+
     def emit_event(
         self,
         event_type: str,
@@ -991,6 +1033,9 @@ class HiveMindMQTTTransport:
                 msg_type=event_name,
             )
             for handler in tuple(self._handlers.get(event_name, ())):
+                handler(message)
+        elif msg_type in {"query", "cascade"}:
+            for handler in tuple(self._hive_handlers.get(msg_type, ())):
                 handler(message)
 
     def _handle_handshake(self, payload: dict[str, Any]) -> None:

@@ -238,6 +238,15 @@ Use `client.connect_with_info()` when you need connection telemetry for
 benchmarks or health dashboards. The returned snapshot includes phase,
 socket/open time, handshake time, total connect time, and last error.
 
+Use `client.query(...)` for the direct HiveMind query frame path when the hub
+supports it. It avoids broad bus fanout and is the preferred request/reply API
+for low-latency app integrations.
+
+```python
+reply = client.query("What time is it in Toronto?")
+print(reply.text)
+```
+
 MQTT identities include a broker endpoint, username, password, TLS flag, and
 topic prefix. The broker credentials are scoped to that client and should be
 treated like a password. Public identities should use `mqtts://`; the SDK also
@@ -378,6 +387,7 @@ handshake, and transport health.
 - `ThalovantClient(identity, protocol="wss")`
 - `client.connect_with_info()`
 - `client.connection_info()`
+- `client.query(text, context=...)`
 - `client.ask(text, context=...)`
 - `client.send_utterance(text, context=...)`
 - `client.send_action(payload, ...)`

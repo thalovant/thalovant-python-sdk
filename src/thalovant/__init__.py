@@ -16,7 +16,9 @@ from .errors import (
 )
 from .events import (
     EVENT_INTENT_FAILURE,
+    EVENT_OVOS_UTTERANCE_SPEAK,
     EVENT_POLICY_DENIED,
+    EVENT_QUERY_TIMEOUT,
     EVENT_RECOGNIZER_LOOP_UTTERANCE,
     EVENT_SPEAK,
     EVENT_UTTERANCE_HANDLED,
@@ -44,7 +46,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.18"
+__version__ = "0.4.19"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -54,7 +56,9 @@ __all__ = [
     "DEFAULT_PROTOCOL_PREFERENCE",
     "DEFAULT_CONTROL_API_URL",
     "EVENT_INTENT_FAILURE",
+    "EVENT_OVOS_UTTERANCE_SPEAK",
     "EVENT_POLICY_DENIED",
+    "EVENT_QUERY_TIMEOUT",
     "EVENT_RECOGNIZER_LOOP_UTTERANCE",
     "EVENT_SPEAK",
     "EVENT_UTTERANCE_HANDLED",
