@@ -23,7 +23,55 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.18"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.20"
+
+
+@dataclass(frozen=True)
+class OperationResource:
+    """Durable progress for an accepted control-plane command."""
+
+    id: str
+    kind: str
+    aggregate_type: str
+    aggregate_id: str | None
+    status: str
+    details: dict[str, Any]
+    git_commit_sha: str | None
+    error_code: str | None
+    error_message: str | None
+    created_at: str
+    updated_at: str
+    committed_at: str | None
+    applied_at: str | None
+    ready_at: str | None
+    terminal_at: str | None
+    links: dict[str, str | None]
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> OperationResource:
+        """Parse the public operation representation returned by the API."""
+
+        return cls(
+            id=_required_str(payload, "id"),
+            kind=_required_str(payload, "kind"),
+            aggregate_type=_required_str(payload, "aggregate_type"),
+            aggregate_id=_optional_str(payload.get("aggregate_id")),
+            status=_required_str(payload, "status"),
+            details=dict(payload.get("details") or {}),
+            git_commit_sha=_optional_str(payload.get("git_commit_sha")),
+            error_code=_optional_str(payload.get("error_code")),
+            error_message=_optional_str(payload.get("error_message")),
+            created_at=_required_str(payload, "created_at"),
+            updated_at=_required_str(payload, "updated_at"),
+            committed_at=_optional_str(payload.get("committed_at")),
+            applied_at=_optional_str(payload.get("applied_at")),
+            ready_at=_optional_str(payload.get("ready_at")),
+            terminal_at=_optional_str(payload.get("terminal_at")),
+            links={
+                str(key): _optional_str(value)
+                for key, value in dict(payload.get("links") or {}).items()
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -110,6 +158,12 @@ class ThalovantControlPlane:
         if cursor:
             params["cursor"] = cursor
         return self._request("GET", "/v1/public/hubs", params=params, auth=False)
+
+    def get_operation(self, operation_id: str) -> OperationResource:
+        """Read durable progress for an operation accepted by the API."""
+
+        payload = self._request("GET", f"/v1/operations/{operation_id}")
+        return OperationResource.from_dict(payload)
 
     def list_memory_items(
         self,
@@ -411,6 +465,10 @@ def _required_str(values: Mapping[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ThalovantAPIError(f"Hub resource is missing {key}.")
     return value
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _clean_site_id(value: str) -> str:
