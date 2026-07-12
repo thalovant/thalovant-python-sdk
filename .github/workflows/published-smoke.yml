@@ -1,0 +1,28 @@
+name: Published package smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published PyPI version to verify
+        required: true
+        default: 0.4.19
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install from PyPI in a clean virtual environment
+        env:
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: |
+          python -m venv "$RUNNER_TEMP/thalovant-smoke"
+          "$RUNNER_TEMP/thalovant-smoke/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/thalovant-smoke/bin/python" -m pip install "thalovant==$PACKAGE_VERSION"
+          "$RUNNER_TEMP/thalovant-smoke/bin/python" -c 'import importlib.metadata, thalovant; assert importlib.metadata.version("thalovant") == __import__("os").environ["PACKAGE_VERSION"]'

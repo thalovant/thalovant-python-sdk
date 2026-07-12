@@ -50,6 +50,29 @@ class FakeSession:
                     "title": "Joke Garden",
                 },
             )
+        if url.endswith("/v1/operations/operation-1"):
+            assert kwargs["headers"]["authorization"] == "Bearer token"
+            return FakeResponse(
+                200,
+                {
+                    "id": "operation-1",
+                    "kind": "gitops.commit",
+                    "aggregate_type": "gitops",
+                    "aggregate_id": None,
+                    "status": "committed",
+                    "details": {"git_commit_created": True},
+                    "git_commit_sha": "abc123",
+                    "error_code": None,
+                    "error_message": None,
+                    "created_at": "2026-07-11T00:00:00Z",
+                    "updated_at": "2026-07-11T00:00:01Z",
+                    "committed_at": "2026-07-11T00:00:01Z",
+                    "applied_at": None,
+                    "ready_at": None,
+                    "terminal_at": None,
+                    "links": {"self": "/api/v1/operations/operation-1"},
+                },
+            )
         if url.endswith("/v1/memory"):
             assert kwargs["headers"]["authorization"] == "Bearer token"
             if method == "GET":
@@ -280,6 +303,17 @@ def test_control_plane_lists_public_hubs_without_auth():
 
     assert page["data"][0]["slug"] == "joke-garden"
     assert hub["title"] == "Joke Garden"
+
+
+def test_control_plane_gets_typed_operation():
+    api = ThalovantControlPlane(access_token="token", session=FakeSession())
+
+    operation = api.get_operation("operation-1")
+
+    assert operation.id == "operation-1"
+    assert operation.status == "committed"
+    assert operation.git_commit_sha == "abc123"
+    assert operation.details["git_commit_created"] is True
 
 
 def test_control_plane_manages_memory_items():

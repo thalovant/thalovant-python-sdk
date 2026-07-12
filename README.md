@@ -371,6 +371,7 @@ handshake, and transport health.
 - `control.get_public_hub(hub_ref)`
 - `control.list_hubs(limit=..., owner_id=...)`
 - `control.get_hub(hub_id)`
+- `control.get_operation(operation_id)`
 - `control.get_analytics_overview(...)`
 - `control.list_memory_items(...)`
 - `control.get_memory_summary(owner_id=...)`

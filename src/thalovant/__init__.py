@@ -2,7 +2,12 @@
 
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
-from .control import BootstrapIdentityResult, DEFAULT_CONTROL_API_URL, ThalovantControlPlane
+from .control import (
+    BootstrapIdentityResult,
+    DEFAULT_CONTROL_API_URL,
+    OperationResource,
+    ThalovantControlPlane,
+)
 from .context import build_client_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
@@ -46,7 +51,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.19"
+__version__ = "0.4.20"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -69,6 +74,7 @@ __all__ = [
     "HubProtocolSettings",
     "MqttBrokerCredentials",
     "MqttTopicSet",
+    "OperationResource",
     "SelectedHubEndpoint",
     "HiveMindMQTTTransport",
     "ThalovantAPIError",
