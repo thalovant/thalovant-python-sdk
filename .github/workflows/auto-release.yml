@@ -8,8 +8,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
+  actions: write
   contents: write
-  id-token: write
 
 concurrency:
   group: auto-release-python-${{ github.ref }}
@@ -19,11 +19,6 @@ jobs:
   release:
     name: Release unpublished version
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/thalovant
-    env:
-      PYPI_API_TOKEN_FROM_SECRET: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -148,72 +143,6 @@ jobs:
         if: steps.plan.outputs.release_needed == 'true'
         run: python -m twine check dist/*
 
-      - name: Check whether version is already on PyPI
-        if: steps.plan.outputs.release_needed == 'true'
-        id: registry
-        env:
-          PACKAGE_VERSION: ${{ steps.plan.outputs.version }}
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import os
-          import urllib.error
-          import urllib.request
-
-          version = os.environ["PACKAGE_VERSION"]
-          url = f"https://pypi.org/pypi/thalovant/{version}/json"
-          try:
-              with urllib.request.urlopen(url) as response:
-                  exists = response.status == 200
-          except urllib.error.HTTPError as error:
-              if error.code == 404:
-                  exists = False
-              else:
-                  raise
-
-          print(f"exists={str(exists).lower()}")
-          PY
-
-      - name: Publish skipped
-        if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'true'
-        run: echo "thalovant ${{ steps.plan.outputs.version }} is already published on PyPI."
-
-      - name: Publish to PyPI with API token
-        if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET != ''
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-      - name: Publish to PyPI with trusted publishing
-        if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET == ''
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-
-      - name: Verify PyPI version
-        if: steps.plan.outputs.release_needed == 'true'
-        env:
-          PACKAGE_VERSION: ${{ steps.plan.outputs.version }}
-        run: |
-          python - <<'PY'
-          import os
-          import time
-          import urllib.error
-          import urllib.request
-
-          version = os.environ["PACKAGE_VERSION"]
-          url = f"https://pypi.org/pypi/thalovant/{version}/json"
-          for attempt in range(1, 13):
-              try:
-                  with urllib.request.urlopen(url) as response:
-                      if response.status == 200:
-                          print(f"Verified thalovant {version} on PyPI.")
-                          raise SystemExit(0)
-              except urllib.error.HTTPError as error:
-                  if error.code != 404:
-                      raise
-              time.sleep(10)
-
-          raise SystemExit(f"thalovant {version} was not visible on PyPI after waiting.")
-          PY
-
       - name: Create GitHub release
         if: steps.plan.outputs.release_needed == 'true'
         env:
@@ -221,3 +150,10 @@ jobs:
           TAG: ${{ steps.plan.outputs.tag }}
           RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
         run: gh release create "$TAG" --target "$RELEASE_SHA" --title "$TAG" --notes "Release $TAG"
+
+      - name: Dispatch package publication
+        if: steps.plan.outputs.release_needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: gh workflow run publish.yml --ref main -f release_tag="$TAG"

@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable release tag to check out and attach evidence to
+        required: false
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -23,14 +28,19 @@ jobs:
       name: pypi
       url: https://pypi.org/p/thalovant
     permissions:
-      contents: read
+      contents: write
       id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       PYPI_API_TOKEN_FROM_SECRET: ${{ secrets.PYPI_API_TOKEN }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag || '' }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -51,6 +61,12 @@ jobs:
               version = tomllib.load(pyproject)["project"]["version"]
           print(f"version={version}")
           PY
+
+      - name: Verify release tag matches the package version
+        if: env.RELEASE_TAG != ''
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
 
       - name: Check whether version is already on PyPI
         id: registry
@@ -86,6 +102,35 @@ jobs:
 
       - name: Check distribution metadata
         run: python -m twine check dist/*
+
+      - name: Build reproducible CycloneDX SBOM from the wheel
+        id: artifacts
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          runtime_venv="$RUNNER_TEMP/thalovant-sbom-runtime"
+          tooling_venv="$RUNNER_TEMP/thalovant-sbom-tooling"
+          python -m venv "$runtime_venv"
+          python -m venv "$tooling_venv"
+          "$runtime_venv/bin/python" -m pip install dist/*.whl
+          "$tooling_venv/bin/python" -m pip install cyclonedx-bom==7.3.0
+          mkdir -p release-artifacts
+          "$tooling_venv/bin/cyclonedx-py" environment "$runtime_venv/bin/python" \
+            --pyproject pyproject.toml --mc-type library --output-reproducible \
+            --spec-version 1.6 --output-format JSON \
+            --output-file "release-artifacts/thalovant-$PACKAGE_VERSION.cdx.json"
+          echo "sbom=$GITHUB_WORKSPACE/release-artifacts/thalovant-$PACKAGE_VERSION.cdx.json" >> "$GITHUB_OUTPUT"
+
+      - name: Attest distribution provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: dist/*
+
+      - name: Attest distribution SBOM
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: dist/*
+          sbom-path: ${{ steps.artifacts.outputs.sbom }}
 
       - name: Publish skipped
         if: steps.registry.outputs.exists == 'true'
@@ -126,3 +171,21 @@ jobs:
 
           raise SystemExit(f"thalovant {version} was not visible on PyPI after waiting.")
           PY
+
+      - name: Attach distributions and SBOM to the GitHub release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SBOM: ${{ steps.artifacts.outputs.sbom }}
+        run: |
+          EXISTING_ASSETS="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          mapfile -t artifacts < <(find dist -maxdepth 1 -type f -print | sort)
+          artifacts+=("$SBOM")
+          for artifact in "${artifacts[@]}"; do
+            name="$(basename "$artifact")"
+            if grep -Fxq "$name" <<< "$EXISTING_ASSETS"; then
+              echo "$name is already attached to $RELEASE_TAG; preserving the existing asset."
+            else
+              gh release upload "$RELEASE_TAG" "$artifact"
+            fi
+          done
