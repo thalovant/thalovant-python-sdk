@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule: {interval: weekly, day: monday, time: "08:00", timezone: America/Toronto}
     open-pull-requests-limit: 5
+    allow:
+      - dependency-name: "*"
+        update-types: [version-update:semver-minor, version-update:semver-patch]
     groups:
       python-routine-updates: {applies-to: version-updates, patterns: ["*"], update-types: [minor, patch]}
       python-security-updates: {applies-to: security-updates, patterns: ["*"]}
@@ -12,6 +15,9 @@ updates:
     directory: /
     schedule: {interval: weekly, day: monday, time: "08:10", timezone: America/Toronto}
     open-pull-requests-limit: 5
+    allow:
+      - dependency-name: "*"
+        update-types: [version-update:semver-minor, version-update:semver-patch]
     groups:
       action-routine-updates: {applies-to: version-updates, patterns: ["*"], update-types: [minor, patch]}
       action-security-updates: {applies-to: security-updates, patterns: ["*"]}
