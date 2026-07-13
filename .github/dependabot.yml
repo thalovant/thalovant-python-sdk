@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly, day: monday, time: "08:00", timezone: America/Toronto}
+    open-pull-requests-limit: 5
+    groups:
+      python-routine-updates: {applies-to: version-updates, patterns: ["*"], update-types: [minor, patch]}
+      python-security-updates: {applies-to: security-updates, patterns: ["*"]}
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly, day: monday, time: "08:10", timezone: America/Toronto}
+    open-pull-requests-limit: 5
+    groups:
+      action-routine-updates: {applies-to: version-updates, patterns: ["*"], update-types: [minor, patch]}
+      action-security-updates: {applies-to: security-updates, patterns: ["*"]}
