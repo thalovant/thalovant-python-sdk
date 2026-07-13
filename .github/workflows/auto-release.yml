@@ -25,11 +25,11 @@ jobs:
     env:
       PYPI_API_TOKEN_FROM_SECRET: ${{ secrets.PYPI_API_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -179,13 +179,13 @@ jobs:
 
       - name: Publish to PyPI with API token
         if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET != ''
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
       - name: Publish to PyPI with trusted publishing
         if: steps.plan.outputs.release_needed == 'true' && steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET == ''
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
 
       - name: Verify PyPI version
         if: steps.plan.outputs.release_needed == 'true'
