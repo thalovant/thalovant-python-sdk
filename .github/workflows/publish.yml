@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.RELEASE_TAG || github.ref }}
 
@@ -122,12 +122,12 @@ jobs:
           echo "sbom=$GITHUB_WORKSPACE/release-artifacts/thalovant-$PACKAGE_VERSION.cdx.json" >> "$GITHUB_OUTPUT"
 
       - name: Attest distribution provenance
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: dist/*
 
       - name: Attest distribution SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: dist/*
           sbom-path: ${{ steps.artifacts.outputs.sbom }}
@@ -138,13 +138,13 @@ jobs:
 
       - name: Publish to PyPI with API token
         if: steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET != ''
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
       - name: Publish to PyPI with trusted publishing
         if: steps.registry.outputs.exists == 'false' && env.PYPI_API_TOKEN_FROM_SECRET == ''
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
 
       - name: Verify PyPI version
         env:
