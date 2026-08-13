@@ -366,7 +366,8 @@ handshake, and transport health.
 
 - `ThalovantControlPlane()`
 - `ThalovantControlPlane(api_url, access_token=...)` for local or self-hosted control planes
-- `control.login(email, password, scope=None)`
+- `control.login(email, password, scope=None, otp_code=None, recovery_code=None)`
+  (MFA accounts pass a TOTP `otp_code` or a one-time `recovery_code`)
 - `control.list_public_hubs(limit=...)`
 - `control.get_public_hub(hub_ref)`
 - `control.list_hubs(limit=..., owner_id=...)`

@@ -1,6 +1,8 @@
+from typing import get_args
+
 import pytest
 
-from thalovant import ThalovantControlPlane, ThalovantUnsupportedProtocolError
+from thalovant import OperationStatus, ThalovantControlPlane, ThalovantUnsupportedProtocolError
 
 
 class FakeResponse:
@@ -70,7 +72,7 @@ class FakeSession:
                     "applied_at": None,
                     "ready_at": None,
                     "terminal_at": None,
-                    "links": {"self": "/api/v1/operations/operation-1"},
+                    "links": {"self": "/v1/operations/operation-1"},
                 },
             )
         if url.endswith("/v1/memory"):
@@ -312,8 +314,37 @@ def test_control_plane_gets_typed_operation():
 
     assert operation.id == "operation-1"
     assert operation.status == "committed"
+    assert operation.status in get_args(OperationStatus)
     assert operation.git_commit_sha == "abc123"
     assert operation.details["git_commit_created"] is True
+    assert operation.links["self"] == "/v1/operations/operation-1"
+
+
+def test_control_plane_login_sends_mfa_fields_only_when_provided():
+    session = FakeSession()
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+
+    api.login("ada@example.com", "secret")
+    _, _, plain = session.requests[0]
+    assert plain["json"] == {"email": "ada@example.com", "password": "secret"}
+
+    api.login("ada@example.com", "secret", otp_code="123456")
+    _, _, with_otp = session.requests[1]
+    assert with_otp["json"] == {
+        "email": "ada@example.com",
+        "password": "secret",
+        "otp_code": "123456",
+    }
+
+    api.login("ada@example.com", "secret", scope="hubs:read", recovery_code="rec-code-1")
+    _, _, with_recovery = session.requests[2]
+    assert with_recovery["json"] == {
+        "email": "ada@example.com",
+        "password": "secret",
+        "scope": "hubs:read",
+        "recovery_code": "rec-code-1",
+    }
+    assert api.access_token == "token"
 
 
 def test_control_plane_manages_memory_items():

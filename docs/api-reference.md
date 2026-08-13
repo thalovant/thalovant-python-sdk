@@ -39,14 +39,21 @@ Authenticated helper for the Thalovant API.
 
 Methods:
 
-- `login(email, password, scope=None)`
+- `login(email, password, scope=None, otp_code=None, recovery_code=None)`
 - `list_hubs(limit=100, cursor=None, owner_id=None)`
 - `list_public_hubs(limit=24, cursor=None)`
 - `get_hub(hub_id)`
 - `get_public_hub(hub_ref)`
 - `get_operation(operation_id)`
 - `create_client(payload, idempotency_key=None)`
-- `create_client_identity(hub, name, site_id=None, spec=None, owner_id=None, active=True, preferred_protocols=("https", "wss", "mqtt"))`
+- `create_client_identity(hub, name, site_id=None, spec=None, owner_id=None, active=True, preferred_protocols=("wss", "https", "mqtt"))`
+
+MFA-enabled accounts must pass a TOTP `otp_code` or a one-time `recovery_code`
+to `login(...)`; without one the API rejects the login with `mfa_required`.
+
+`get_operation` returns a typed `OperationResource` whose `status` field is the
+`OperationStatus` literal: `requested`, `committed`, `applied`, `ready`,
+`failed`, or `timed_out`.
 
 `create_client_identity` generates client secrets locally, sends them once to
 the API, and returns `BootstrapIdentityResult.identity`. API responses may

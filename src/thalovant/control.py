@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import secrets
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Literal, Mapping, cast
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -23,7 +23,16 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.20"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.21"
+
+OperationStatus = Literal[
+    "requested",
+    "committed",
+    "applied",
+    "ready",
+    "failed",
+    "timed_out",
+]
 
 
 @dataclass(frozen=True)
@@ -34,7 +43,7 @@ class OperationResource:
     kind: str
     aggregate_type: str
     aggregate_id: str | None
-    status: str
+    status: OperationStatus
     details: dict[str, Any]
     git_commit_sha: str | None
     error_code: str | None
@@ -56,7 +65,7 @@ class OperationResource:
             kind=_required_str(payload, "kind"),
             aggregate_type=_required_str(payload, "aggregate_type"),
             aggregate_id=_optional_str(payload.get("aggregate_id")),
-            status=_required_str(payload, "status"),
+            status=cast(OperationStatus, _required_str(payload, "status")),
             details=dict(payload.get("details") or {}),
             git_commit_sha=_optional_str(payload.get("git_commit_sha")),
             error_code=_optional_str(payload.get("error_code")),
@@ -117,12 +126,29 @@ class ThalovantControlPlane:
         self.user_agent = user_agent
         self.session = session or requests.Session()
 
-    def login(self, email: str, password: str, *, scope: str | None = None) -> dict[str, Any]:
-        """Authenticate with email/password and store the returned access token."""
+    def login(
+        self,
+        email: str,
+        password: str,
+        *,
+        scope: str | None = None,
+        otp_code: str | None = None,
+        recovery_code: str | None = None,
+    ) -> dict[str, Any]:
+        """Authenticate with email/password and store the returned access token.
+
+        MFA-enabled accounts must also provide a TOTP ``otp_code`` or a one-time
+        ``recovery_code``; the API rejects the login with ``mfa_required``
+        otherwise.
+        """
 
         payload: dict[str, Any] = {"email": email, "password": password}
         if scope:
             payload["scope"] = scope
+        if otp_code:
+            payload["otp_code"] = otp_code
+        if recovery_code:
+            payload["recovery_code"] = recovery_code
         token = self._request("POST", "/v1/auth/token", json=payload, auth=False)
         access_token = token.get("access_token")
         if not isinstance(access_token, str) or not access_token:

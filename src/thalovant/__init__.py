@@ -6,6 +6,7 @@ from .control import (
     BootstrapIdentityResult,
     DEFAULT_CONTROL_API_URL,
     OperationResource,
+    OperationStatus,
     ThalovantControlPlane,
 )
 from .context import build_client_context
@@ -51,7 +52,7 @@ from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
-__version__ = "0.4.20"
+__version__ = "0.4.21"
 
 __all__ = [
     "AsyncThalovantAgent",
@@ -75,6 +76,7 @@ __all__ = [
     "MqttBrokerCredentials",
     "MqttTopicSet",
     "OperationResource",
+    "OperationStatus",
     "SelectedHubEndpoint",
     "HiveMindMQTTTransport",
     "ThalovantAPIError",
