@@ -50,7 +50,7 @@ thalovant = "thalovant.cli:main"
 dev = [
     "build>=1.2",
     "pytest>=8.0",
-    "twine>=6.0",
+    "twine>=7.0",
 ]
 docs = [
     "mkdocs>=1.6",
