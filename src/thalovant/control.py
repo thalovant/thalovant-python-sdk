@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import secrets
-from typing import Any, Iterable, Literal, Mapping, cast
+import time
+from typing import Any, Callable, Iterable, Literal, Mapping, cast
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import uuid4
+import webbrowser
 
 import requests
 
-from .errors import ThalovantAPIError, ThalovantUnsupportedProtocolError
+from .errors import ThalovantAPIError, ThalovantTimeoutError, ThalovantUnsupportedProtocolError
 from .identity import ThalovantIdentity
 from .protocols import (
     DEFAULT_PROTOCOL_PREFERENCE,
@@ -23,7 +25,9 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.21"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.22"
+
+DEFAULT_DEVICE_POLL_INTERVAL = 5.0
 
 OperationStatus = Literal[
     "requested",
@@ -155,6 +159,131 @@ class ThalovantControlPlane:
             raise ThalovantAPIError("Thalovant API token response did not include access_token.")
         self.access_token = access_token
         return token
+
+    def login_with_browser(
+        self,
+        *,
+        scopes: Iterable[str] | None = None,
+        client_name: str | None = None,
+        open_browser: bool = True,
+        prompt: Callable[[dict[str, Any]], None] | None = None,
+        timeout: float = 900.0,
+    ) -> dict[str, Any]:
+        """Sign in through the browser device flow and store the API token.
+
+        This is the sign-in path for accounts without a password (for example
+        Google sign-in). It requests a device authorization, tells the user to
+        visit ``verification_uri`` and enter the short ``user_code`` (pass a
+        ``prompt`` callable receiving the authorization payload to present it
+        yourself), optionally opens the browser at
+        ``verification_uri_complete``, and polls until the request is approved,
+        denied, expired, or ``timeout`` seconds elapse.
+
+        On approval the returned ``access_token`` is a durable scoped API token
+        and is stored on ``self.access_token`` exactly like ``login()``.
+        """
+
+        payload: dict[str, Any] = {}
+        if scopes is not None:
+            payload["scopes"] = list(scopes)
+        if client_name:
+            payload["client_name"] = client_name
+        grant = self._request("POST", "/v1/auth/device/authorize", json=payload, auth=False)
+
+        device_code = grant.get("device_code")
+        user_code = grant.get("user_code")
+        verification_uri = grant.get("verification_uri")
+        for value in (device_code, user_code, verification_uri):
+            if not isinstance(value, str) or not value:
+                raise ThalovantAPIError(
+                    "Thalovant API device authorization response was incomplete."
+                )
+        raw_interval = grant.get("interval")
+        interval = (
+            float(raw_interval)
+            if isinstance(raw_interval, (int, float)) and raw_interval >= 0
+            else DEFAULT_DEVICE_POLL_INTERVAL
+        )
+
+        if prompt is not None:
+            prompt(grant)
+        else:
+            print(f"To sign in, visit {verification_uri} and enter the code {user_code}")
+        if open_browser:
+            complete_uri = grant.get("verification_uri_complete")
+            if isinstance(complete_uri, str) and complete_uri:
+                try:
+                    webbrowser.open(complete_uri)
+                except Exception:  # noqa: BLE001 - browser availability is best-effort
+                    pass
+
+        token = self._poll_device_token(
+            cast(str, device_code), interval=interval, timeout=timeout
+        )
+        access_token = token.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise ThalovantAPIError("Thalovant API token response did not include access_token.")
+        self.access_token = access_token
+        return token
+
+    def _poll_device_token(
+        self,
+        device_code: str,
+        *,
+        interval: float,
+        timeout: float,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> dict[str, Any]:
+        """Poll the device token endpoint until approval or a terminal state.
+
+        ``sleep`` and ``clock`` are injectable so tests can drive the loop
+        without real waiting.
+        """
+
+        deadline = clock() + timeout
+        wait = interval
+        while True:
+            response = self._send(
+                "POST",
+                "/v1/auth/device/token",
+                json={"device_code": device_code},
+                auth=False,
+            )
+            try:
+                body: Any = response.json()
+            except ValueError:
+                body = None
+            if 200 <= response.status_code < 300:
+                if not isinstance(body, dict):
+                    raise ThalovantAPIError(
+                        "Thalovant API returned an unexpected response shape."
+                    )
+                return body
+            error = (
+                body.get("error")
+                if response.status_code == 400 and isinstance(body, dict)
+                else None
+            )
+            if error == "slow_down":
+                wait += 5.0
+            elif error == "access_denied":
+                raise ThalovantAPIError(
+                    "The device sign-in request was denied in the browser."
+                )
+            elif error == "expired_token":
+                raise ThalovantAPIError(
+                    "The device sign-in code expired before it was approved. "
+                    "Call login_with_browser() again to request a new code."
+                )
+            elif error != "authorization_pending":
+                raise ThalovantAPIError(_error_detail(response))
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise ThalovantTimeoutError(
+                    "Timed out waiting for the device sign-in to be approved."
+                )
+            sleep(min(wait, remaining))
 
     def list_hubs(
         self,
@@ -414,6 +543,29 @@ class ThalovantControlPlane:
         headers: Mapping[str, str] | None = None,
         auth: bool = True,
     ) -> dict[str, Any]:
+        response = self._send(method, path, json=json, params=params, headers=headers, auth=auth)
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ThalovantAPIError(_error_detail(response))
+        if not response.text.strip():
+            return {}
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ThalovantAPIError("Thalovant API returned a non-JSON response.") from exc
+        if not isinstance(body, dict):
+            raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
+        return body
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        auth: bool = True,
+    ) -> requests.Response:
         request_headers = {
             "accept": "application/json",
             "user-agent": self.user_agent,
@@ -428,7 +580,7 @@ class ThalovantControlPlane:
             request_headers["authorization"] = f"Bearer {self.access_token}"
 
         try:
-            response = self.session.request(
+            return self.session.request(
                 method,
                 urljoin(self.api_url, path.lstrip("/")),
                 json=json,
@@ -438,18 +590,6 @@ class ThalovantControlPlane:
             )
         except requests.RequestException as exc:
             raise ThalovantAPIError("Could not reach the Thalovant API.") from exc
-
-        if response.status_code < 200 or response.status_code >= 300:
-            raise ThalovantAPIError(_error_detail(response))
-        if not response.text.strip():
-            return {}
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise ThalovantAPIError("Thalovant API returned a non-JSON response.") from exc
-        if not isinstance(body, dict):
-            raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
-        return body
 
 
 def _new_secret() -> str:

@@ -2,7 +2,13 @@ from typing import get_args
 
 import pytest
 
-from thalovant import OperationStatus, ThalovantControlPlane, ThalovantUnsupportedProtocolError
+from thalovant import (
+    OperationStatus,
+    ThalovantAPIError,
+    ThalovantControlPlane,
+    ThalovantTimeoutError,
+    ThalovantUnsupportedProtocolError,
+)
 
 
 class FakeResponse:
@@ -440,3 +446,142 @@ def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():
         "endpoint": "mqtts://broker.thalovant.io:8883",
         "tls": True,
     }
+
+
+DEVICE_GRANT = {
+    "device_code": "device-code-1",
+    "user_code": "WDJB-MJHT",
+    "verification_uri": "https://dash.thalovant.com/activate",
+    "verification_uri_complete": "https://dash.thalovant.com/activate?user_code=WDJB-MJHT",
+    "expires_in": 900,
+    "interval": 0,
+}
+
+DEVICE_TOKEN = {
+    "access_token": "device-token",
+    "token_type": "bearer",
+    "scopes": ["hubs:read", "clients:write"],
+    "expires_at": "2027-08-13T00:00:00Z",
+    "token_id": "token-1",
+}
+
+
+class DeviceFlowSession:
+    """Scripted fake session for the device-flow endpoints."""
+
+    def __init__(self, token_responses):
+        self.requests = []
+        self.token_responses = list(token_responses)
+
+    def request(self, method, url, **kwargs):
+        self.requests.append((method, url, kwargs))
+        assert method == "POST"
+        assert "authorization" not in kwargs["headers"]
+        if url.endswith("/v1/auth/device/authorize"):
+            return FakeResponse(200, dict(DEVICE_GRANT))
+        if url.endswith("/v1/auth/device/token"):
+            assert kwargs["json"] == {"device_code": "device-code-1"}
+            return FakeResponse(*self.token_responses.pop(0))
+        raise AssertionError(url)
+
+
+def test_control_plane_login_with_browser_polls_until_token(monkeypatch, capsys):
+    session = DeviceFlowSession(
+        [
+            (400, {"error": "authorization_pending"}),
+            (400, {"error": "authorization_pending"}),
+            (200, dict(DEVICE_TOKEN)),
+        ]
+    )
+    opened = []
+    monkeypatch.setattr("thalovant.control.webbrowser.open", opened.append)
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+
+    token = api.login_with_browser(scopes=["hubs:read"], client_name="pytest")
+
+    assert token == DEVICE_TOKEN
+    assert api.access_token == "device-token"
+    assert opened == ["https://dash.thalovant.com/activate?user_code=WDJB-MJHT"]
+    _, _, authorize = session.requests[0]
+    assert authorize["json"] == {"scopes": ["hubs:read"], "client_name": "pytest"}
+    assert len(session.requests) == 4
+    out = capsys.readouterr().out
+    assert (
+        "To sign in, visit https://dash.thalovant.com/activate "
+        "and enter the code WDJB-MJHT" in out
+    )
+
+
+def test_control_plane_login_with_browser_custom_prompt_and_no_browser(monkeypatch):
+    session = DeviceFlowSession([(200, dict(DEVICE_TOKEN))])
+    monkeypatch.setattr(
+        "thalovant.control.webbrowser.open",
+        lambda url: pytest.fail("browser must not open"),
+    )
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+    grants = []
+
+    api.login_with_browser(open_browser=False, prompt=grants.append)
+
+    assert grants == [DEVICE_GRANT]
+    _, _, authorize = session.requests[0]
+    assert authorize["json"] == {}
+
+
+def test_control_plane_device_poll_slow_down_grows_interval():
+    session = DeviceFlowSession(
+        [
+            (400, {"error": "authorization_pending"}),
+            (400, {"error": "slow_down"}),
+            (400, {"error": "authorization_pending"}),
+            (200, dict(DEVICE_TOKEN)),
+        ]
+    )
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+    sleeps = []
+
+    token = api._poll_device_token(
+        "device-code-1",
+        interval=5.0,
+        timeout=900.0,
+        sleep=sleeps.append,
+        clock=lambda: 0.0,
+    )
+
+    assert token == DEVICE_TOKEN
+    assert sleeps == [5.0, 10.0, 10.0]
+
+
+def test_control_plane_login_with_browser_raises_on_access_denied():
+    session = DeviceFlowSession([(400, {"error": "access_denied"})])
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+
+    with pytest.raises(ThalovantAPIError, match="denied"):
+        api.login_with_browser(open_browser=False, prompt=lambda grant: None)
+    assert api.access_token is None
+
+
+def test_control_plane_login_with_browser_raises_on_expired_token():
+    session = DeviceFlowSession([(400, {"error": "expired_token"})])
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+
+    with pytest.raises(ThalovantAPIError, match="expired.*again"):
+        api.login_with_browser(open_browser=False, prompt=lambda grant: None)
+    assert api.access_token is None
+
+
+def test_control_plane_device_poll_times_out():
+    session = DeviceFlowSession([(400, {"error": "authorization_pending"})] * 3)
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+    now = {"value": 0.0}
+
+    def clock():
+        return now["value"]
+
+    def sleep(seconds):
+        now["value"] += seconds
+
+    with pytest.raises(ThalovantTimeoutError, match="Timed out"):
+        api._poll_device_token("device-code-1", interval=5.0, timeout=10.0, sleep=sleep, clock=clock)
+    assert len(session.requests) == 3
+    assert now["value"] == 10.0

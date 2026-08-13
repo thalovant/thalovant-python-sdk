@@ -62,6 +62,18 @@ with ThalovantClient(result.identity, protocol="wss") as client:
     print(reply.text)
 ```
 
+Accounts created through Google sign-in have no password. Use the browser
+device flow instead of `login(...)`:
+
+```python
+api.login_with_browser()
+```
+
+This prints a short code and a verification URL, opens your browser to the
+approval page, and waits for you to approve the request in the dashboard. On
+approval the SDK stores a scoped, revocable API token, exactly like
+`login(...)`.
+
 `ThalovantControlPlane()` uses `https://api.thalovant.com` by default. Pass a
 different URL only for local development or a self-hosted control plane.
 
@@ -352,7 +364,8 @@ handshake, and transport health.
 
 ## Common Issues
 
-- `Missing Thalovant API access token`: call `api.login(...)` before private
+- `Missing Thalovant API access token`: call `api.login(...)` (or
+  `api.login_with_browser()` for accounts without a password) before private
   control-plane actions, or pass `access_token=` to `ThalovantControlPlane`.
 - `API access requires a paid plan`: upgrade the workspace before using the SDK
   control-plane API to provision private resources.
@@ -368,6 +381,8 @@ handshake, and transport health.
 - `ThalovantControlPlane(api_url, access_token=...)` for local or self-hosted control planes
 - `control.login(email, password, scope=None, otp_code=None, recovery_code=None)`
   (MFA accounts pass a TOTP `otp_code` or a one-time `recovery_code`)
+- `control.login_with_browser(scopes=None, client_name=None, open_browser=True, prompt=None, timeout=900.0)`
+  (browser device-flow sign-in for accounts without a password)
 - `control.list_public_hubs(limit=...)`
 - `control.get_public_hub(hub_ref)`
 - `control.list_hubs(limit=..., owner_id=...)`

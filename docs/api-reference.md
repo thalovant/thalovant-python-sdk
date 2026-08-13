@@ -40,6 +40,7 @@ Authenticated helper for the Thalovant API.
 Methods:
 
 - `login(email, password, scope=None, otp_code=None, recovery_code=None)`
+- `login_with_browser(scopes=None, client_name=None, open_browser=True, prompt=None, timeout=900.0)`
 - `list_hubs(limit=100, cursor=None, owner_id=None)`
 - `list_public_hubs(limit=24, cursor=None)`
 - `get_hub(hub_id)`
@@ -50,6 +51,26 @@ Methods:
 
 MFA-enabled accounts must pass a TOTP `otp_code` or a one-time `recovery_code`
 to `login(...)`; without one the API rejects the login with `mfa_required`.
+
+`login_with_browser` signs in accounts that have no password (for example
+Google sign-in) with an RFC 8628-style device flow. It requests a device
+authorization from `/v1/auth/device/authorize` (`scopes` defaults server-side
+to `["hubs:read", "clients:write"]`; `client_name` labels the token), prints
+`To sign in, visit <verification_uri> and enter the code <user_code>`, and,
+when `open_browser` is true, also tries to open the browser at
+`verification_uri_complete` (failures to open a browser are ignored). Pass a
+`prompt` callable to present the authorization payload yourself instead of the
+default print, for example in a GUI. The SDK then polls
+`/v1/auth/device/token` at the server-provided interval, adding five seconds
+whenever the API answers `slow_down`, until the request is approved. A denied
+or expired request raises `ThalovantAPIError`; waiting longer than `timeout`
+seconds (default 900) raises `ThalovantTimeoutError`.
+
+On approval `login_with_browser` returns the token payload and stores its
+`access_token` on the client exactly like `login(...)`. The token is a
+durable, scoped, revocable API token: it appears in the dashboard's API token
+list (the payload's `token_id` identifies it, `scopes` and `expires_at`
+describe it) and can be revoked there at any time.
 
 `get_operation` returns a typed `OperationResource` whose `status` field is the
 `OperationStatus` literal: `requested`, `committed`, `applied`, `ready`,
