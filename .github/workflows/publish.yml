@@ -115,11 +115,33 @@ jobs:
           "$runtime_venv/bin/python" -m pip install dist/*.whl
           "$tooling_venv/bin/python" -m pip install cyclonedx-bom==7.3.0
           mkdir -p release-artifacts
+          sbom="release-artifacts/thalovant-$PACKAGE_VERSION.cdx.json"
           "$tooling_venv/bin/cyclonedx-py" environment "$runtime_venv/bin/python" \
             --pyproject pyproject.toml --mc-type library --output-reproducible \
             --spec-version 1.6 --output-format JSON \
-            --output-file "release-artifacts/thalovant-$PACKAGE_VERSION.cdx.json"
-          echo "sbom=$GITHUB_WORKSPACE/release-artifacts/thalovant-$PACKAGE_VERSION.cdx.json" >> "$GITHUB_OUTPUT"
+            --output-file "$sbom"
+          # Reproducible output omits serialNumber, but the attest action requires
+          # it to recognize CycloneDX JSON. Derive a deterministic identity from
+          # the wheel digest, matching the Go SDK's SBOM identity approach.
+          python3 - "$sbom" <<'PY'
+          import glob
+          import hashlib
+          import json
+          import pathlib
+          import sys
+          import uuid
+
+          path = pathlib.Path(sys.argv[1])
+          bom = json.loads(path.read_text())
+          wheel = sorted(glob.glob("dist/*.whl"))[0]
+          digest = hashlib.sha256(pathlib.Path(wheel).read_bytes()).hexdigest()
+          identity = f"https://github.com/thalovant/thalovant-python-sdk#{digest}"
+          bom["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, identity)}"
+          if not all(bom.get(field) for field in ("bomFormat", "specVersion", "serialNumber")):
+              raise SystemExit("generated CycloneDX SBOM lacks an attestation identity field")
+          path.write_text(json.dumps(bom, sort_keys=True, separators=(",", ":")) + "\n")
+          PY
+          echo "sbom=$GITHUB_WORKSPACE/$sbom" >> "$GITHUB_OUTPUT"
 
       - name: Attest distribution provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
