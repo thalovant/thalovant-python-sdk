@@ -80,6 +80,33 @@ different URL only for local development or a self-hosted control plane.
 Keep `result.identity` secret. It contains the client credentials used by the
 hub. Do not log `result.identity.as_dict(include_secrets=True)`.
 
+## Token Auth For CI And Automation
+
+Headless environments (CI jobs, AI agents, cron tasks) should skip login
+entirely: mint a scoped API token once, then pass it to the constructor.
+
+```python
+import os
+
+from thalovant import ThalovantControlPlane
+
+api = ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])
+
+# Ready immediately; no login call needed.
+page = api.list_hubs(limit=50)
+```
+
+```bash
+# CI configuration
+export THALOVANT_API_TOKEN="tvpat_..."  # store in your CI secret manager
+```
+
+Tokens come from the dashboard's API Tokens page or from
+`login_with_browser()`. Either way the token is durable, scoped, and
+revocable: grant only the scopes the job needs, and revoke it from the same
+page when the job is retired. The SDK never reads `THALOVANT_API_TOKEN` on its
+own, so pass it explicitly as shown above.
+
 ## List Your Hubs
 
 Authenticated accounts can list owned or visible hubs:
@@ -374,10 +401,19 @@ handshake, and transport health.
 - MQTT fails immediately: create or download a fresh client identity after MQTT
   is enabled. MQTT needs the per-client `identity.mqtt` credentials.
 - A request times out: increase `timeout` on `ask(...)` or check `doctor()`.
+- `token_rate_limited`: the API token exceeded its plan's per-minute request
+  rate (60 requests per minute on the free plan). The response is HTTP 429 with
+  a `Retry-After` header and a matching `retry_after_seconds`; wait that long
+  and resend.
+- `token_quota_exceeded`: the API token used up its plan's daily or monthly
+  call quota. The response names which in `quota`, alongside `limit` and
+  `used`, and `Retry-After` points at the next UTC day or month. The SDK does
+  not retry either 429 for you.
 
 ## API Shape
 
 - `ThalovantControlPlane()`
+- `ThalovantControlPlane(access_token=...)` to authenticate with an API token instead of logging in
 - `ThalovantControlPlane(api_url, access_token=...)` for local or self-hosted control planes
 - `control.login(email, password, scope=None, otp_code=None, recovery_code=None)`
   (MFA accounts pass a TOTP `otp_code` or a one-time `recovery_code`)

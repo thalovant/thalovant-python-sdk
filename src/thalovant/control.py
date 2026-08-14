@@ -25,7 +25,7 @@ from .protocols import (
 )
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.22"
+DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.23"
 
 DEFAULT_DEVICE_POLL_INTERVAL = 5.0
 
