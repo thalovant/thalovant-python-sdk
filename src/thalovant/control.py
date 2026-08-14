@@ -23,9 +23,10 @@ from .protocols import (
     endpoint_from_domain,
     select_data_plane_endpoint,
 )
+from ._version import USER_AGENT
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
-DEFAULT_CONTROL_USER_AGENT = "ThalovantPythonSDK/0.4.23"
+DEFAULT_CONTROL_USER_AGENT = USER_AGENT
 
 DEFAULT_DEVICE_POLL_INTERVAL = 5.0
 

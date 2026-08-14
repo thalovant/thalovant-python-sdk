@@ -1,5 +1,6 @@
 """Thalovant Python SDK."""
 
+from ._version import __version__
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
 from .control import (
@@ -51,8 +52,6 @@ from .protocols import (
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
-
-__version__ = "0.4.23"
 
 __all__ = [
     "AsyncThalovantAgent",

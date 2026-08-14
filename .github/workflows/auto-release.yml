@@ -88,8 +88,13 @@ jobs:
               return f"{major}.{minor}.{patch + 1}"
 
           def replace(path: str, old: str, new: str) -> None:
+              # Fail loudly: a literal that no longer matches used to no-op in
+              # silence, which is how the user agent drifted for three releases.
               file_path = pathlib.Path(path)
-              file_path.write_text(file_path.read_text().replace(old, new))
+              original = file_path.read_text()
+              if old not in original:
+                  raise SystemExit(f"Cannot bump {path}: expected to find {old!r}")
+              file_path.write_text(original.replace(old, new))
 
           changed = changed_since_latest_tag()
           if changed != ["<initial-release>"] and not any(is_relevant(path) for path in changed):
@@ -106,12 +111,13 @@ jobs:
           current_tag = f"v{current}"
           if tag_exists(current_tag):
               next_version = bump_patch(current)
+              # Every user agent is derived from thalovant._version.__version__,
+              # so bumping these two literals is the whole release bump.
               replace("pyproject.toml", f'version = "{current}"', f'version = "{next_version}"')
-              replace("src/thalovant/__init__.py", f'__version__ = "{current}"', f'__version__ = "{next_version}"')
-              replace("src/thalovant/client.py", f"ThalovantPythonSDK/{current}", f"ThalovantPythonSDK/{next_version}")
+              replace("src/thalovant/_version.py", f'__version__ = "{current}"', f'__version__ = "{next_version}"')
               git("config", "user.name", "github-actions[bot]")
               git("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
-              git("add", "pyproject.toml", "src/thalovant/__init__.py", "src/thalovant/client.py")
+              git("add", "pyproject.toml", "src/thalovant/_version.py")
               git("commit", "-m", f"release: bump Python SDK to {next_version}")
               git("push", "origin", "HEAD:main")
               current = next_version
