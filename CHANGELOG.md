@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.24
+
+- Fix the stale data-plane user agent. `thalovant.client.DEFAULT_USERAGENT` was pinned at `ThalovantPythonSDK/0.4.19`, so the 0.4.20, 0.4.21, 0.4.22, and 0.4.23 releases all identified themselves as 0.4.19 to hubs. The control-plane user agent was correct but only because it was hand-maintained every release.
+- Derive every user agent from a single source of truth. `thalovant/_version.py` now owns `__version__` and builds `USER_AGENT` from it; `client.DEFAULT_USERAGENT` and `control.DEFAULT_CONTROL_USER_AGENT` are both that value, and `thalovant.__version__` re-exports it, so no version literal can drift again. Public names and values are unchanged.
+- Add `tests/test_version.py`, which pins each user agent to `__version__`, matches the package version against `pyproject.toml`, and rejects any hard-coded version literal in a user-agent string.
+- Document `retry_after_seconds` on the `token_quota_exceeded` bullet in the README. Both API-token 429s carry it, but only `token_rate_limited` said so, which left callers of the quota error without the programmatic retry field.
+
 ## 0.4.23
 
 - Document token auth for CI and automation in the README: pass a scoped API token as `ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])` to skip the login call entirely. Tokens come from the dashboard's API Tokens page or from `login_with_browser()`, and are durable, scoped, and revocable. The SDK does not read the environment variable itself, so the example passes it explicitly.

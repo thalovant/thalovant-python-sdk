@@ -407,7 +407,8 @@ handshake, and transport health.
   and resend.
 - `token_quota_exceeded`: the API token used up its plan's daily or monthly
   call quota. The response names which in `quota`, alongside `limit` and
-  `used`, and `Retry-After` points at the next UTC day or month. The SDK does
+  `used`, and carries a `Retry-After` header and a matching
+  `retry_after_seconds` pointing at the next UTC day or month. The SDK does
   not retry either 429 for you.
 
 ## API Shape
