@@ -59,6 +59,12 @@ Hub provisioning:
 - `clear_hub_rating(hub_id)`
 - `get_hub_runtime_capabilities(hub_id)`
 
+Skill discovery:
+
+- `list_marketplace_skills(owner_id=None, include_inactive=False, force_refresh=False)`
+- `list_runtime_group_marketplace(runtime_group_id, refresh_inventory=False)`
+- `list_runtime_group_inventory(runtime_group_id, refresh=False)`
+
 Runtime groups and skills:
 
 - `list_runtime_groups(owner_id=None)`
@@ -170,6 +176,53 @@ spellings, which are converted before the request is sent.
   plan (HTTP 402).
 - `uninstall_runtime_group_skill(runtime_group_id, skill_id)` —
   `DELETE /v1/runtime-groups/{id}/skills/{skill_id}`, HTTP 204.
+
+#### Skill discovery
+
+None of the discovery reads are paid-gated — a free-plan token can browse the
+catalog and inspect a runtime group before upgrading; only the install behind
+`install_runtime_group_skill` needs a paid plan. All three return the API's JSON
+body as a `dict`, and omit query parameters that are `None`, blank, or `False`.
+
+- `list_marketplace_skills(owner_id=None, include_inactive=False, force_refresh=False)`
+  — `GET /v1/marketplace/skills`, scope `hubs:read`, **no paid plan**. Returns
+  `{"data": [...]}` with the global catalog plus the caller's tenant entries.
+  Each entry carries the install inputs (`skill_id`, `source_type`,
+  `source_ref`, `package_name`, `compatibility`, `config_schema`,
+  `secret_schema`) and the presentation and access fields (`title`, `summary`,
+  `category`, `tags`, `verified`, `support_level`, `access_tier`,
+  `billing_sku`, `rating_average`, `is_active`). `owner_id` and
+  `include_inactive` apply to admin tokens only — the API scopes a non-admin
+  caller to their own tenant and to active entries regardless of what is sent.
+  `force_refresh=True` re-syncs the global catalog from source before
+  answering.
+- `list_runtime_group_marketplace(runtime_group_id, refresh_inventory=False)` —
+  `GET /v1/runtime-groups/{id}/marketplace`, scope `hubs:inspect`, **no paid
+  plan**. Resolves the catalog against one runtime group: every entry adds the
+  group's desired state (`active`, `version_pin`, `source_type`), the observed
+  state (`observed_source`, `observed_at`, `adapt_intents`,
+  `padatious_intents`, `total_intents`), operator fields
+  (`operator_phase`, `operator_message`, `operator_last_error`,
+  `operator_retry_count`), and the plan verdict (`purchase_required`,
+  `installable`, `access_message`). The envelope carries `runtime_group_id`,
+  `observed_at`, `source`, `operator_phase`, and `operator_message`.
+  `refresh_inventory=True` forces a live operator read instead of the cached
+  snapshot.
+- `list_runtime_group_inventory(runtime_group_id, refresh=False)` —
+  `GET /v1/runtime-groups/{id}/inventory`, scope `hubs:inspect`, **no paid
+  plan**. Reports what the group is observed running, not what could be
+  installed: each entry has `skill_id`, `version`, `source`, `active`,
+  `adapt_intents`, `padatious_intents`, `total_intents`, and `observed_at`.
+  The envelope's `source` names the provenance —
+  `ovos-runtime-operator`, `runtime-group-cache`, or
+  `ovos-runtime-operator-pending`. `refresh=True` forces a live operator read;
+  the API also refreshes on its own when it holds no cached snapshot. Unlike
+  `get_hub_runtime_capabilities`, this route does **not** answer HTTP 409 when
+  nothing is reporting — it returns an empty `data` list with a pending
+  `source`.
+
+Both group-scoped reads answer HTTP 404 for an unknown runtime group and HTTP
+403 when the caller neither owns the group nor is an admin.
 
 `create_client_identity` generates client secrets locally, sends them once to
 the API, and returns `BootstrapIdentityResult.identity`. API responses may

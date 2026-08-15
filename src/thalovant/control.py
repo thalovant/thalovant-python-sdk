@@ -667,6 +667,113 @@ class ThalovantControlPlane:
 
         self._request("DELETE", f"/v1/runtime-groups/{runtime_group_id}")
 
+    def list_marketplace_skills(
+        self,
+        *,
+        owner_id: str | None = None,
+        include_inactive: bool = False,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """List the marketplace skill catalog visible to the authenticated user.
+
+        Returns ``{"data": [...]}`` where each entry carries the catalog fields
+        an install needs -- ``skill_id``, ``source_type``, ``source_ref``,
+        ``package_name``, ``version`` compatibility, ``config_schema`` and
+        ``secret_schema`` -- alongside presentation and access fields such as
+        ``category``, ``tags``, ``verified``, ``access_tier`` and
+        ``billing_sku``. Global catalog entries and the caller's own tenant
+        entries are both included.
+
+        ``owner_id`` and ``include_inactive`` are honoured for admin tokens
+        only; the API silently scopes a non-admin caller to their own tenant
+        and to active entries. ``force_refresh`` re-syncs the global catalog
+        from its source before answering, which is slower.
+
+        Requires a token with the ``hubs:read`` scope. Unlike the provisioning
+        routes this catalog is **not** paid-gated, so free-tier callers can
+        browse the marketplace before upgrading -- only the install itself
+        needs a paid plan.
+        """
+
+        params: dict[str, Any] = {}
+        _set_param(params, "owner_id", owner_id)
+        if include_inactive:
+            params["include_inactive"] = "true"
+        if force_refresh:
+            params["force_refresh"] = "true"
+        return self._request("GET", "/v1/marketplace/skills", params=params)
+
+    def list_runtime_group_marketplace(
+        self,
+        runtime_group_id: str,
+        *,
+        refresh_inventory: bool = False,
+    ) -> dict[str, Any]:
+        """List the marketplace catalog resolved against one runtime group.
+
+        This is the discovery view to use before installing: every catalog
+        entry is returned with the group's own state folded in -- whether the
+        skill is desired (``active``, ``version_pin``, ``source_type``),
+        whether it was observed running (``observed_source``,
+        ``observed_at``, intent counts), operator status fields, and the
+        access verdict for the tenant plan (``purchase_required``,
+        ``installable``, ``access_message``). The envelope also carries
+        ``runtime_group_id``, ``observed_at``, ``source``, ``operator_phase``
+        and ``operator_message``.
+
+        ``refresh_inventory`` forces a live read from the runtime operator
+        instead of answering from the cached inventory snapshot.
+
+        Requires a token with the ``hubs:inspect`` scope; no paid plan is
+        needed to browse. The API answers HTTP 404 for an unknown group and
+        HTTP 403 when the caller does not own it.
+        """
+
+        params: dict[str, Any] = {}
+        if refresh_inventory:
+            params["refresh_inventory"] = "true"
+        return self._request(
+            "GET",
+            f"/v1/runtime-groups/{runtime_group_id}/marketplace",
+            params=params,
+        )
+
+    def list_runtime_group_inventory(
+        self,
+        runtime_group_id: str,
+        *,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        """List the skills a runtime group is actually observed running.
+
+        Where :meth:`list_runtime_group_marketplace` answers "what could be
+        installed here", this answers "what is loaded right now": each entry
+        carries ``skill_id``, ``version``, ``source``, ``active``,
+        ``adapt_intents``, ``padatious_intents``, ``total_intents`` and
+        ``observed_at``. The envelope reports ``source`` -- the observation's
+        provenance, one of ``ovos-runtime-operator``, ``runtime-group-cache``
+        or ``ovos-runtime-operator-pending`` -- plus ``operator_phase`` and
+        ``operator_message``.
+
+        ``refresh`` forces a live operator read; the API also refreshes on its
+        own when it holds no cached snapshot. Unlike
+        :meth:`get_hub_runtime_capabilities` this route does not answer HTTP
+        409 when nothing is reporting -- it returns an empty ``data`` list
+        with a pending ``source`` instead.
+
+        Requires a token with the ``hubs:inspect`` scope; no paid plan is
+        needed.
+        """
+
+        params: dict[str, Any] = {}
+        if refresh:
+            params["refresh"] = "true"
+        return self._request(
+            "GET",
+            f"/v1/runtime-groups/{runtime_group_id}/inventory",
+            params=params,
+        )
+
     def install_runtime_group_skill(
         self,
         runtime_group_id: str,

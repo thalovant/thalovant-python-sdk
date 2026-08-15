@@ -497,7 +497,66 @@ RUNTIME_CAPABILITIES = {
     "counts": {"skills": 1, "adapt_intents": 2, "padatious_intents": 1, "total_intents": 3},
 }
 
+MARKETPLACE_SKILL = {
+    "id": "mkt-1",
+    "skill_id": "skill-weather",
+    "catalog_scope": "global",
+    "catalog_origin": "reference",
+    "title": "Weather",
+    "summary": "Forecasts and conditions.",
+    "category": "information",
+    "tags": ["weather"],
+    "verified": True,
+    "source_type": "package",
+    "source_ref": "ovos-skill-weather",
+    "access_tier": "included",
+    "is_active": True,
+}
+
+RUNTIME_GROUP_MARKETPLACE = {
+    "runtime_group_id": "rg-1",
+    "observed_at": "2026-08-13T00:00:00Z",
+    "source": "runtime-group-cache",
+    "operator_phase": "Ready",
+    "operator_message": None,
+    "data": [
+        {
+            "skill_id": "skill-weather",
+            "title": "Weather",
+            "active": True,
+            "installable": True,
+            "purchase_required": False,
+            "total_intents": 3,
+        }
+    ],
+}
+
+RUNTIME_GROUP_INVENTORY = {
+    "runtime_group_id": "rg-1",
+    "observed_at": "2026-08-13T00:00:00Z",
+    "source": "ovos-runtime-operator",
+    "operator_phase": "Ready",
+    "operator_message": None,
+    "data": [
+        {
+            "id": "inv-1",
+            "runtime_group_id": "rg-1",
+            "skill_id": "skill-weather",
+            "version": "0.1.16",
+            "source": "package",
+            "active": True,
+            "adapt_intents": ["weather.current"],
+            "padatious_intents": [],
+            "total_intents": 1,
+            "observed_at": "2026-08-13T00:00:00Z",
+        }
+    ],
+}
+
 PROVISIONING_ROUTES = {
+    ("GET", "/v1/marketplace/skills"): (200, {"data": [MARKETPLACE_SKILL]}),
+    ("GET", "/v1/runtime-groups/rg-1/marketplace"): (200, RUNTIME_GROUP_MARKETPLACE),
+    ("GET", "/v1/runtime-groups/rg-1/inventory"): (200, RUNTIME_GROUP_INVENTORY),
     ("POST", "/v1/hubs"): (201, HUB_RESOURCE),
     ("PATCH", "/v1/hubs/hub-1"): (200, HUB_RESOURCE),
     ("DELETE", "/v1/hubs/hub-1"): (204, ""),
@@ -799,6 +858,106 @@ def test_control_plane_surfaces_the_scope_gate_as_an_api_error():
         api.install_runtime_group_skill("rg-1", "skill-weather")
     with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
         api.delete_hub("hub-1", etag="etag-2")
+
+
+def test_control_plane_lists_marketplace_skills_without_optional_params():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    catalog = api.list_marketplace_skills()
+
+    assert catalog["data"][0]["skill_id"] == "skill-weather"
+    assert recorded_call(session, "GET", "/v1/marketplace/skills")["params"] == {}
+
+
+def test_control_plane_lists_marketplace_skills_with_every_param():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_marketplace_skills(
+        owner_id="owner-1",
+        include_inactive=True,
+        force_refresh=True,
+    )
+
+    assert recorded_call(session, "GET", "/v1/marketplace/skills")["params"] == {
+        "owner_id": "owner-1",
+        "include_inactive": "true",
+        "force_refresh": "true",
+    }
+
+
+def test_control_plane_marketplace_skills_omits_false_and_blank_params():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_marketplace_skills(owner_id="  ", include_inactive=False, force_refresh=False)
+
+    assert recorded_call(session, "GET", "/v1/marketplace/skills")["params"] == {}
+
+
+def test_control_plane_lists_runtime_group_marketplace():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    view = api.list_runtime_group_marketplace("rg-1")
+
+    assert view["source"] == "runtime-group-cache"
+    assert view["data"][0]["installable"] is True
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/marketplace")["params"] == {}
+
+
+def test_control_plane_runtime_group_marketplace_sends_refresh_inventory():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_runtime_group_marketplace("rg-1", refresh_inventory=True)
+
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/marketplace")["params"] == {
+        "refresh_inventory": "true"
+    }
+
+
+def test_control_plane_lists_runtime_group_inventory():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    inventory = api.list_runtime_group_inventory("rg-1")
+
+    assert inventory["source"] == "ovos-runtime-operator"
+    assert inventory["data"][0]["total_intents"] == 1
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/inventory")["params"] == {}
+
+
+def test_control_plane_runtime_group_inventory_sends_refresh():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_runtime_group_inventory("rg-1", refresh=True)
+
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/inventory")["params"] == {
+        "refresh": "true"
+    }
+
+
+def test_control_plane_discovery_reads_surface_the_inspect_scope_gate():
+    session = ProvisioningSession(error=(403, {"detail": "Insufficient scopes"}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
+        api.list_runtime_group_marketplace("rg-1")
+    with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
+        api.list_runtime_group_inventory("rg-1")
+
+
+def test_control_plane_discovery_reads_surface_a_missing_runtime_group():
+    session = ProvisioningSession(error=(404, {"detail": "Runtime group not found."}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 404: Runtime group not found."):
+        api.list_runtime_group_inventory("rg-missing")
+    with pytest.raises(ThalovantAPIError, match="HTTP 404"):
+        api.list_runtime_group_marketplace("rg-missing")
 
 
 DEVICE_GRANT = {

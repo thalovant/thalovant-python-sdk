@@ -143,10 +143,14 @@ hub = api.create_hub(
     }
 )
 
-# 3. Install a skill from the marketplace catalog.
+# 3. Discover what is installable before installing anything.
+for skill in api.list_marketplace_skills()["data"]:
+    print(skill["skill_id"], skill["title"], skill["access_tier"])
+
+# 4. Install a skill from the marketplace catalog.
 api.install_runtime_group_skill(group["id"], "skill-weather")
 
-# 4. Release: roll the runtime and the hub onto a release channel.
+# 5. Release: roll the runtime and the hub onto a release channel.
 api.release_runtime_group(group["id"], channel="stable")
 api.release_hub(hub["id"], channel="stable")
 ```
@@ -183,6 +187,51 @@ Reading what a hub is actually running needs the `hubs:inspect` scope instead:
 capabilities = api.get_hub_runtime_capabilities(hub["id"])
 print(capabilities["counts"]["total_intents"])
 ```
+
+## Discover Skills
+
+The marketplace catalog is readable with the **`hubs:read`** scope and, unlike
+the provisioning routes above, is **not paid-gated** — a free-plan token can
+browse the whole catalog before upgrading, and only the install needs a paid
+plan.
+
+```python
+for skill in api.list_marketplace_skills()["data"]:
+    print(skill["skill_id"], skill["category"], skill["access_tier"])
+```
+
+Each entry carries what an install needs (`skill_id`, `source_type`,
+`source_ref`, `config_schema`, `secret_schema`) next to presentation fields
+(`title`, `summary`, `tags`, `verified`). Admin tokens can additionally pass
+`owner_id=` to read another tenant's catalog and `include_inactive=True` to see
+retired entries; both are ignored for non-admin callers. `force_refresh=True`
+re-syncs the global catalog from source first, which is slower.
+
+Two group-scoped reads need the **`hubs:inspect`** scope and are likewise not
+paid-gated. The first resolves the catalog against one runtime group, so each
+entry reports whether it is already desired, whether it was observed running,
+and whether the tenant plan allows installing it:
+
+```python
+view = api.list_runtime_group_marketplace(group["id"])
+for entry in view["data"]:
+    if entry["installable"] and not entry.get("active"):
+        print("available:", entry["skill_id"])
+```
+
+The second answers what the group is actually running right now, rather than
+what could be installed:
+
+```python
+inventory = api.list_runtime_group_inventory(group["id"], refresh=True)
+print(inventory["source"], len(inventory["data"]))
+```
+
+Both answer from a cached inventory snapshot by default; pass
+`refresh_inventory=True` or `refresh=True` to force a live read from the
+runtime operator. When nothing is reporting yet, `list_runtime_group_inventory`
+returns an empty `data` list with a pending `source` rather than failing —
+`get_hub_runtime_capabilities` is the one that answers HTTP 409 in that case.
 
 ## Workspace Analytics
 
