@@ -77,8 +77,12 @@ approval the SDK stores a scoped, revocable API token, exactly like
 `ThalovantControlPlane()` uses `https://api.thalovant.com` by default. Pass a
 different URL only for local development or a self-hosted control plane.
 
-Keep `result.identity` secret. It contains the client credentials used by the
-hub. Do not log `result.identity.as_dict(include_secrets=True)`.
+Keep `result` secret: `result.identity` and the raw `result.client` API
+response both carry the client credentials. `result.as_dict()` (the default)
+redacts every secret — identity and client alike — and is safe to log.
+`result.as_dict(include_secrets=True)` returns the real credentials for
+persisting an identity file and must never be logged; the same rule applies to
+`result.identity.as_dict(include_secrets=True)`.
 
 ## Token Auth For CI And Automation
 

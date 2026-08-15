@@ -1,3 +1,4 @@
+import json
 from typing import get_args
 
 import pytest
@@ -163,12 +164,12 @@ class FakeSession:
                 )
             if method == "DELETE":
                 return FakeResponse(204, "")
-        if url.endswith("/v1/admin/analytics/overview"):
+        if url.endswith("/v1/analytics/overview"):
+            assert "/v1/admin/" not in url
             assert kwargs["headers"]["authorization"] == "Bearer token"
             assert kwargs["params"] == {
                 "range": "30d",
                 "bucket": "1d",
-                "owner_id": "owner-1",
                 "hub_id": "hub-1",
                 "client_id": "client-1",
                 "country": "CA",
@@ -180,7 +181,7 @@ class FakeSession:
                 "weekday": 6,
                 "hour": 0,
             }
-            return FakeResponse(200, {"meta": {"scope": "admin"}, "totals": {"utterances": 7}})
+            return FakeResponse(200, {"meta": {"scope": "workspace"}, "totals": {"utterances": 7}})
         if url.endswith("/v1/hubs/hub-1"):
             return FakeResponse(
                 200,
@@ -233,7 +234,14 @@ class FakeSession:
                         "id": "client-mqtt",
                         "name": payload["name"],
                         "hub_id": payload["hub_id"],
-                        "spec": {},
+                        "spec": {
+                            "version": "1",
+                            "siteId": payload["spec"]["siteId"],
+                            "apiKey": payload["spec"]["apiKey"],
+                            "password": payload["spec"]["password"],
+                            "cryptoKey": payload["spec"]["cryptoKey"],
+                        },
+                        "initial_identify_token": "identify-token-secret",
                         "initial_identify": {
                             "password": payload["spec"]["password"],
                             "access_key": payload["spec"]["apiKey"],
@@ -410,10 +418,8 @@ def test_control_plane_get_analytics_overview():
     )
 
     overview = api.get_analytics_overview(
-        admin=True,
         range="30d",
         bucket="1d",
-        owner_id="owner-1",
         hub_id="hub-1",
         client_id="client-1",
         country="CA",
@@ -426,8 +432,22 @@ def test_control_plane_get_analytics_overview():
         hour=0,
     )
 
-    assert overview["meta"]["scope"] == "admin"
+    assert overview["meta"]["scope"] == "workspace"
     assert overview["totals"]["utterances"] == 7
+    method, url, _ = session.requests[-1]
+    assert method == "GET"
+    assert url.endswith("/v1/analytics/overview")
+
+
+def test_control_plane_analytics_overview_no_longer_takes_admin():
+    """The admin-only analytics route was removed from this non-admin SDK."""
+
+    api = ThalovantControlPlane(access_token="token", session=FakeSession())
+
+    with pytest.raises(TypeError, match="admin"):
+        api.get_analytics_overview(admin=True)
+    with pytest.raises(TypeError, match="owner_id"):
+        api.get_analytics_overview(owner_id="owner-1")
 
 
 def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():
@@ -446,6 +466,124 @@ def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():
         "endpoint": "mqtts://broker.thalovant.io:8883",
         "tls": True,
     }
+
+
+def _bootstrap_mqtt_result():
+    """Provision against the MQTT hub fixture, whose client response carries
+    every secret twice: the echoed request spec and the initial_identify block."""
+
+    session = FakeSession()
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api", access_token="token", session=session
+    )
+    result = api.create_client_identity("hub-mqtt", name="kiosk")
+    secrets = {
+        "access_key": result.identity.access_key,
+        "password": result.identity.password,
+        "crypto_key": result.identity.crypto_key,
+        "mqtt_password": result.identity.mqtt.password,
+        "initial_identify_token": "identify-token-secret",
+    }
+    return session, result, secrets
+
+
+def test_bootstrap_result_default_as_dict_contains_no_secret_values():
+    _, result, secrets = _bootstrap_mqtt_result()
+
+    serialized = json.dumps(result.as_dict())
+
+    for name, value in secrets.items():
+        assert value not in serialized, f"default as_dict leaked {name}"
+    redacted_client = result.as_dict()["client"]
+    assert "initial_identify" not in redacted_client
+    assert "initial_identify_token" not in redacted_client
+    assert "apiKey" not in redacted_client["spec"]
+    assert "password" not in redacted_client["spec"]
+    assert "cryptoKey" not in redacted_client["spec"]
+    # Non-secret client fields survive the scrub.
+    assert redacted_client["id"] == "client-mqtt"
+    assert redacted_client["spec"]["version"] == "1"
+    assert redacted_client["spec"]["siteId"] == "kiosk"
+
+
+def test_bootstrap_result_include_secrets_still_returns_everything():
+    _, result, secrets = _bootstrap_mqtt_result()
+
+    full = result.as_dict(include_secrets=True)
+
+    assert full["client"] is result.client, "client must pass through unchanged"
+    assert full["identity"]["access_key"] == secrets["access_key"]
+    assert full["identity"]["password"] == secrets["password"]
+    assert full["identity"]["crypto_key"] == secrets["crypto_key"]
+    assert full["identity"]["mqtt"]["password"] == secrets["mqtt_password"]
+    assert full["client"]["initial_identify_token"] == "identify-token-secret"
+    assert full["client"]["initial_identify"]["access_key"] == secrets["access_key"]
+    assert full["client"]["spec"]["apiKey"] == secrets["access_key"]
+    serialized = json.dumps(full)
+    for name, value in secrets.items():
+        assert value in serialized, f"include_secrets=True lost {name}"
+
+
+def test_bootstrap_redaction_does_not_touch_the_wire_request():
+    session, result, secrets = _bootstrap_mqtt_result()
+
+    result.as_dict()  # exercising the redaction must not corrupt anything
+
+    wire_body = [
+        kwargs for _, url, kwargs in session.requests if url.endswith("/v1/clients")
+    ][0]["json"]
+    assert wire_body["spec"]["apiKey"] == secrets["access_key"]
+    assert wire_body["spec"]["password"] == secrets["password"]
+    assert wire_body["spec"]["cryptoKey"] == secrets["crypto_key"]
+    assert result.client["initial_identify"]["access_key"] == secrets["access_key"]
+
+
+def test_bootstrap_identity_file_round_trip_keeps_secrets(tmp_path):
+    _, result, secrets = _bootstrap_mqtt_result()
+
+    path = tmp_path / "_identity.json"
+    path.write_text(
+        json.dumps(result.identity.as_dict(include_secrets=True)), encoding="utf-8"
+    )
+    path.chmod(0o600)
+
+    from thalovant import ThalovantIdentity
+
+    loaded = ThalovantIdentity.from_file(path)
+    assert loaded.access_key == secrets["access_key"]
+    assert loaded.password == secrets["password"]
+    assert loaded.crypto_key == secrets["crypto_key"]
+    assert loaded.mqtt is not None
+    assert loaded.mqtt.password == secrets["mqtt_password"]
+
+
+def test_bootstrap_result_repr_is_redacted():
+    _, result, secrets = _bootstrap_mqtt_result()
+
+    for rendered in (repr(result), str(result), repr(result.identity), repr(result.identity.mqtt)):
+        for name, value in secrets.items():
+            assert value not in rendered, f"repr leaked {name}"
+    # repr stays useful for the non-secret fields.
+    assert "site_id='kiosk'" in repr(result.identity)
+
+
+def test_bootstrap_result_keeps_spec_references_in_default_as_dict():
+    session = FakeSession()
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api", access_token="token", session=session
+    )
+    result = api.create_client_identity("hub-1", name="kiosk")
+
+    redacted = result.as_dict()
+
+    assert redacted["client"]["spec"]["apiKeyRef"] == {"name": "secret", "key": "apiKey"}
+    serialized = json.dumps(redacted)
+    for value in (
+        result.identity.access_key,
+        result.identity.password,
+        result.identity.crypto_key,
+    ):
+        assert value not in serialized
 
 
 HUB_RESOURCE = {
@@ -724,6 +862,61 @@ def test_control_plane_update_hub_surfaces_etag_mismatch():
 
     with pytest.raises(ThalovantAPIError, match="HTTP 412: ETag mismatch"):
         api.update_hub("hub-1", {"active": False}, etag="stale")
+
+
+def test_api_error_message_never_echoes_a_structured_error_body():
+    """A 4xx that echoes the request body back (as FastAPI-style validation
+    detail does) must not launder the /v1/clients credentials into logs."""
+
+    echoed = {
+        "detail": [
+            {
+                "loc": ["body", "spec", "apiKey"],
+                "msg": "value is invalid",
+                "input": "SECRET-API-KEY-VALUE",
+            }
+        ]
+    }
+
+    class EchoSession:
+        def request(self, method, url, **kwargs):
+            return FakeResponse(422, echoed)
+
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api", access_token="token", session=EchoSession()
+    )
+
+    with pytest.raises(ThalovantAPIError) as excinfo:
+        api.create_client({"hub_id": "hub-1", "name": "kiosk", "spec": {"apiKey": "SECRET-API-KEY-VALUE"}})
+
+    message = str(excinfo.value)
+    assert "SECRET-API-KEY-VALUE" not in message
+    assert message == "Thalovant API request failed with HTTP 422."
+
+
+def test_api_error_message_is_bounded_and_newline_free():
+    huge = "poisoned\ndetail " * 500
+    session = ProvisioningSession(error=(400, {"detail": huge}))
+
+    with pytest.raises(ThalovantAPIError) as excinfo:
+        provisioning_api(session).create_hub({"name": "joke-garden", "spec": {}})
+
+    message = str(excinfo.value)
+    assert "\n" not in message
+    assert "\r" not in message
+    assert len(message) < 300
+    assert message.startswith("Thalovant API request failed with HTTP 400: poisoned detail")
+
+
+def test_api_error_message_omits_non_json_bodies():
+    session = ProvisioningSession(
+        error=(500, "<html>Internal error for /v1/clients?authorization=SECRET</html>")
+    )
+
+    with pytest.raises(ThalovantAPIError) as excinfo:
+        provisioning_api(session).create_hub({"name": "joke-garden", "spec": {}})
+
+    assert str(excinfo.value) == "Thalovant API request failed with HTTP 500."
 
 
 def test_control_plane_release_hub_sends_only_the_options_given():

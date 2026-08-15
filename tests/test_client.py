@@ -645,6 +645,52 @@ def test_healthcheck_returns_transport_state():
     assert health.connected
 
 
+def test_transport_error_strings_redact_url_query():
+    """Stored and surfaced error text must not carry the data-plane access key,
+    which requests-style errors embed as ``?authorization=...`` in the URL."""
+
+    leaky = ConnectionError(
+        "HTTPSConnectionPool(host='hub.local', port=5679): Max retries exceeded "
+        "with url: /connect?authorization=QWdlbnQ6c2VjcmV0LWtleQ== "
+        "(Caused by NewConnectionError)"
+    )
+    transport = HiveMindHTTPTransport(identity(), useragent="agent")
+    transport._begin_connection()
+    transport._fail_connection(leaky)
+
+    health = transport.healthcheck()
+    surfaced = json.dumps(health.as_dict())
+    assert "QWdlbnQ6c2VjcmV0LWtleQ" not in surfaced
+    assert "?<redacted>" in health.last_error
+    assert "?<redacted>" in health.connection.last_error
+    assert "hub.local" in health.last_error  # the useful part survives
+    assert transport.last_error() is leaky  # the raw exception object is untouched
+
+    wss = HiveMindWSSTransport(identity(), useragent="agent")
+    wss._last_error = leaky
+    assert "QWdlbnQ6c2VjcmV0LWtleQ" not in json.dumps(wss.healthcheck().as_dict())
+
+
+def test_transport_stopped_error_message_redacts_url_query():
+    leaky = ConnectionError("boom with url: /send_message?authorization=U0VDUkVU x")
+
+    class StoppedTransport(FakeTransport):
+        def is_connected(self) -> bool:
+            return False
+
+        def last_error(self) -> BaseException | None:
+            return leaky
+
+    client = ThalovantClient(identity(), transport=StoppedTransport())
+
+    with pytest.raises(ThalovantConnectionError) as excinfo:
+        client._raise_if_transport_stopped()
+
+    assert "U0VDUkVU" not in str(excinfo.value)
+    assert "authorization=" not in str(excinfo.value)
+    assert "?<redacted>" in str(excinfo.value)
+
+
 def test_doctor_reports_identity_and_transport_checks():
     transport = FakeTransport()
     client = ThalovantClient(identity(), transport=transport)

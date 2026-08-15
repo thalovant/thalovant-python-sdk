@@ -33,16 +33,21 @@ def default_config_path() -> Path:
 
 @dataclass(frozen=True)
 class MqttBrokerCredentials:
-    """Per-client MQTT broker credentials returned by the Thalovant API."""
+    """Per-client MQTT broker credentials returned by the Thalovant API.
+
+    ``repr()`` hides the credential fields and the topic fields (topics can
+    embed the client access key); serialization is unaffected — use
+    ``as_dict(include_secrets=True)`` for the full material.
+    """
 
     endpoint: str
-    username: str
-    password: str
-    topic_prefix: str | None = None
+    username: str = field(repr=False)
+    password: str = field(repr=False)
+    topic_prefix: str | None = field(default=None, repr=False)
     hub_id: str | None = None
-    c2s_topic: str | None = None
-    s2c_topic: str | None = None
-    status_topic: str | None = None
+    c2s_topic: str | None = field(default=None, repr=False)
+    s2c_topic: str | None = field(default=None, repr=False)
+    status_topic: str | None = field(default=None, repr=False)
     hash_topics: bool = False
     qos: int = 1
     tls: bool = True
@@ -103,15 +108,20 @@ class MqttBrokerCredentials:
 
 @dataclass(frozen=True)
 class ThalovantIdentity:
-    """HiveMind identity material provisioned by Thalovant."""
+    """HiveMind identity material provisioned by Thalovant.
 
-    access_key: str
-    password: str
+    ``repr()`` hides the secret fields (``access_key``, ``password``,
+    ``crypto_key``); serialization is unaffected — use
+    ``as_dict(include_secrets=True)`` when persisting an identity file.
+    """
+
+    access_key: str = field(repr=False)
+    password: str = field(repr=False)
     default_master: str
     site_id: str
     default_port: int = 5679
     default_path: str = ""
-    crypto_key: str | None = None
+    crypto_key: str | None = field(default=None, repr=False)
     data_plane_endpoints: HubDataPlaneEndpoints = field(
         default_factory=HubDataPlaneEndpoints
     )

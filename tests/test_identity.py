@@ -236,6 +236,53 @@ def test_identity_loads_mqtt_credentials_and_redacts_by_default():
     assert identity.as_dict(include_secrets=True)["mqtt"]["password"] == "broker-password"
 
 
+def test_identity_repr_hides_secret_material():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "access-key-secret",
+            "password": "password-secret",
+            "crypto_key": "crypto-key-secret",
+            "site_id": "site",
+            "default_master": "wss://hub.example.com",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://mqtt.example.com:8883",
+                "username": "broker-username-secret",
+                "password": "broker-password-secret",
+                "topic_prefix": "hivemind/hub/access-key-secret",
+            },
+        }
+    )
+
+    for rendered in (repr(identity), str(identity), repr(identity.mqtt)):
+        for secret in (
+            "access-key-secret",
+            "password-secret",
+            "crypto-key-secret",
+            "broker-username-secret",
+            "broker-password-secret",
+        ):
+            assert secret not in rendered
+
+    # Non-secret fields stay visible for debugging.
+    assert "site_id='site'" in repr(identity)
+    assert "mqtts://mqtt.example.com:8883" in repr(identity.mqtt)
+
+    # The endpoint map only ever absorbs the broker URL from the credentials
+    # block, so the default as_dict carries no secret through it either.
+    redacted = json.dumps(identity.as_dict())
+    for secret in ("access-key-secret", "password-secret", "broker-username-secret"):
+        assert secret not in redacted
+    assert identity.endpoint_for("mqtt") == "mqtts://mqtt.example.com:8883"
+
+    # Serialization is unaffected: the secret paths still carry the values.
+    full = identity.as_dict(include_secrets=True)
+    assert full["access_key"] == "access-key-secret"
+    assert full["password"] == "password-secret"
+    assert full["crypto_key"] == "crypto-key-secret"
+    assert full["mqtt"]["password"] == "broker-password-secret"
+
+
 def test_identity_loads_operator_generated_client_config_aliases():
     identity = ThalovantIdentity.from_mapping(
         {

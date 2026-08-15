@@ -49,7 +49,13 @@ from .models import (
     ThalovantReply,
 )
 from .subscriptions import ThalovantSubscription
-from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSSTransport, Transport
+from .transport import (
+    HiveMindHTTPTransport,
+    HiveMindMQTTTransport,
+    HiveMindWSSTransport,
+    Transport,
+    _redact_error_text,
+)
 from .protocols import DEFAULT_PROTOCOL_PREFERENCE, HubProtocol
 from ._version import USER_AGENT
 
@@ -847,7 +853,7 @@ class ThalovantClient:
         if self._transport.is_connected():
             return
         error = self._transport.last_error()
-        detail = f": {error}" if error else ""
+        detail = f": {_redact_error_text(error)}" if error else ""
         raise ThalovantConnectionError(f"HiveMind transport stopped{detail}")
 
     def _context_with_identity_metadata(
