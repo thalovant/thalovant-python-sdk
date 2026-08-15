@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.25
+
+- Add hub provisioning to `ThalovantControlPlane`. The hub surface was read-only, so the `hubs:write` scope the dashboard sells ("Create and update your hubs") had no SDK method that could use it. New: `create_hub`, `update_hub`, `delete_hub`, `release_hub`, `set_hub_rating`, `clear_hub_rating`, and `get_hub_runtime_capabilities`.
+- Add runtime group and skill management: `list_runtime_groups`, `get_runtime_group`, `create_runtime_group`, `update_runtime_group`, `get_runtime_group_config`, `update_runtime_group_config`, `release_runtime_group`, `delete_runtime_group`, `install_runtime_group_skill`, and `uninstall_runtime_group_skill`.
+- Honor the API's optimistic locking on the hub write routes. `update_hub` and `delete_hub` take a required `etag` keyword and send it as `If-Match`; the API rejects a stale or missing value with HTTP 412 and changes nothing. Runtime group routes do not use `If-Match`. `create_hub` sends an `Idempotency-Key` header, generated unless you pass `idempotency_key`, so a retried create cannot make a second hub.
+- Document the gates these routes sit behind. Everything except the rating, config-read, list/get, and runtime-capabilities methods needs a paid plan and a `hubs:write` token; the ratings need `hubs:write` only; `get_hub_runtime_capabilities` needs `hubs:inspect`; the runtime group reads need `hubs:read`. Both gates surface as the usual `ThalovantAPIError` (HTTP 402 `API access requires a paid plan.`, HTTP 403 `Insufficient scopes`).
+- Add a hub-provisioning walkthrough to the README (runtime group, hub, skill, release) and document every new method in `docs/api-reference.md`.
+- No existing method signature changed.
+
 ## 0.4.24
 
 - Fix the stale data-plane user agent. `thalovant.client.DEFAULT_USERAGENT` was pinned at `ThalovantPythonSDK/0.4.19`, so the 0.4.20, 0.4.21, 0.4.22, and 0.4.23 releases all identified themselves as 0.4.19 to hubs. The control-plane user agent was correct but only because it was hand-maintained every release.

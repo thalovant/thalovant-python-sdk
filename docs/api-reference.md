@@ -49,6 +49,29 @@ Methods:
 - `create_client(payload, idempotency_key=None)`
 - `create_client_identity(hub, name, site_id=None, spec=None, owner_id=None, active=True, preferred_protocols=("wss", "https", "mqtt"))`
 
+Hub provisioning:
+
+- `create_hub(payload, idempotency_key=None)`
+- `update_hub(hub_id, payload, etag=...)`
+- `delete_hub(hub_id, etag=...)`
+- `release_hub(hub_id, channel=None, mode=None, version=None, images=None, reason=None)`
+- `set_hub_rating(hub_id, rating)`
+- `clear_hub_rating(hub_id)`
+- `get_hub_runtime_capabilities(hub_id)`
+
+Runtime groups and skills:
+
+- `list_runtime_groups(owner_id=None)`
+- `get_runtime_group(runtime_group_id)`
+- `create_runtime_group(payload)`
+- `update_runtime_group(runtime_group_id, payload)`
+- `get_runtime_group_config(runtime_group_id)`
+- `update_runtime_group_config(runtime_group_id, config, personas=None)`
+- `release_runtime_group(runtime_group_id, channel=None, mode=None, version=None, images=None, reason=None)`
+- `delete_runtime_group(runtime_group_id)`
+- `install_runtime_group_skill(runtime_group_id, skill_id, marketplace_skill_id=None, source_type="catalog", source_ref=None, version_pin=None, active=True)`
+- `uninstall_runtime_group_skill(runtime_group_id, skill_id)`
+
 MFA-enabled accounts must pass a TOTP `otp_code` or a one-time `recovery_code`
 to `login(...)`; without one the API rejects the login with `mfa_required`.
 
@@ -75,6 +98,78 @@ describe it) and can be revoked there at any time.
 `get_operation` returns a typed `OperationResource` whose `status` field is the
 `OperationStatus` literal: `requested`, `committed`, `applied`, `ready`,
 `failed`, or `timed_out`.
+
+#### Hub provisioning
+
+Every provisioning method below needs a paid plan and a token with the
+`hubs:write` scope, except where noted. Both gates surface as
+`ThalovantAPIError`: HTTP 402 `API access requires a paid plan.` for the plan
+gate, HTTP 403 `Insufficient scopes` for the scope gate. All of them return the
+API's JSON body as a `dict`, except `delete_hub`, `delete_runtime_group`, and
+`uninstall_runtime_group_skill`, which return `None`.
+
+Payload arguments accept the API's snake_case field names and their camelCase
+spellings, which are converted before the request is sent.
+
+- `create_hub(payload, idempotency_key=None)` — `POST /v1/hubs`, HTTP 201.
+  `payload` requires `name` and `spec`; `slug`, `namespace`,
+  `runtime_group_id`, `domain`, `active`, `visibility`, `capacity_profile`,
+  and `owner_id` are optional. An `Idempotency-Key` header is always sent
+  (generated when not supplied), so a retried create returns the original hub.
+- `update_hub(hub_id, payload, etag=...)` — `PATCH /v1/hubs/{hub_id}`. The
+  route enforces optimistic locking, so `etag` is required and sent as
+  `If-Match`; a stale or missing value fails with HTTP 412 `ETag mismatch` and
+  changes nothing. Read the hub again with `get_hub` and retry with the fresh
+  `etag`. `name`, `slug`, `domain`, `active`, `visibility`,
+  `capacity_profile`, `runtime_group_id`, and `spec` are patchable;
+  `is_locked` is admin-only, and the API rejects changes to immutable fields.
+- `delete_hub(hub_id, etag=...)` — `DELETE /v1/hubs/{hub_id}`, HTTP 204. Also
+  requires `etag` as `If-Match`. Deletes the hub's clients and ACLs with it.
+- `release_hub(hub_id, ...)` — `POST /v1/hubs/{hub_id}/release`. Applies a
+  release policy and returns the updated hub. Omitted options fall back to the
+  workspace release policy; passing `images` implies `custom` mode unless
+  `mode` is given.
+- `set_hub_rating(hub_id, rating)` / `clear_hub_rating(hub_id)` —
+  `PUT`/`DELETE /v1/hubs/{hub_id}/rating`, both returning the updated hub.
+  These need the `hubs:write` scope but **no paid plan**. Only public hubs can
+  be rated, and owners cannot rate their own hub.
+- `get_hub_runtime_capabilities(hub_id)` —
+  `GET /v1/hubs/{hub_id}/runtime-capabilities`. Needs the `hubs:inspect` scope
+  instead of `hubs:write`, and no paid plan. Returns the live skill and intent
+  inventory with a `counts` summary; the API answers HTTP 409 when no
+  connected client can report inventory.
+
+#### Runtime groups and skills
+
+- `list_runtime_groups(owner_id=None)` and `get_runtime_group(runtime_group_id)`
+  — `GET /v1/runtime-groups[/{id}]`. Read-only, needing only `hubs:read`.
+- `create_runtime_group(payload)` — `POST /v1/runtime-groups`, HTTP 201.
+  `payload` requires `name`; `description`, `environment`, `owner_id`, and
+  `clone_from_default` are optional. `clone_from_default` seeds the new group
+  from the workspace default.
+- `update_runtime_group(runtime_group_id, payload)` —
+  `PATCH /v1/runtime-groups/{id}`, taking `name`, `description`, and a `spec`
+  patch of `replicas` and container `resources`. No `If-Match` is used.
+- `get_runtime_group_config(runtime_group_id)` (needs only `hubs:read`) and
+  `update_runtime_group_config(runtime_group_id, config, personas=None)` —
+  `GET`/`PATCH /v1/runtime-groups/{id}/config`. The update **merges** `config`
+  into the stored configuration rather than replacing it, and marks the group
+  pending for the runtime operator. `personas` is replaced only when passed.
+- `release_runtime_group(runtime_group_id, ...)` —
+  `POST /v1/runtime-groups/{id}/release`, with the same options as
+  `release_hub`.
+- `delete_runtime_group(runtime_group_id)` — `DELETE /v1/runtime-groups/{id}`,
+  HTTP 204. The API answers HTTP 409 for the default group and for a group
+  that still has hubs attached.
+- `install_runtime_group_skill(runtime_group_id, skill_id, ...)` —
+  `POST /v1/runtime-groups/{id}/skills`. The default `source_type="catalog"`
+  installs a marketplace skill and fails with HTTP 404 when the catalog has no
+  such skill; `source_type="git"` requires a `source_ref` repository URL.
+  Installing a skill that is already present updates that entry. Paid
+  marketplace skills additionally require marketplace access on the tenant
+  plan (HTTP 402).
+- `uninstall_runtime_group_skill(runtime_group_id, skill_id)` —
+  `DELETE /v1/runtime-groups/{id}/skills/{skill_id}`, HTTP 204.
 
 `create_client_identity` generates client secrets locally, sends them once to
 the API, and returns `BootstrapIdentityResult.identity`. API responses may

@@ -10,7 +10,7 @@ inside a user-agent literal elsewhere; ``tests/test_version.py`` enforces it.
 
 from __future__ import annotations
 
-__version__ = "0.4.24"
+__version__ = "0.4.25"
 
 #: Product token shared by every Thalovant Python SDK user agent.
 USER_AGENT_PRODUCT = "ThalovantPythonSDK"

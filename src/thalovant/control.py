@@ -429,6 +429,291 @@ class ThalovantControlPlane:
 
         return self._request("GET", f"/v1/public/hubs/{hub_ref}", auth=False)
 
+    def create_hub(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a hub.
+
+        ``payload`` mirrors the API's hub create body: ``name`` and ``spec`` are
+        required, and ``slug``, ``namespace``, ``runtime_group_id``, ``domain``,
+        ``active``, ``visibility``, ``capacity_profile``, and ``owner_id`` are
+        optional. camelCase keys are accepted and sent as snake_case.
+
+        The request is idempotent: a generated ``Idempotency-Key`` is sent
+        unless you pass your own, so a retried create returns the first hub
+        instead of making a second one.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        headers = {"Idempotency-Key": idempotency_key or str(uuid4())}
+        return self._request("POST", "/v1/hubs", json=_hub_payload(payload), headers=headers)
+
+    def update_hub(
+        self,
+        hub_id: str,
+        payload: Mapping[str, Any],
+        *,
+        etag: str,
+    ) -> dict[str, Any]:
+        """Partially update a hub.
+
+        The API enforces optimistic locking on this route: pass the ``etag``
+        from the hub resource you read, which is sent as ``If-Match``. A stale
+        or missing value fails the request with HTTP 412 and no change is made;
+        re-read the hub with :meth:`get_hub` and retry with the new ``etag``.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        return self._request(
+            "PATCH",
+            f"/v1/hubs/{hub_id}",
+            json=_hub_payload(payload),
+            headers={"If-Match": etag},
+        )
+
+    def delete_hub(self, hub_id: str, *, etag: str) -> None:
+        """Delete a hub and its dependent clients and ACLs.
+
+        Like :meth:`update_hub` this route requires the hub's current ``etag``,
+        sent as ``If-Match``; a stale value fails with HTTP 412.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        self._request("DELETE", f"/v1/hubs/{hub_id}", headers={"If-Match": etag})
+
+    def release_hub(
+        self,
+        hub_id: str,
+        *,
+        channel: str | None = None,
+        mode: str | None = None,
+        version: str | None = None,
+        images: Mapping[str, str] | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a hub release policy and return the updated hub.
+
+        Every option is optional; omitted fields fall back to the workspace
+        release policy. Passing ``images`` switches the hub to ``custom`` mode
+        unless you also pass ``mode``.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        return self._request(
+            "POST",
+            f"/v1/hubs/{hub_id}/release",
+            json=_release_payload(
+                channel=channel,
+                mode=mode,
+                version=version,
+                images=images,
+                reason=reason,
+            ),
+        )
+
+    def set_hub_rating(self, hub_id: str, rating: int) -> dict[str, Any]:
+        """Rate a public hub from 1 to 5 and return the updated hub.
+
+        Only public hubs can be rated, and owners cannot rate their own hubs.
+        Requires a token with the ``hubs:write`` scope; no paid plan is needed.
+        """
+
+        return self._request("PUT", f"/v1/hubs/{hub_id}/rating", json={"rating": rating})
+
+    def clear_hub_rating(self, hub_id: str) -> dict[str, Any]:
+        """Remove the caller's rating from a public hub and return the hub.
+
+        Requires a token with the ``hubs:write`` scope; no paid plan is needed.
+        """
+
+        return self._request("DELETE", f"/v1/hubs/{hub_id}/rating")
+
+    def get_hub_runtime_capabilities(self, hub_id: str) -> dict[str, Any]:
+        """Read the live skill and intent inventory a hub runtime exposes.
+
+        Requires a token with the ``hubs:inspect`` scope. The API answers HTTP
+        409 when the hub has no connected client that can report inventory.
+        """
+
+        return self._request("GET", f"/v1/hubs/{hub_id}/runtime-capabilities")
+
+    def list_runtime_groups(self, *, owner_id: str | None = None) -> dict[str, Any]:
+        """List runtime groups visible to the authenticated user.
+
+        Requires a token with the ``hubs:read`` scope.
+        """
+
+        params: dict[str, Any] = {}
+        _set_param(params, "owner_id", owner_id)
+        return self._request("GET", "/v1/runtime-groups", params=params)
+
+    def get_runtime_group(self, runtime_group_id: str) -> dict[str, Any]:
+        """Fetch one runtime group.
+
+        Requires a token with the ``hubs:read`` scope.
+        """
+
+        return self._request("GET", f"/v1/runtime-groups/{runtime_group_id}")
+
+    def create_runtime_group(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a runtime group.
+
+        ``payload`` takes the API's create body: ``name`` is required, and
+        ``description``, ``environment``, ``owner_id``, and
+        ``clone_from_default`` are optional. camelCase keys are accepted and
+        sent as snake_case.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        return self._request("POST", "/v1/runtime-groups", json=_runtime_group_payload(payload))
+
+    def update_runtime_group(
+        self,
+        runtime_group_id: str,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Update a runtime group's ``name``, ``description``, or ``spec``.
+
+        ``spec`` patches ``replicas`` and container ``resources``. This route
+        does not use ``If-Match``.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        return self._request(
+            "PATCH",
+            f"/v1/runtime-groups/{runtime_group_id}",
+            json=_runtime_group_payload(payload),
+        )
+
+    def get_runtime_group_config(self, runtime_group_id: str) -> dict[str, Any]:
+        """Read a runtime group's runtime configuration and personas.
+
+        Requires a token with the ``hubs:read`` scope.
+        """
+
+        return self._request("GET", f"/v1/runtime-groups/{runtime_group_id}/config")
+
+    def update_runtime_group_config(
+        self,
+        runtime_group_id: str,
+        config: Mapping[str, Any],
+        *,
+        personas: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Merge runtime configuration into a runtime group.
+
+        The API merges ``config`` into the stored configuration rather than
+        replacing it, and marks the group pending so the runtime operator
+        reconciles the change. ``personas`` is replaced only when provided.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        body: dict[str, Any] = {"config": dict(config)}
+        if personas is not None:
+            body["personas"] = dict(personas)
+        return self._request(
+            "PATCH",
+            f"/v1/runtime-groups/{runtime_group_id}/config",
+            json=body,
+        )
+
+    def release_runtime_group(
+        self,
+        runtime_group_id: str,
+        *,
+        channel: str | None = None,
+        mode: str | None = None,
+        version: str | None = None,
+        images: Mapping[str, str] | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a runtime image policy and return the updated runtime group.
+
+        Options behave like :meth:`release_hub`.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        return self._request(
+            "POST",
+            f"/v1/runtime-groups/{runtime_group_id}/release",
+            json=_release_payload(
+                channel=channel,
+                mode=mode,
+                version=version,
+                images=images,
+                reason=reason,
+            ),
+        )
+
+    def delete_runtime_group(self, runtime_group_id: str) -> None:
+        """Delete a runtime group.
+
+        The API answers HTTP 409 for the workspace default group and for a
+        group that still has hubs attached.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        self._request("DELETE", f"/v1/runtime-groups/{runtime_group_id}")
+
+    def install_runtime_group_skill(
+        self,
+        runtime_group_id: str,
+        skill_id: str,
+        *,
+        marketplace_skill_id: str | None = None,
+        source_type: str = "catalog",
+        source_ref: str | None = None,
+        version_pin: str | None = None,
+        active: bool = True,
+    ) -> dict[str, Any]:
+        """Install (or re-install) a skill in a runtime group.
+
+        The default ``source_type`` of ``catalog`` installs a marketplace skill
+        and requires the skill to exist in the catalog. ``git`` installs need a
+        ``source_ref`` repository URL. Installing a skill that is already
+        present updates the existing entry.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope. Paid
+        marketplace skills also need marketplace access on the tenant plan.
+        """
+
+        body: dict[str, Any] = {
+            "skill_id": skill_id,
+            "source_type": source_type,
+            "active": active,
+        }
+        if marketplace_skill_id is not None:
+            body["marketplace_skill_id"] = marketplace_skill_id
+        if source_ref is not None:
+            body["source_ref"] = source_ref
+        if version_pin is not None:
+            body["version_pin"] = version_pin
+        return self._request(
+            "POST",
+            f"/v1/runtime-groups/{runtime_group_id}/skills",
+            json=body,
+        )
+
+    def uninstall_runtime_group_skill(self, runtime_group_id: str, skill_id: str) -> None:
+        """Remove a skill from a runtime group.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        self._request("DELETE", f"/v1/runtime-groups/{runtime_group_id}/skills/{skill_id}")
+
     def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""
 
@@ -611,20 +896,78 @@ def _set_param(params: dict[str, Any], key: str, value: str | None) -> None:
         params[key] = value
 
 
-def _memory_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _snake_case_payload(
+    payload: Mapping[str, Any],
+    renames: tuple[tuple[str, str], ...],
+) -> dict[str, Any]:
+    """Copy a request body, renaming the camelCase keys the API takes as snake_case."""
+
     data = dict(payload)
-    for source, target in (
-        ("ownerId", "owner_id"),
-        ("hubId", "hub_id"),
-        ("consentScope", "consent_scope"),
-        ("consentVersion", "consent_version"),
-        ("retentionPolicy", "retention_policy"),
-        ("expiresAt", "expires_at"),
-        ("clearExpiresAt", "clear_expires_at"),
-    ):
+    for source, target in renames:
         if source in data:
             data[target] = data.pop(source)
     return data
+
+
+def _memory_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _snake_case_payload(
+        payload,
+        (
+            ("ownerId", "owner_id"),
+            ("hubId", "hub_id"),
+            ("consentScope", "consent_scope"),
+            ("consentVersion", "consent_version"),
+            ("retentionPolicy", "retention_policy"),
+            ("expiresAt", "expires_at"),
+            ("clearExpiresAt", "clear_expires_at"),
+        ),
+    )
+
+
+def _hub_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _snake_case_payload(
+        payload,
+        (
+            ("ownerId", "owner_id"),
+            ("runtimeGroupId", "runtime_group_id"),
+            ("capacityProfile", "capacity_profile"),
+            ("isLocked", "is_locked"),
+        ),
+    )
+
+
+def _runtime_group_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _snake_case_payload(
+        payload,
+        (
+            ("ownerId", "owner_id"),
+            ("cloneFromDefault", "clone_from_default"),
+        ),
+    )
+
+
+def _release_payload(
+    *,
+    channel: str | None,
+    mode: str | None,
+    version: str | None,
+    images: Mapping[str, str] | None,
+    reason: str | None,
+) -> dict[str, Any]:
+    """Build a release-apply body, omitting the options the caller left unset."""
+
+    payload: dict[str, Any] = {}
+    if channel is not None:
+        payload["channel"] = channel
+    if mode is not None:
+        payload["mode"] = mode
+    if version is not None:
+        payload["version"] = version
+    if images is not None:
+        payload["images"] = dict(images)
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
 
 
 def _required_str(values: Mapping[str, Any], key: str) -> str:
