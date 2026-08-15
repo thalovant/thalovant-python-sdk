@@ -1243,9 +1243,13 @@ def mqtt_topics_for_identity(identity: ThalovantIdentity) -> MqttTopicSet:
         raise ThalovantConnectionError("The identity does not include MQTT broker credentials.")
     if not credentials.topic_prefix:
         raise ThalovantConnectionError("MQTT credentials must include topic_prefix.")
-    prefix = credentials.topic_prefix.strip("/")
+    prefix = credentials.topic_prefix.strip().strip("/").strip()
     if not prefix:
         raise ThalovantConnectionError("MQTT credentials must include topic_prefix.")
+    if any(char in "#+" or ord(char) < 0x20 for char in prefix):
+        raise ThalovantConnectionError(
+            "MQTT topic_prefix contains characters that are not valid in an MQTT topic."
+        )
     return MqttTopicSet(
         inbound=f"{prefix}/in",
         outbound=f"{prefix}/out",
