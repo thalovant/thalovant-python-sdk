@@ -449,6 +449,47 @@ def test_mqtt_topics_require_topic_prefix():
         mqtt_topics_for_identity(identity)
 
 
+def _identity_with_topic_prefix(topic_prefix: str) -> ThalovantIdentity:
+    return ThalovantIdentity(
+        access_key="key",
+        password="password",
+        crypto_key="0123456789abcdef",
+        site_id="site",
+        default_master="https://hub.local",
+        default_port=443,
+        protocols=HubProtocolSettings(wss=True, http=True, mqtt=True),
+        mqtt=MqttBrokerCredentials(
+            endpoint="mqtts://mqtt.example.com:8883",
+            username="key",
+            password="broker-password",
+            topic_prefix=topic_prefix,
+        ),
+    )
+
+
+def test_mqtt_topics_reject_whitespace_only_prefix():
+    identity = _identity_with_topic_prefix("   /  ")
+
+    with pytest.raises(ThalovantConnectionError, match="topic_prefix"):
+        mqtt_topics_for_identity(identity)
+
+
+@pytest.mark.parametrize("topic_prefix", ["hivemind/hub/#", "hivemind/+/key"])
+def test_mqtt_topics_reject_wildcard_prefix(topic_prefix: str):
+    identity = _identity_with_topic_prefix(topic_prefix)
+
+    with pytest.raises(ThalovantConnectionError, match="not valid in an MQTT topic"):
+        mqtt_topics_for_identity(identity)
+
+
+@pytest.mark.parametrize("topic_prefix", ["hivemind/hub\x00key", "hivemind/hub\nkey"])
+def test_mqtt_topics_reject_control_char_prefix(topic_prefix: str):
+    identity = _identity_with_topic_prefix(topic_prefix)
+
+    with pytest.raises(ThalovantConnectionError, match="not valid in an MQTT topic"):
+        mqtt_topics_for_identity(identity)
+
+
 def test_mqtt_tls_flag_controls_default_port():
     credentials = MqttBrokerCredentials(
         endpoint="mqtt://mqtt.example.com",
