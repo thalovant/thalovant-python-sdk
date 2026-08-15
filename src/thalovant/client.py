@@ -326,7 +326,9 @@ class ThalovantClient:
                 detail = operation()
                 ok = True
             except Exception as exc:
-                detail = str(exc)
+                # doctor output is printed by the CLI; scrub any URL query
+                # (which carries the data-plane access key) from the message.
+                detail = _redact_error_text(exc)
                 ok = False
             checks.append(
                 ThalovantDoctorCheck(

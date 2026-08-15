@@ -206,7 +206,9 @@ class HiveMindHTTPTransport:
             raise ThalovantConnectionError("Could not reach the HiveMind HTTP endpoint.") from exc
 
         if getattr(response, "ok", False) is False:
-            detail = getattr(response, "text", "") or f"HTTP {getattr(response, 'status_code', 'error')}"
+            detail = _redact_error_text(getattr(response, "text", "")) or (
+                f"HTTP {getattr(response, 'status_code', 'error')}"
+            )
             error = ThalovantConnectionError(f"HiveMind HTTP connect failed: {detail}")
             self._fail_connection(error)
             self._shutdown_client(client, transport_connected=False)
@@ -514,14 +516,17 @@ class HiveMindHTTPTransport:
 
         error = body.get("error") if isinstance(body, dict) else None
         if error:
+            redacted = _redact_error_text(error)
             if "not connected" in str(error).lower():
-                exc = ThalovantConnectionError(f"HiveMind HTTP send failed: {error}")
+                exc = ThalovantConnectionError(f"HiveMind HTTP send failed: {redacted}")
                 self._last_error = exc
                 raise exc
-            raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {error}")
+            raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {redacted}")
 
         if getattr(response, "ok", False) is False:
-            detail = getattr(response, "text", "") or f"HTTP {status_code or 'error'}"
+            detail = _redact_error_text(getattr(response, "text", "")) or (
+                f"HTTP {status_code or 'error'}"
+            )
             raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {detail}")
 
     def _build_protocol(self, client: Any, deps: "_HiveMindDeps") -> Any:

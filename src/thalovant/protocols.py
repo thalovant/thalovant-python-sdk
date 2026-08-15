@@ -104,6 +104,20 @@ class HubDataPlaneEndpoints:
     wss: str | None = None
     mqtt: str | None = None
 
+    def __repr__(self) -> str:
+        # An endpoint URL may embed ``user:pass@`` userinfo (e.g. an MQTT
+        # broker URL); strip it so repr() stays safe to log. Serialization is
+        # handled separately by as_dict(redact_credentials=...).
+        def show(value: str | None) -> str | None:
+            return _redact_credentials(value) or None if value else None
+
+        return (
+            f"{type(self).__name__}("
+            f"https={show(self.https)!r}, "
+            f"wss={show(self.wss)!r}, "
+            f"mqtt={show(self.mqtt)!r})"
+        )
+
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any] | None) -> "HubDataPlaneEndpoints":
         """Read endpoints from a hub resource, identity payload, or endpoint map."""
