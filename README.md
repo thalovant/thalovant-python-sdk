@@ -124,9 +124,15 @@ for hub in page["data"]:
 
 Hubs, runtime groups, and skills can be created and managed from code. These
 routes need a **paid plan** and a token with the **`hubs:write`** scope
-("Create and update your hubs" on the dashboard's API Tokens page). A free-plan
-token fails with `API access requires a paid plan.`, and a token without the
-scope fails with `Insufficient scopes`.
+("Create and update your hubs" on the dashboard's API Tokens page).
+
+The scope is checked before the plan, which decides what you actually see.
+Free-plan API tokens can only be minted with `hubs:read`, `clients:read`, and
+`clients:write`, so a free-plan API token can never carry `hubs:write` and
+**never reaches the plan gate**: every call below fails with HTTP 403
+`Insufficient scopes`, not HTTP 402. The 402 `API access requires a paid plan.`
+shows up only for a dashboard session token, or for an API token that was
+minted on a paid plan and kept after a downgrade.
 
 ```python
 api = ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])
@@ -134,12 +140,12 @@ api = ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])
 # 1. Create a runtime group to run the skills.
 group = api.create_runtime_group({"name": "kiosks", "description": "Lobby kiosks"})
 
-# 2. Create a hub attached to it.
+# 2. Create a hub attached to it. spec.version is required.
 hub = api.create_hub(
     {
         "name": "joke-garden",
         "runtime_group_id": group["id"],
-        "spec": {"protocols": {"wss": {"enabled": True}}},
+        "spec": {"version": "1", "protocols": {"wss": {"enabled": True}}},
     }
 )
 
@@ -154,6 +160,10 @@ api.install_runtime_group_skill(group["id"], "skill-weather")
 api.release_runtime_group(group["id"], channel="stable")
 api.release_hub(hub["id"], channel="stable")
 ```
+
+A hub's `spec` is schema-validated and **must carry a non-empty `version`
+string**; omitting it fails with HTTP 422 `Schema validation failed` rather
+than defaulting.
 
 Creating a hub is idempotent. `create_hub` sends a generated `Idempotency-Key`
 header, so a retried call after a timeout returns the hub that was already
@@ -170,6 +180,18 @@ hub = api.update_hub(hub["id"], {"active": False}, etag=hub["etag"])
 api.delete_hub(hub["id"], etag=hub["etag"])
 ```
 
+The `get_hub` first is mandatory, and it is the *body* you need: the validator
+lives only in the hub resource's `etag` field. The API sends **no `ETag`
+response header**, so there is nothing to read off the response.
+
+`name`, `namespace`, and `domain` are immutable after creation. Sending a
+*different* value for one of them fails with HTTP 400
+`<Field> cannot be changed after hub creation`; sending the value the hub
+already has is accepted and ignored. Patch only the fields you mean to change
+rather than feeding a whole hub resource back in. The SDK deliberately does not
+reject these client-side — it cannot know the stored values, and refusing them
+outright would reject patches the API accepts.
+
 Deleting a hub also deletes its clients and ACLs. Runtime groups have no
 `If-Match` requirement, but the API refuses to delete the workspace default
 group or a group that still has hubs attached (HTTP 409).
@@ -181,12 +203,25 @@ api.update_runtime_group_config(group["id"], {"lang": "en-us"})
 print(api.get_runtime_group_config(group["id"])["config"])
 ```
 
-Reading what a hub is actually running needs the `hubs:inspect` scope instead:
+Reading what a hub is running needs the `hubs:inspect` scope instead (which
+`hubs:read` implies, so a free-plan token has it). The answer is not always
+live, so branch on `source`:
 
 ```python
 capabilities = api.get_hub_runtime_capabilities(hub["id"])
-print(capabilities["counts"]["total_intents"])
+if capabilities["source"] == "ovos-runtime":
+    print("live:", capabilities["counts"]["total_intents"])
+else:
+    # ovos-runtime-unavailable / ovos-runtime-timeout: the runtime group's
+    # snapshot, i.e. what the group is configured to run, not what is running.
+    print("stale:", capabilities["source"])
 ```
+
+HTTP 409 comes back only when there is no snapshot to fall back on either —
+the hub belongs to no runtime group, or that group has no desired and no
+observed skills. A hub with a configured group returns a stale HTTP 200 far
+more often than a 409. The route is rate limited per caller and hub; HTTP 429
+carries a `Retry-After` header.
 
 ## Discover Skills
 
@@ -204,8 +239,11 @@ Each entry carries what an install needs (`skill_id`, `source_type`,
 `source_ref`, `config_schema`, `secret_schema`) next to presentation fields
 (`title`, `summary`, `tags`, `verified`). Admin tokens can additionally pass
 `owner_id=` to read another tenant's catalog and `include_inactive=True` to see
-retired entries; both are ignored for non-admin callers. `force_refresh=True`
-re-syncs the global catalog from source first, which is slower.
+retired entries; both are ignored for non-admin callers — a non-admin's
+`owner_id` is silently replaced with their own rather than rejected, unlike
+`list_runtime_groups`, where the same mistake is a hard HTTP 403.
+`force_refresh=True` re-syncs the global catalog from source first, which is
+slower.
 
 Two group-scoped reads need the **`hubs:inspect`** scope and are likewise not
 paid-gated. The first resolves the catalog against one runtime group, so each
@@ -229,9 +267,51 @@ print(inventory["source"], len(inventory["data"]))
 
 Both answer from a cached inventory snapshot by default; pass
 `refresh_inventory=True` or `refresh=True` to force a live read from the
-runtime operator. When nothing is reporting yet, `list_runtime_group_inventory`
-returns an empty `data` list with a pending `source` rather than failing —
-`get_hub_runtime_capabilities` is the one that answers HTTP 409 in that case.
+runtime operator.
+
+The two routes report `source` from different vocabularies. A default
+(non-refreshing) `list_runtime_group_marketplace` returns `runtime-group-cache`
+or `runtime-group-cache-empty` (or `ovos-runtime-operator` when the operator's
+status differed and the API re-synced while serving);
+`ovos-runtime-operator-pending` appears there only when you pass
+`refresh_inventory=True`. `list_runtime_group_inventory` returns
+`ovos-runtime-operator`, `runtime-group-cache`, or
+`ovos-runtime-operator-pending`, and never `runtime-group-cache-empty`.
+
+The `source` on the marketplace route describes the *observation*, not the
+listing: its `data` is the catalog unioned with the group's desired and
+observed skills, so it stays populated even when the snapshot is empty. Never
+read an empty-sounding `source` as an empty `data`. Only
+`list_runtime_group_inventory` returns an empty `data` when nothing is
+reporting, and it does so with `source="ovos-runtime-operator-pending"` rather
+than failing.
+
+## Install Skills
+
+`install_runtime_group_skill` answers HTTP 200, not 201 — it upserts, so
+installing a skill that is already present updates that entry in place.
+
+`source_type` is a free-form string of 1 to 32 characters, not an enum. Only
+`catalog` (the default) and `git` are interpreted specially: `catalog` resolves
+the skill against the marketplace and fails with HTTP 404 when it is not there,
+`git` requires `source_ref` to be a valid repository URL. Anything else is
+stored as sent.
+
+Two different HTTP 402s can come back. `API access requires a paid plan.` is the
+plan-level API gate on every provisioning route; `This skill requires paid
+marketplace access for the tenant plan.` is a per-skill check on a catalog entry
+whose `access_tier` is `paid`. A paid plan clears the first and can still fail
+the second, so check `installable` and `purchase_required` from
+`list_runtime_group_marketplace` first:
+
+```python
+view = api.list_runtime_group_marketplace(group["id"])
+for entry in view["data"]:
+    if entry["installable"]:
+        api.install_runtime_group_skill(group["id"], entry["skill_id"])
+    elif entry["purchase_required"]:
+        print("needs marketplace access:", entry["skill_id"], entry["access_message"])
+```
 
 ## Workspace Analytics
 
