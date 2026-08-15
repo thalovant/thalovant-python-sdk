@@ -236,6 +236,135 @@ def test_identity_loads_mqtt_credentials_and_redacts_by_default():
     assert identity.as_dict(include_secrets=True)["mqtt"]["password"] == "broker-password"
 
 
+def test_identity_repr_hides_secret_material():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "access-key-secret",
+            "password": "password-secret",
+            "crypto_key": "crypto-key-secret",
+            "site_id": "site",
+            "default_master": "wss://hub.example.com",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://mqtt.example.com:8883",
+                "username": "broker-username-secret",
+                "password": "broker-password-secret",
+                "topic_prefix": "hivemind/hub/access-key-secret",
+            },
+        }
+    )
+
+    for rendered in (repr(identity), str(identity), repr(identity.mqtt)):
+        for secret in (
+            "access-key-secret",
+            "password-secret",
+            "crypto-key-secret",
+            "broker-username-secret",
+            "broker-password-secret",
+        ):
+            assert secret not in rendered
+
+    # Non-secret fields stay visible for debugging. Assert against the object's
+    # own accessor rather than a URL string literal (a literal URL on the left
+    # of ``in`` reads as broken host validation to static analysis).
+    assert "site_id='site'" in repr(identity)
+    assert identity.mqtt.endpoint in repr(identity.mqtt)
+
+    # The endpoint map only ever absorbs the broker URL from the credentials
+    # block, so the default as_dict carries no secret through it either.
+    redacted = json.dumps(identity.as_dict())
+    for secret in ("access-key-secret", "password-secret", "broker-username-secret"):
+        assert secret not in redacted
+    assert identity.endpoint_for("mqtt") == "mqtts://mqtt.example.com:8883"
+
+    # Serialization is unaffected: the secret paths still carry the values.
+    full = identity.as_dict(include_secrets=True)
+    assert full["access_key"] == "access-key-secret"
+    assert full["password"] == "password-secret"
+    assert full["crypto_key"] == "crypto-key-secret"
+    assert full["mqtt"]["password"] == "broker-password-secret"
+
+
+def test_mqtt_endpoint_userinfo_redacted_in_default_output():
+    """A broker endpoint URL may embed ``user:pass@`` userinfo. The default
+    (non-secret) serialization and repr must strip it; include_secrets keeps it."""
+
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "key",
+            "password": "password",
+            "site_id": "site",
+            "default_master": "wss://hub.example.com",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://broker-user:BROKER-URL-SECRET@mqtt.example.com:8883",
+                "username": "broker-user",
+                "password": "broker-password-secret",
+            },
+        }
+    )
+
+    default = identity.as_dict()
+    assert default["mqtt"]["endpoint"] == "mqtts://mqtt.example.com:8883"
+    assert "BROKER-URL-SECRET" not in json.dumps(default)
+    assert "BROKER-URL-SECRET" not in repr(identity)
+    assert "BROKER-URL-SECRET" not in repr(identity.mqtt)
+    # The data_plane_endpoints view (default redacts, and repr too) is clean.
+    assert "BROKER-URL-SECRET" not in repr(identity.data_plane_endpoints)
+
+    # (c) MQTT username == the access key is never in the default output/repr.
+    assert "username" not in default["mqtt"]
+    assert "broker-user" not in repr(identity.mqtt)
+
+    # include_secrets=True keeps the full endpoint (userinfo included) for
+    # persistence and the wire path.
+    full = identity.as_dict(include_secrets=True)
+    assert full["mqtt"]["endpoint"] == "mqtts://broker-user:BROKER-URL-SECRET@mqtt.example.com:8883"
+    assert full["mqtt"]["username"] == "broker-user"
+    assert full["mqtt"]["password"] == "broker-password-secret"
+
+
+def test_identity_metadata_redacts_secret_keyed_entries_by_default():
+    """Free-form metadata (keys the SDK does not control) must not leak
+    secret-keyed values through the default, log-safe serializer."""
+
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "key",
+            "password": "password",
+            "site_id": "site",
+            "default_master": "https://hub.example.com",
+            "default_port": 443,
+            "metadata": {
+                "user_id": "u42",
+                "role": "member",
+                "api_key": "META-APIKEY-SECRET",
+                "Session-Token": "META-TOKEN-SECRET",
+                "nested": {"client_secret": "META-NESTED-SECRET", "kept": "ok"},
+            },
+        }
+    )
+
+    default_meta = identity.as_dict()["metadata"]
+    assert default_meta["user_id"] == "u42"
+    assert default_meta["role"] == "member"
+    assert default_meta["api_key"] == "<redacted>"
+    assert default_meta["Session-Token"] == "<redacted>"
+    assert default_meta["nested"] == {"client_secret": "<redacted>", "kept": "ok"}
+
+    blob = json.dumps(identity.as_dict())
+    for secret in ("META-APIKEY-SECRET", "META-TOKEN-SECRET", "META-NESTED-SECRET"):
+        assert secret not in blob
+    # metadata is kept out of repr entirely.
+    assert "META-APIKEY-SECRET" not in repr(identity)
+
+    # include_secrets=True returns the metadata verbatim (persistence path).
+    full_meta = identity.as_dict(include_secrets=True)["metadata"]
+    assert full_meta["api_key"] == "META-APIKEY-SECRET"
+    assert full_meta["Session-Token"] == "META-TOKEN-SECRET"
+    assert full_meta["nested"]["client_secret"] == "META-NESTED-SECRET"
+
+
 def test_identity_loads_operator_generated_client_config_aliases():
     identity = ThalovantIdentity.from_mapping(
         {

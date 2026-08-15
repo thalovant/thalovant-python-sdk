@@ -104,6 +104,20 @@ class HubDataPlaneEndpoints:
     wss: str | None = None
     mqtt: str | None = None
 
+    def __repr__(self) -> str:
+        # An endpoint URL may embed ``user:pass@`` userinfo (e.g. an MQTT
+        # broker URL); strip it so repr() stays safe to log. Serialization is
+        # handled separately by as_dict(redact_credentials=...).
+        def show(value: str | None) -> str | None:
+            return _redact_credentials(value) or None if value else None
+
+        return (
+            f"{type(self).__name__}("
+            f"https={show(self.https)!r}, "
+            f"wss={show(self.wss)!r}, "
+            f"mqtt={show(self.mqtt)!r})"
+        )
+
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any] | None) -> "HubDataPlaneEndpoints":
         """Read endpoints from a hub resource, identity payload, or endpoint map."""
@@ -289,6 +303,13 @@ def _optional_string(value: Any) -> str | None:
 
 
 def _normalize_endpoint(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        # An MQTT credentials block can sit where an endpoint is read (an
+        # identity's ``mqtt`` key). Use only its endpoint URL — never
+        # stringify the mapping, which carries the broker credentials.
+        value = _first_value(value, "endpoint", "broker_url", "brokerUrl")
+        if not isinstance(value, str):
+            return None
     raw = _optional_string(value)
     if not raw:
         return None

@@ -23,6 +23,20 @@ from .events import _runtime_bus_context, _runtime_crypto_key
 from .identity import ThalovantIdentity
 from .models import ThalovantConnectionInfo, ThalovantHealth
 
+_URL_QUERY_RE = re.compile(r"\?\S+")
+
+
+def _redact_error_text(error: object) -> str:
+    """Render an error for humans with URL query strings stripped.
+
+    Connection failures embed the request URL in the error text, and the
+    data-plane URLs carry the access key in the query
+    (``?authorization=base64(<userAgent>:<accessKey>)``), so everything from
+    ``?`` onward is dropped before the text is stored or displayed.
+    """
+
+    return _URL_QUERY_RE.sub("?<redacted>", str(error))
+
 
 class Transport(Protocol):
     def connect(self) -> None: ...
@@ -140,7 +154,7 @@ class HiveMindHTTPTransport:
             socket_open_ms=self._connection_info.socket_open_ms,
             handshake_ms=self._connection_info.handshake_ms,
             connect_ms=_elapsed_ms(started, time.monotonic()),
-            last_error=str(error),
+            last_error=_redact_error_text(error),
         )
 
     def _mark_closed(self) -> None:
@@ -192,7 +206,9 @@ class HiveMindHTTPTransport:
             raise ThalovantConnectionError("Could not reach the HiveMind HTTP endpoint.") from exc
 
         if getattr(response, "ok", False) is False:
-            detail = getattr(response, "text", "") or f"HTTP {getattr(response, 'status_code', 'error')}"
+            detail = _redact_error_text(getattr(response, "text", "")) or (
+                f"HTTP {getattr(response, 'status_code', 'error')}"
+            )
             error = ThalovantConnectionError(f"HiveMind HTTP connect failed: {detail}")
             self._fail_connection(error)
             self._shutdown_client(client, transport_connected=False)
@@ -304,7 +320,7 @@ class HiveMindHTTPTransport:
             connected=connected,
             handshake_complete=handshake_complete,
             transport_alive=transport_alive,
-            last_error=str(error) if error else None,
+            last_error=_redact_error_text(error) if error else None,
             connection=self.connection_info(),
         )
 
@@ -338,7 +354,7 @@ class HiveMindHTTPTransport:
         client = self._require_client()
         if not self.is_connected():
             error = self.last_error()
-            detail = f": {error}" if error else ""
+            detail = f": {_redact_error_text(error)}" if error else ""
             raise ThalovantConnectionError(f"HiveMind HTTP transport is not connected{detail}")
         return client
 
@@ -500,14 +516,17 @@ class HiveMindHTTPTransport:
 
         error = body.get("error") if isinstance(body, dict) else None
         if error:
+            redacted = _redact_error_text(error)
             if "not connected" in str(error).lower():
-                exc = ThalovantConnectionError(f"HiveMind HTTP send failed: {error}")
+                exc = ThalovantConnectionError(f"HiveMind HTTP send failed: {redacted}")
                 self._last_error = exc
                 raise exc
-            raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {error}")
+            raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {redacted}")
 
         if getattr(response, "ok", False) is False:
-            detail = getattr(response, "text", "") or f"HTTP {status_code or 'error'}"
+            detail = _redact_error_text(getattr(response, "text", "")) or (
+                f"HTTP {status_code or 'error'}"
+            )
             raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {detail}")
 
     def _build_protocol(self, client: Any, deps: "_HiveMindDeps") -> Any:
@@ -693,7 +712,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
             connected=connected,
             handshake_complete=handshake_complete,
             transport_alive=transport_alive,
-            last_error=str(error) if error else None,
+            last_error=_redact_error_text(error) if error else None,
             connection=self.connection_info(),
         )
 
@@ -715,7 +734,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
         client = self._require_client()
         if not self.is_connected():
             error = self.last_error()
-            detail = f": {error}" if error else ""
+            detail = f": {_redact_error_text(error)}" if error else ""
             raise ThalovantConnectionError(f"HiveMind WSS transport is not connected{detail}")
         return client
 
@@ -821,7 +840,7 @@ class HiveMindMQTTTransport:
             socket_open_ms=self._connection_info.socket_open_ms,
             handshake_ms=self._connection_info.handshake_ms,
             connect_ms=_elapsed_ms(started, time.monotonic()),
-            last_error=str(error),
+            last_error=_redact_error_text(error),
         )
 
     def _mark_closed(self) -> None:
@@ -873,7 +892,7 @@ class HiveMindMQTTTransport:
         if not self._subscribed.wait(timeout=self.connect_timeout):
             error = self.last_error()
             self.disconnect()
-            detail = f": {error}" if error else ""
+            detail = f": {_redact_error_text(error)}" if error else ""
             timeout = ThalovantTimeoutError(f"HiveMind MQTT subscription timed out{detail}.")
             self._fail_connection(timeout)
             raise timeout
@@ -883,7 +902,7 @@ class HiveMindMQTTTransport:
         if not self._handshake.wait(timeout=self.handshake_timeout):
             error = self.last_error()
             self.disconnect()
-            detail = f": {error}" if error else ""
+            detail = f": {_redact_error_text(error)}" if error else ""
             timeout = ThalovantTimeoutError(f"HiveMind MQTT handshake timed out{detail}.")
             self._fail_connection(timeout)
             raise timeout
@@ -958,7 +977,7 @@ class HiveMindMQTTTransport:
             connected=self._connected.is_set(),
             handshake_complete=self._handshake.is_set(),
             transport_alive=self.is_connected(),
-            last_error=str(self._last_error) if self._last_error else None,
+            last_error=_redact_error_text(self._last_error) if self._last_error else None,
             connection=self.connection_info(),
         )
 

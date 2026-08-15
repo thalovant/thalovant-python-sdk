@@ -6,13 +6,19 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import stat
 from typing import Any, Mapping
 
 import yaml
 
 from .errors import ThalovantIdentityError
-from .protocols import HubDataPlaneEndpoints, HubProtocol, HubProtocolSettings
+from .protocols import (
+    HubDataPlaneEndpoints,
+    HubProtocol,
+    HubProtocolSettings,
+    _redact_credentials,
+)
 
 
 _MISSING = object()
@@ -33,16 +39,21 @@ def default_config_path() -> Path:
 
 @dataclass(frozen=True)
 class MqttBrokerCredentials:
-    """Per-client MQTT broker credentials returned by the Thalovant API."""
+    """Per-client MQTT broker credentials returned by the Thalovant API.
+
+    ``repr()`` hides the credential fields and the topic fields (topics can
+    embed the client access key); serialization is unaffected — use
+    ``as_dict(include_secrets=True)`` for the full material.
+    """
 
     endpoint: str
-    username: str
-    password: str
-    topic_prefix: str | None = None
+    username: str = field(repr=False)
+    password: str = field(repr=False)
+    topic_prefix: str | None = field(default=None, repr=False)
     hub_id: str | None = None
-    c2s_topic: str | None = None
-    s2c_topic: str | None = None
-    status_topic: str | None = None
+    c2s_topic: str | None = field(default=None, repr=False)
+    s2c_topic: str | None = field(default=None, repr=False)
+    status_topic: str | None = field(default=None, repr=False)
     hash_topics: bool = False
     qos: int = 1
     tls: bool = True
@@ -75,8 +86,22 @@ class MqttBrokerCredentials:
             tls=_bool_value(values, "tls", default=endpoint.startswith("mqtts://")),
         )
 
+    def __repr__(self) -> str:
+        # Show only the non-secret fields, with any URL userinfo stripped from
+        # the endpoint. The username/password/topic fields (which can embed the
+        # access key) are omitted entirely.
+        return (
+            f"{type(self).__name__}("
+            f"endpoint={_redact_credentials(self.endpoint)!r}, "
+            f"hub_id={self.hub_id!r}, hash_topics={self.hash_topics!r}, "
+            f"qos={self.qos!r}, tls={self.tls!r})"
+        )
+
     def as_dict(self, *, include_secrets: bool = False) -> dict[str, Any]:
-        data: dict[str, Any] = {"endpoint": self.endpoint, "tls": self.tls}
+        # A broker endpoint URL may embed ``user:pass@`` userinfo; strip it from
+        # the default (non-secret) output so it stays safe to log.
+        endpoint = self.endpoint if include_secrets else _redact_credentials(self.endpoint)
+        data: dict[str, Any] = {"endpoint": endpoint, "tls": self.tls}
         if include_secrets:
             data.update(
                 {
@@ -103,21 +128,29 @@ class MqttBrokerCredentials:
 
 @dataclass(frozen=True)
 class ThalovantIdentity:
-    """HiveMind identity material provisioned by Thalovant."""
+    """HiveMind identity material provisioned by Thalovant.
 
-    access_key: str
-    password: str
+    ``repr()`` hides the secret fields (``access_key``, ``password``,
+    ``crypto_key``); serialization is unaffected — use
+    ``as_dict(include_secrets=True)`` when persisting an identity file.
+    """
+
+    access_key: str = field(repr=False)
+    password: str = field(repr=False)
     default_master: str
     site_id: str
     default_port: int = 5679
     default_path: str = ""
-    crypto_key: str | None = None
+    crypto_key: str | None = field(default=None, repr=False)
     data_plane_endpoints: HubDataPlaneEndpoints = field(
         default_factory=HubDataPlaneEndpoints
     )
     protocols: HubProtocolSettings = field(default_factory=HubProtocolSettings)
     mqtt: MqttBrokerCredentials | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    # metadata is arbitrary caller/API-supplied annotation and may carry
+    # secret-keyed entries; keep it out of repr and redact it in the default
+    # serializer (see as_dict).
+    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ThalovantIdentity":
@@ -296,8 +329,53 @@ class ThalovantIdentity:
         if self.mqtt:
             data["mqtt"] = self.mqtt.as_dict(include_secrets=include_secrets)
         if self.metadata:
-            data["metadata"] = dict(self.metadata)
+            data["metadata"] = (
+                dict(self.metadata)
+                if include_secrets
+                else _redact_secret_map(self.metadata)
+            )
         return data
+
+
+_SECRET_KEY_MARKERS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "credential",
+    "authorization",
+    "apikey",
+    "accesskey",
+    "cryptokey",
+    "privatekey",
+    "sessionkey",
+)
+
+
+def _is_secret_key(key: Any) -> bool:
+    """Return whether a mapping key names a likely secret (e.g. ``api_key``)."""
+
+    normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+    return any(marker in normalized for marker in _SECRET_KEY_MARKERS)
+
+
+def _redact_secret_map(value: Any) -> Any:
+    """Deep-copy an arbitrary structure, replacing secret-keyed values.
+
+    Used for the default (non-secret) serialization of the free-form
+    ``metadata`` map, whose keys the SDK does not control. Entries whose key
+    looks like a secret are replaced with ``"<redacted>"``; everything else is
+    preserved. ``include_secrets=True`` bypasses this entirely.
+    """
+
+    if isinstance(value, Mapping):
+        return {
+            key: "<redacted>" if _is_secret_key(key) else _redact_secret_map(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_secret_map(item) for item in value]
+    return value
 
 
 def _value(values: Mapping[str, Any], key: str, aliases: tuple[str, ...] = ()) -> Any:

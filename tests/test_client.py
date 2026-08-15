@@ -645,6 +645,126 @@ def test_healthcheck_returns_transport_state():
     assert health.connected
 
 
+def test_transport_error_strings_redact_url_query():
+    """Stored and surfaced error text must not carry the data-plane access key,
+    which requests-style errors embed as ``?authorization=...`` in the URL."""
+
+    leaky = ConnectionError(
+        "HTTPSConnectionPool(host='hub.local', port=5679): Max retries exceeded "
+        "with url: /connect?authorization=QWdlbnQ6c2VjcmV0LWtleQ== "
+        "(Caused by NewConnectionError)"
+    )
+    transport = HiveMindHTTPTransport(identity(), useragent="agent")
+    transport._begin_connection()
+    transport._fail_connection(leaky)
+
+    health = transport.healthcheck()
+    surfaced = json.dumps(health.as_dict())
+    assert "QWdlbnQ6c2VjcmV0LWtleQ" not in surfaced
+    assert "?<redacted>" in health.last_error
+    assert "?<redacted>" in health.connection.last_error
+    # Only the query is dropped: the diagnostic prefix (host, error type) up to
+    # the "?" survives intact. Compare against the computed prefix rather than a
+    # host string literal, which static analysis reads as broken host checking.
+    surviving_prefix = str(leaky).split("?", 1)[0]
+    assert health.last_error.startswith(surviving_prefix)
+    assert transport.last_error() is leaky  # the raw exception object is untouched
+
+    wss = HiveMindWSSTransport(identity(), useragent="agent")
+    wss._last_error = leaky
+    assert "QWdlbnQ6c2VjcmV0LWtleQ" not in json.dumps(wss.healthcheck().as_dict())
+
+
+class _EmitResponse:
+    """Minimal stand-in for a requests.Response fed to _raise_for_emit_response."""
+
+    def __init__(self, *, body=None, text="", status_code=500, ok=False):
+        self._body = body
+        self.text = text
+        self.status_code = status_code
+        self.ok = ok
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no json body")
+        return self._body
+
+
+def test_emit_response_errors_redact_url_query_before_raising():
+    """Errors RAISED to the caller from a send response must be redacted too,
+    not just the stored last_error."""
+
+    from thalovant import ThalovantRuntimeError
+
+    transport = HiveMindHTTPTransport(identity(), useragent="agent")
+    secret = "U0VDUkVUX0FDQ0VTU19LRVk"
+
+    # JSON body {"error": ...} path.
+    with pytest.raises(ThalovantRuntimeError) as body_err:
+        transport._raise_for_emit_response(
+            _EmitResponse(body={"error": f"boom with url: /send?authorization={secret} tail"})
+        )
+    assert secret not in str(body_err.value)
+    assert "?<redacted>" in str(body_err.value)
+
+    # Raw response.text path (no JSON).
+    with pytest.raises(ThalovantRuntimeError) as text_err:
+        transport._raise_for_emit_response(
+            _EmitResponse(text=f"failed url: /send?authorization={secret} tail")
+        )
+    assert secret not in str(text_err.value)
+    assert "?<redacted>" in str(text_err.value)
+
+    # "not connected" branch raises a ThalovantConnectionError, also redacted,
+    # and stores the redacted exception (not the raw text) as last_error.
+    with pytest.raises(ThalovantConnectionError) as conn_err:
+        transport._raise_for_emit_response(
+            _EmitResponse(body={"error": f"client not connected: /x?authorization={secret}"})
+        )
+    assert secret not in str(conn_err.value)
+    assert secret not in str(transport.last_error())
+
+
+def test_doctor_failure_detail_redacts_url_query(monkeypatch):
+    transport = FakeTransport()
+    client = ThalovantClient(identity(), transport=transport)
+
+    def boom():
+        raise ThalovantConnectionError(
+            "endpoint check failed with url: /connect?authorization=U0VDUkVUX1RPS0VO trailing"
+        )
+
+    monkeypatch.setattr(client, "_doctor_endpoint", boom)
+
+    report = client.doctor()
+    blob = json.dumps(report.as_dict())
+
+    assert "U0VDUkVUX1RPS0VO" not in blob
+    assert "?<redacted>" in blob
+    endpoint_check = next(c for c in report.checks if c.name == "endpoint")
+    assert not endpoint_check.ok
+
+
+def test_transport_stopped_error_message_redacts_url_query():
+    leaky = ConnectionError("boom with url: /send_message?authorization=U0VDUkVU x")
+
+    class StoppedTransport(FakeTransport):
+        def is_connected(self) -> bool:
+            return False
+
+        def last_error(self) -> BaseException | None:
+            return leaky
+
+    client = ThalovantClient(identity(), transport=StoppedTransport())
+
+    with pytest.raises(ThalovantConnectionError) as excinfo:
+        client._raise_if_transport_stopped()
+
+    assert "U0VDUkVU" not in str(excinfo.value)
+    assert "authorization=" not in str(excinfo.value)
+    assert "?<redacted>" in str(excinfo.value)
+
+
 def test_doctor_reports_identity_and_transport_checks():
     transport = FakeTransport()
     client = ThalovantClient(identity(), transport=transport)

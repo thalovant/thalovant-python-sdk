@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import secrets
 import time
 from typing import Any, Callable, Iterable, Literal, Mapping, cast
@@ -94,7 +94,9 @@ class BootstrapIdentityResult:
 
     identity: ThalovantIdentity
     hub: dict[str, Any]
-    client: dict[str, Any]
+    # The raw /v1/clients response carries credentials (echoed spec secrets,
+    # initial_identify, initial_identify_token); keep it out of repr()/str().
+    client: dict[str, Any] = field(repr=False)
     endpoint: SelectedHubEndpoint | None
 
     @property
@@ -102,12 +104,20 @@ class BootstrapIdentityResult:
         return self.endpoint.protocol if self.endpoint else None
 
     def as_dict(self, *, include_secrets: bool = False) -> dict[str, Any]:
-        """Return a serializable result, redacting identity secrets by default."""
+        """Return a serializable result, redacting all secrets by default.
+
+        By default the identity secrets are omitted and the ``client`` resource
+        is deep-scrubbed: the API's ``POST /v1/clients`` response echoes the
+        request ``spec`` (``apiKey``/``password``/``cryptoKey``) and carries the
+        ``initial_identify`` credential block plus ``initial_identify_token``.
+        Pass ``include_secrets=True`` to get everything unchanged, for example
+        to persist an identity file; never log that output.
+        """
 
         return {
             "identity": self.identity.as_dict(include_secrets=include_secrets),
             "hub": self.hub,
-            "client": self.client,
+            "client": self.client if include_secrets else _scrub_client_secrets(self.client),
             "selected_protocol": self.selected_protocol,
             "selected_endpoint": self.endpoint.endpoint if self.endpoint else None,
         }
@@ -406,10 +416,8 @@ class ThalovantControlPlane:
     def get_analytics_overview(
         self,
         *,
-        admin: bool = False,
         range: str | None = None,
         bucket: str | None = None,
-        owner_id: str | None = None,
         hub_id: str | None = None,
         client_id: str | None = None,
         country: str | None = None,
@@ -421,13 +429,11 @@ class ThalovantControlPlane:
         weekday: int | None = None,
         hour: int | None = None,
     ) -> dict[str, Any]:
-        """Fetch the workspace or admin analytics overview used by the dashboard."""
+        """Fetch the workspace analytics overview used by the dashboard."""
 
         params: dict[str, Any] = {}
         _set_param(params, "range", range)
         _set_param(params, "bucket", bucket)
-        if admin:
-            _set_param(params, "owner_id", owner_id)
         _set_param(params, "hub_id", hub_id)
         _set_param(params, "client_id", client_id)
         _set_param(params, "country", country)
@@ -440,8 +446,7 @@ class ThalovantControlPlane:
             params["weekday"] = weekday
         if hour is not None:
             params["hour"] = hour
-        endpoint = "/v1/admin/analytics/overview" if admin else "/v1/analytics/overview"
-        return self._request("GET", endpoint, params=params)
+        return self._request("GET", "/v1/analytics/overview", params=params)
 
     def get_hub(self, hub_id: str) -> dict[str, Any]:
         """Fetch one hub resource."""
@@ -1118,6 +1123,41 @@ def _new_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+_CLIENT_SECRET_KEYS = frozenset(
+    {
+        "initial_identify",
+        "initial_identify_token",
+        "apiKey",
+        "api_key",
+        "accessKey",
+        "access_key",
+        "password",
+        "cryptoKey",
+        "crypto_key",
+    }
+)
+
+
+def _scrub_client_secrets(value: Any) -> Any:
+    """Deep-copy an API client resource with its secret-bearing keys removed.
+
+    Drops the ``initial_identify`` block, ``initial_identify_token``, and the
+    credential keys echoed back inside ``spec`` (``apiKey``/``password``/
+    ``cryptoKey``), wherever they appear. Reference keys such as ``apiKeyRef``
+    are kept: they point at Vault entries and carry no secret material.
+    """
+
+    if isinstance(value, Mapping):
+        return {
+            key: _scrub_client_secrets(item)
+            for key, item in value.items()
+            if key not in _CLIENT_SECRET_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_client_secrets(item) for item in value]
+    return value
+
+
 def _normalize_control_api_url(api_url: str) -> str:
     """Normalize the API root while accepting versioned roots for convenience."""
 
@@ -1244,13 +1284,32 @@ def _strip_path(endpoint: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
+_ERROR_DETAIL_MAX_CHARS = 200
+
+
 def _error_detail(response: requests.Response) -> str:
+    """Build a bounded error message that never includes the raw response body.
+
+    Error bodies can echo the request back (for ``POST /v1/clients`` that
+    request carries freshly generated credentials) and are attacker-sized, so
+    only a short server-provided ``detail``/``message``/``error`` *string* is
+    kept, newline-collapsed and truncated; never the whole body.
+    """
+
+    detail: str | None = None
     try:
         body = response.json()
     except ValueError:
-        body = response.text
+        body = None
     if isinstance(body, dict):
-        detail = body.get("detail") or body.get("error") or body
-    else:
-        detail = body
+        for key in ("detail", "message", "error"):
+            value = body.get(key)
+            if isinstance(value, str) and value.strip():
+                detail = value
+                break
+    if detail is None:
+        return f"Thalovant API request failed with HTTP {response.status_code}."
+    detail = " ".join(detail.split())
+    if len(detail) > _ERROR_DETAIL_MAX_CHARS:
+        detail = detail[:_ERROR_DETAIL_MAX_CHARS] + "..."
     return f"Thalovant API request failed with HTTP {response.status_code}: {detail}"

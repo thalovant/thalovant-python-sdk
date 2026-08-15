@@ -49,7 +49,13 @@ from .models import (
     ThalovantReply,
 )
 from .subscriptions import ThalovantSubscription
-from .transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSSTransport, Transport
+from .transport import (
+    HiveMindHTTPTransport,
+    HiveMindMQTTTransport,
+    HiveMindWSSTransport,
+    Transport,
+    _redact_error_text,
+)
 from .protocols import DEFAULT_PROTOCOL_PREFERENCE, HubProtocol
 from ._version import USER_AGENT
 
@@ -320,7 +326,9 @@ class ThalovantClient:
                 detail = operation()
                 ok = True
             except Exception as exc:
-                detail = str(exc)
+                # doctor output is printed by the CLI; scrub any URL query
+                # (which carries the data-plane access key) from the message.
+                detail = _redact_error_text(exc)
                 ok = False
             checks.append(
                 ThalovantDoctorCheck(
@@ -847,7 +855,7 @@ class ThalovantClient:
         if self._transport.is_connected():
             return
         error = self._transport.last_error()
-        detail = f": {error}" if error else ""
+        detail = f": {_redact_error_text(error)}" if error else ""
         raise ThalovantConnectionError(f"HiveMind transport stopped{detail}")
 
     def _context_with_identity_metadata(
