@@ -387,9 +387,9 @@ def test_client_uses_mqtt_transport(monkeypatch):
     assert created["identity"].mqtt is not None
     assert created["kwargs"]["useragent"].startswith("ThalovantPythonSDK/")
     assert mqtt_topics_for_identity(identity_with_mqtt()) == (
-        "hivemind/hub/c2s/key",
-        "hivemind/hub/s2c/key",
-        "hivemind/hub/status/key",
+        "hivemind/hub/key/in",
+        "hivemind/hub/key/out",
+        "hivemind/hub/key/status",
     )
 
 
@@ -405,7 +405,7 @@ def test_client_falls_back_to_https_when_wss_endpoint_is_missing():
     assert isinstance(client._transport, HiveMindHTTPTransport)
 
 
-def test_mqtt_topics_include_hub_id_when_prefix_is_generic():
+def test_mqtt_topics_strip_surrounding_slashes_from_prefix():
     identity = ThalovantIdentity(
         access_key="key",
         password="password",
@@ -418,16 +418,35 @@ def test_mqtt_topics_include_hub_id_when_prefix_is_generic():
             endpoint="mqtts://mqtt.example.com:8883",
             username="key",
             password="broker-password",
-            topic_prefix="hivemind",
-            hub_id="hub",
+            topic_prefix="/hivemind/hub/key/",
         ),
     )
 
     assert mqtt_topics_for_identity(identity) == (
-        "hivemind/hub/c2s/key",
-        "hivemind/hub/s2c/key",
-        "hivemind/hub/status/key",
+        "hivemind/hub/key/in",
+        "hivemind/hub/key/out",
+        "hivemind/hub/key/status",
     )
+
+
+def test_mqtt_topics_require_topic_prefix():
+    identity = ThalovantIdentity(
+        access_key="key",
+        password="password",
+        crypto_key="0123456789abcdef",
+        site_id="site",
+        default_master="https://hub.local",
+        default_port=443,
+        protocols=HubProtocolSettings(wss=True, http=True, mqtt=True),
+        mqtt=MqttBrokerCredentials(
+            endpoint="mqtts://mqtt.example.com:8883",
+            username="key",
+            password="broker-password",
+        ),
+    )
+
+    with pytest.raises(ThalovantConnectionError, match="topic_prefix"):
+        mqtt_topics_for_identity(identity)
 
 
 def test_mqtt_tls_flag_controls_default_port():

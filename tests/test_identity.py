@@ -379,7 +379,6 @@ def test_identity_loads_operator_generated_client_config_aliases():
                 "brokerUsername": "client-access-key",
                 "brokerPassword": "broker-password",
                 "topicPrefix": "hivemind",
-                "hubId": "hub-alpha",
             },
         }
     )
@@ -392,7 +391,6 @@ def test_identity_loads_operator_generated_client_config_aliases():
     assert identity.mqtt.username == "client-access-key"
     assert identity.mqtt.password == "broker-password"
     assert identity.mqtt.topic_prefix == "hivemind"
-    assert identity.mqtt.hub_id == "hub-alpha"
 
 
 def test_builds_data_plane_endpoints_from_hub_resource():

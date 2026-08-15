@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import json
 import re
 import threading
@@ -754,8 +753,8 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
 
 
 class MqttTopicSet(NamedTuple):
-    c2s: str
-    s2c: str
+    inbound: str
+    outbound: str
     status: str
 
 
@@ -888,7 +887,7 @@ class HiveMindMQTTTransport:
             self._fail_connection(error)
             raise error
         self._subscribed.clear()
-        client.subscribe(self.topics.s2c, qos=self.identity.mqtt.qos)
+        client.subscribe(self.topics.outbound, qos=self.identity.mqtt.qos)
         if not self._subscribed.wait(timeout=self.connect_timeout):
             error = self.last_error()
             self.disconnect()
@@ -1102,7 +1101,7 @@ class HiveMindMQTTTransport:
             raise ThalovantConnectionError("HiveMind MQTT transport is not connected.")
         payload = self._encode_hive_message(message)
         result = client.publish(
-            self.topics.c2s,
+            self.topics.inbound,
             payload,
             qos=self.identity.mqtt.qos if self.identity.mqtt else 1,
             retain=False,
@@ -1242,43 +1241,16 @@ def mqtt_topics_for_identity(identity: ThalovantIdentity) -> MqttTopicSet:
     credentials = identity.mqtt
     if credentials is None:
         raise ThalovantConnectionError("The identity does not include MQTT broker credentials.")
-    satellite_id = (
-        hashlib.sha256(identity.access_key.encode("utf-8")).hexdigest()[:16]
-        if credentials.hash_topics
-        else identity.access_key
-    )
-    if credentials.c2s_topic and credentials.s2c_topic:
-        return MqttTopicSet(
-            credentials.c2s_topic,
-            credentials.s2c_topic,
-            credentials.status_topic or _sibling_mqtt_topic(credentials.c2s_topic, "status"),
-        )
-    raw = credentials.topic_prefix.strip("/") if credentials.topic_prefix else ""
-    if raw:
-        if "/c2s/" in raw:
-            return MqttTopicSet(raw, _sibling_mqtt_topic(raw, "s2c"), _sibling_mqtt_topic(raw, "status"))
-        if "/s2c/" in raw:
-            return MqttTopicSet(_sibling_mqtt_topic(raw, "c2s"), raw, _sibling_mqtt_topic(raw, "status"))
-        if "/status/" in raw:
-            return MqttTopicSet(_sibling_mqtt_topic(raw, "c2s"), _sibling_mqtt_topic(raw, "s2c"), raw)
-        parts = raw.split("/")
-        base = "/".join(parts[:-1]) if parts[-1] in {identity.access_key, credentials.username, satellite_id} else raw
-        hub_id = credentials.hub_id.strip("/") if credentials.hub_id else ""
-        if hub_id and hub_id not in base.split("/"):
-            base = f"{base}/{hub_id}"
-    elif credentials.hub_id:
-        base = f"hivemind/{credentials.hub_id.strip('/')}"
-    else:
-        raise ThalovantConnectionError("MQTT credentials must include topic_prefix, hub_id, or explicit c2s/s2c topics.")
+    if not credentials.topic_prefix:
+        raise ThalovantConnectionError("MQTT credentials must include topic_prefix.")
+    prefix = credentials.topic_prefix.strip("/")
+    if not prefix:
+        raise ThalovantConnectionError("MQTT credentials must include topic_prefix.")
     return MqttTopicSet(
-        f"{base}/c2s/{satellite_id}",
-        f"{base}/s2c/{satellite_id}",
-        f"{base}/status/{satellite_id}",
+        inbound=f"{prefix}/in",
+        outbound=f"{prefix}/out",
+        status=f"{prefix}/status",
     )
-
-
-def _sibling_mqtt_topic(topic: str, segment: str) -> str:
-    return re.sub(r"/(?:c2s|s2c|status)/", f"/{segment}/", topic, count=1)
 
 
 def _safe_mqtt_client_id(value: str) -> str:
