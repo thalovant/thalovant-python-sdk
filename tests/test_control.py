@@ -448,6 +448,518 @@ def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():
     }
 
 
+HUB_RESOURCE = {
+    "id": "hub-1",
+    "name": "joke-garden",
+    "slug": "joke-garden",
+    "namespace": "tenant-1",
+    "runtime_group_id": "rg-1",
+    "active": True,
+    "visibility": "private",
+    "etag": "etag-2",
+    "spec": {"protocols": {"wss": {"enabled": True}}},
+}
+
+RUNTIME_GROUP_RESOURCE = {
+    "id": "rg-1",
+    "tenant_id": "owner-1",
+    "environment": "prod",
+    "namespace": "tenant-1",
+    "name": "kiosks",
+    "slug": "kiosks",
+    "is_default": False,
+    "status": "pending",
+    "spec": {"replicas": 2},
+}
+
+RUNTIME_GROUP_CONFIG = {
+    "runtime_group_id": "rg-1",
+    "config": {"lang": "en-us"},
+    "personas": {"default": "friendly"},
+}
+
+DESIRED_SKILL = {
+    "id": "desired-1",
+    "runtime_group_id": "rg-1",
+    "skill_id": "skill-weather",
+    "source_type": "catalog",
+    "source_ref": "skill-weather",
+    "active": True,
+}
+
+RUNTIME_CAPABILITIES = {
+    "hub_id": "hub-1",
+    "client_name": "kiosk",
+    "generated_at": "2026-08-13T00:00:00Z",
+    "source": "ovos-runtime",
+    "skills": [{"id": "skill-weather", "active": True, "total_intents": 3}],
+    "intents": [],
+    "counts": {"skills": 1, "adapt_intents": 2, "padatious_intents": 1, "total_intents": 3},
+}
+
+MARKETPLACE_SKILL = {
+    "id": "mkt-1",
+    "skill_id": "skill-weather",
+    "catalog_scope": "global",
+    "catalog_origin": "reference",
+    "title": "Weather",
+    "summary": "Forecasts and conditions.",
+    "category": "information",
+    "tags": ["weather"],
+    "verified": True,
+    "source_type": "package",
+    "source_ref": "ovos-skill-weather",
+    "access_tier": "included",
+    "is_active": True,
+}
+
+RUNTIME_GROUP_MARKETPLACE = {
+    "runtime_group_id": "rg-1",
+    "observed_at": "2026-08-13T00:00:00Z",
+    "source": "runtime-group-cache",
+    "operator_phase": "Ready",
+    "operator_message": None,
+    "data": [
+        {
+            "skill_id": "skill-weather",
+            "title": "Weather",
+            "active": True,
+            "installable": True,
+            "purchase_required": False,
+            "total_intents": 3,
+        }
+    ],
+}
+
+RUNTIME_GROUP_INVENTORY = {
+    "runtime_group_id": "rg-1",
+    "observed_at": "2026-08-13T00:00:00Z",
+    "source": "ovos-runtime-operator",
+    "operator_phase": "Ready",
+    "operator_message": None,
+    "data": [
+        {
+            "id": "inv-1",
+            "runtime_group_id": "rg-1",
+            "skill_id": "skill-weather",
+            "version": "0.1.16",
+            "source": "package",
+            "active": True,
+            "adapt_intents": ["weather.current"],
+            "padatious_intents": [],
+            "total_intents": 1,
+            "observed_at": "2026-08-13T00:00:00Z",
+        }
+    ],
+}
+
+PROVISIONING_ROUTES = {
+    ("GET", "/v1/marketplace/skills"): (200, {"data": [MARKETPLACE_SKILL]}),
+    ("GET", "/v1/runtime-groups/rg-1/marketplace"): (200, RUNTIME_GROUP_MARKETPLACE),
+    ("GET", "/v1/runtime-groups/rg-1/inventory"): (200, RUNTIME_GROUP_INVENTORY),
+    ("POST", "/v1/hubs"): (201, HUB_RESOURCE),
+    ("PATCH", "/v1/hubs/hub-1"): (200, HUB_RESOURCE),
+    ("DELETE", "/v1/hubs/hub-1"): (204, ""),
+    ("POST", "/v1/hubs/hub-1/release"): (200, HUB_RESOURCE),
+    ("PUT", "/v1/hubs/hub-1/rating"): (200, HUB_RESOURCE),
+    ("DELETE", "/v1/hubs/hub-1/rating"): (200, HUB_RESOURCE),
+    ("GET", "/v1/hubs/hub-1/runtime-capabilities"): (200, RUNTIME_CAPABILITIES),
+    ("GET", "/v1/runtime-groups"): (200, {"data": [RUNTIME_GROUP_RESOURCE]}),
+    ("POST", "/v1/runtime-groups"): (201, RUNTIME_GROUP_RESOURCE),
+    ("GET", "/v1/runtime-groups/rg-1"): (200, RUNTIME_GROUP_RESOURCE),
+    ("PATCH", "/v1/runtime-groups/rg-1"): (200, RUNTIME_GROUP_RESOURCE),
+    ("DELETE", "/v1/runtime-groups/rg-1"): (204, ""),
+    ("GET", "/v1/runtime-groups/rg-1/config"): (200, RUNTIME_GROUP_CONFIG),
+    ("PATCH", "/v1/runtime-groups/rg-1/config"): (200, RUNTIME_GROUP_CONFIG),
+    ("POST", "/v1/runtime-groups/rg-1/release"): (200, RUNTIME_GROUP_RESOURCE),
+    ("POST", "/v1/runtime-groups/rg-1/skills"): (200, DESIRED_SKILL),
+    ("DELETE", "/v1/runtime-groups/rg-1/skills/skill-weather"): (204, ""),
+}
+
+
+class ProvisioningSession:
+    """Fake session for the hub and runtime-group provisioning routes."""
+
+    BASE_URL = "https://dash.example.com/api/"
+
+    def __init__(self, error=None):
+        self.requests = []
+        self.error = error
+
+    def request(self, method, url, **kwargs):
+        self.requests.append((method, url, kwargs))
+        assert kwargs["headers"]["authorization"] == "Bearer token"
+        assert url.startswith(self.BASE_URL)
+        if self.error is not None:
+            return FakeResponse(*self.error)
+        path = "/" + url[len(self.BASE_URL) :]
+        if (method, path) not in PROVISIONING_ROUTES:
+            raise AssertionError(f"{method} {path}")
+        return FakeResponse(*PROVISIONING_ROUTES[(method, path)])
+
+
+def provisioning_api(session):
+    return ThalovantControlPlane(
+        "https://dash.example.com/api",
+        access_token="token",
+        session=session,
+    )
+
+
+def recorded_call(session, method, path):
+    """Return the kwargs of the one recorded request for ``method`` and ``path``."""
+
+    matches = [
+        kwargs
+        for recorded_method, url, kwargs in session.requests
+        if recorded_method == method and url == ProvisioningSession.BASE_URL + path.lstrip("/")
+    ]
+    if not matches:
+        raise AssertionError(f"{method} {path} was not requested")
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_control_plane_creates_hub_with_idempotency_key_and_snake_case_body():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    hub = api.create_hub(
+        {
+            "name": "joke-garden",
+            "spec": {"protocols": {"wss": {"enabled": True}}},
+            "ownerId": "owner-1",
+            "runtimeGroupId": "rg-1",
+            "capacityProfile": "standard",
+            "visibility": "private",
+        },
+        idempotency_key="create-hub-1",
+    )
+
+    call = recorded_call(session, "POST", "/v1/hubs")
+    assert call["json"] == {
+        "name": "joke-garden",
+        "spec": {"protocols": {"wss": {"enabled": True}}},
+        "owner_id": "owner-1",
+        "runtime_group_id": "rg-1",
+        "capacity_profile": "standard",
+        "visibility": "private",
+    }
+    assert call["headers"]["Idempotency-Key"] == "create-hub-1"
+    assert hub["id"] == "hub-1"
+
+
+def test_control_plane_create_hub_generates_an_idempotency_key():
+    session = ProvisioningSession()
+
+    provisioning_api(session).create_hub({"name": "joke-garden", "spec": {}})
+
+    call = recorded_call(session, "POST", "/v1/hubs")
+    assert call["headers"]["Idempotency-Key"]
+
+
+def test_control_plane_update_and_delete_hub_send_if_match():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    updated = api.update_hub("hub-1", {"active": False, "isLocked": False}, etag="etag-1")
+    api.delete_hub("hub-1", etag="etag-2")
+
+    patch_call = recorded_call(session, "PATCH", "/v1/hubs/hub-1")
+    assert patch_call["json"] == {"active": False, "is_locked": False}
+    assert patch_call["headers"]["If-Match"] == "etag-1"
+    delete_call = recorded_call(session, "DELETE", "/v1/hubs/hub-1")
+    assert delete_call["headers"]["If-Match"] == "etag-2"
+    assert delete_call["json"] is None
+    assert updated["etag"] == "etag-2"
+
+
+def test_control_plane_update_hub_surfaces_etag_mismatch():
+    session = ProvisioningSession(error=(412, {"detail": "ETag mismatch"}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 412: ETag mismatch"):
+        api.update_hub("hub-1", {"active": False}, etag="stale")
+
+
+def test_control_plane_release_hub_sends_only_the_options_given():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.release_hub("hub-1", channel="stable")
+    assert recorded_call(session, "POST", "/v1/hubs/hub-1/release")["json"] == {
+        "channel": "stable"
+    }
+
+    images_session = ProvisioningSession()
+    provisioning_api(images_session).release_hub(
+        "hub-1",
+        channel="stable",
+        mode="custom",
+        version="1.4.0",
+        images={"listener": "ghcr.io/thalovant/listener:1.4.0"},
+        reason="pin the kiosk fleet",
+    )
+    assert recorded_call(images_session, "POST", "/v1/hubs/hub-1/release")["json"] == {
+        "channel": "stable",
+        "mode": "custom",
+        "version": "1.4.0",
+        "images": {"listener": "ghcr.io/thalovant/listener:1.4.0"},
+        "reason": "pin the kiosk fleet",
+    }
+
+
+def test_control_plane_sets_and_clears_a_hub_rating():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    rated = api.set_hub_rating("hub-1", 5)
+    cleared = api.clear_hub_rating("hub-1")
+
+    assert recorded_call(session, "PUT", "/v1/hubs/hub-1/rating")["json"] == {"rating": 5}
+    assert recorded_call(session, "DELETE", "/v1/hubs/hub-1/rating")["json"] is None
+    assert rated["id"] == "hub-1"
+    assert cleared["id"] == "hub-1"
+
+
+def test_control_plane_reads_hub_runtime_capabilities():
+    session = ProvisioningSession()
+
+    capabilities = provisioning_api(session).get_hub_runtime_capabilities("hub-1")
+
+    recorded_call(session, "GET", "/v1/hubs/hub-1/runtime-capabilities")
+    assert capabilities["counts"]["total_intents"] == 3
+    assert capabilities["skills"][0]["id"] == "skill-weather"
+
+
+def test_control_plane_manages_runtime_groups():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    page = api.list_runtime_groups(owner_id="owner-1")
+    created = api.create_runtime_group(
+        {
+            "name": "kiosks",
+            "description": "Lobby kiosks",
+            "environment": "prod",
+            "ownerId": "owner-1",
+            "cloneFromDefault": True,
+        }
+    )
+    fetched = api.get_runtime_group("rg-1")
+    updated = api.update_runtime_group("rg-1", {"name": "kiosks-eu", "spec": {"replicas": 2}})
+    api.release_runtime_group("rg-1", channel="stable")
+    api.delete_runtime_group("rg-1")
+
+    assert recorded_call(session, "GET", "/v1/runtime-groups")["params"] == {
+        "owner_id": "owner-1"
+    }
+    assert recorded_call(session, "POST", "/v1/runtime-groups")["json"] == {
+        "name": "kiosks",
+        "description": "Lobby kiosks",
+        "environment": "prod",
+        "owner_id": "owner-1",
+        "clone_from_default": True,
+    }
+    assert recorded_call(session, "PATCH", "/v1/runtime-groups/rg-1")["json"] == {
+        "name": "kiosks-eu",
+        "spec": {"replicas": 2},
+    }
+    assert recorded_call(session, "POST", "/v1/runtime-groups/rg-1/release")["json"] == {
+        "channel": "stable"
+    }
+    assert recorded_call(session, "DELETE", "/v1/runtime-groups/rg-1")["json"] is None
+    assert page["data"][0]["id"] == "rg-1"
+    assert created["id"] == "rg-1"
+    assert fetched["name"] == "kiosks"
+    assert updated["status"] == "pending"
+
+
+def test_control_plane_reads_and_merges_runtime_group_config():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    current = api.get_runtime_group_config("rg-1")
+    merged = api.update_runtime_group_config(
+        "rg-1",
+        {"lang": "en-us"},
+        personas={"default": "friendly"},
+    )
+    without_personas = ProvisioningSession()
+    provisioning_api(without_personas).update_runtime_group_config("rg-1", {"lang": "fr-fr"})
+
+    recorded_call(session, "GET", "/v1/runtime-groups/rg-1/config")
+    assert recorded_call(session, "PATCH", "/v1/runtime-groups/rg-1/config")["json"] == {
+        "config": {"lang": "en-us"},
+        "personas": {"default": "friendly"},
+    }
+    assert recorded_call(without_personas, "PATCH", "/v1/runtime-groups/rg-1/config")["json"] == {
+        "config": {"lang": "fr-fr"}
+    }
+    assert current["config"] == {"lang": "en-us"}
+    assert merged["personas"] == {"default": "friendly"}
+
+
+def test_control_plane_installs_and_uninstalls_a_runtime_group_skill():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    installed = api.install_runtime_group_skill("rg-1", "skill-weather")
+    api.uninstall_runtime_group_skill("rg-1", "skill-weather")
+
+    assert recorded_call(session, "POST", "/v1/runtime-groups/rg-1/skills")["json"] == {
+        "skill_id": "skill-weather",
+        "source_type": "catalog",
+        "active": True,
+    }
+    uninstall = recorded_call(session, "DELETE", "/v1/runtime-groups/rg-1/skills/skill-weather")
+    assert uninstall["json"] is None
+    assert installed["skill_id"] == "skill-weather"
+
+
+def test_control_plane_installs_a_git_skill_with_every_option():
+    session = ProvisioningSession()
+
+    provisioning_api(session).install_runtime_group_skill(
+        "rg-1",
+        "skill-lobby",
+        marketplace_skill_id="marketplace-1",
+        source_type="git",
+        source_ref="https://github.com/acme/skill-lobby",
+        version_pin="v1.2.0",
+        active=False,
+    )
+
+    assert recorded_call(session, "POST", "/v1/runtime-groups/rg-1/skills")["json"] == {
+        "skill_id": "skill-lobby",
+        "source_type": "git",
+        "active": False,
+        "marketplace_skill_id": "marketplace-1",
+        "source_ref": "https://github.com/acme/skill-lobby",
+        "version_pin": "v1.2.0",
+    }
+
+
+def test_control_plane_surfaces_the_paid_plan_gate_as_an_api_error():
+    session = ProvisioningSession(error=(402, {"detail": "API access requires a paid plan."}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 402: API access requires a paid plan."):
+        api.create_hub({"name": "joke-garden", "spec": {}})
+    with pytest.raises(ThalovantAPIError, match="HTTP 402"):
+        api.create_runtime_group({"name": "kiosks"})
+
+
+def test_control_plane_surfaces_the_scope_gate_as_an_api_error():
+    session = ProvisioningSession(error=(403, {"detail": "Insufficient scopes"}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
+        api.install_runtime_group_skill("rg-1", "skill-weather")
+    with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
+        api.delete_hub("hub-1", etag="etag-2")
+
+
+def test_control_plane_lists_marketplace_skills_without_optional_params():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    catalog = api.list_marketplace_skills()
+
+    assert catalog["data"][0]["skill_id"] == "skill-weather"
+    assert recorded_call(session, "GET", "/v1/marketplace/skills")["params"] == {}
+
+
+def test_control_plane_lists_marketplace_skills_with_every_param():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_marketplace_skills(
+        owner_id="owner-1",
+        include_inactive=True,
+        force_refresh=True,
+    )
+
+    assert recorded_call(session, "GET", "/v1/marketplace/skills")["params"] == {
+        "owner_id": "owner-1",
+        "include_inactive": "true",
+        "force_refresh": "true",
+    }
+
+
+def test_control_plane_marketplace_skills_omits_false_and_blank_params():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_marketplace_skills(owner_id="  ", include_inactive=False, force_refresh=False)
+
+    assert recorded_call(session, "GET", "/v1/marketplace/skills")["params"] == {}
+
+
+def test_control_plane_lists_runtime_group_marketplace():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    view = api.list_runtime_group_marketplace("rg-1")
+
+    assert view["source"] == "runtime-group-cache"
+    assert view["data"][0]["installable"] is True
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/marketplace")["params"] == {}
+
+
+def test_control_plane_runtime_group_marketplace_sends_refresh_inventory():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_runtime_group_marketplace("rg-1", refresh_inventory=True)
+
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/marketplace")["params"] == {
+        "refresh_inventory": "true"
+    }
+
+
+def test_control_plane_lists_runtime_group_inventory():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    inventory = api.list_runtime_group_inventory("rg-1")
+
+    assert inventory["source"] == "ovos-runtime-operator"
+    assert inventory["data"][0]["total_intents"] == 1
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/inventory")["params"] == {}
+
+
+def test_control_plane_runtime_group_inventory_sends_refresh():
+    session = ProvisioningSession()
+    api = provisioning_api(session)
+
+    api.list_runtime_group_inventory("rg-1", refresh=True)
+
+    assert recorded_call(session, "GET", "/v1/runtime-groups/rg-1/inventory")["params"] == {
+        "refresh": "true"
+    }
+
+
+def test_control_plane_discovery_reads_surface_the_inspect_scope_gate():
+    session = ProvisioningSession(error=(403, {"detail": "Insufficient scopes"}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
+        api.list_runtime_group_marketplace("rg-1")
+    with pytest.raises(ThalovantAPIError, match="HTTP 403: Insufficient scopes"):
+        api.list_runtime_group_inventory("rg-1")
+
+
+def test_control_plane_discovery_reads_surface_a_missing_runtime_group():
+    session = ProvisioningSession(error=(404, {"detail": "Runtime group not found."}))
+    api = provisioning_api(session)
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 404: Runtime group not found."):
+        api.list_runtime_group_inventory("rg-missing")
+    with pytest.raises(ThalovantAPIError, match="HTTP 404"):
+        api.list_runtime_group_marketplace("rg-missing")
+
+
 DEVICE_GRANT = {
     "device_code": "device-code-1",
     "user_code": "WDJB-MJHT",

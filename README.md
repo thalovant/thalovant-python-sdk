@@ -120,6 +120,119 @@ for hub in page["data"]:
     print(hub["id"], hub["slug"], hub["title"])
 ```
 
+## Provision Hubs
+
+Hubs, runtime groups, and skills can be created and managed from code. These
+routes need a **paid plan** and a token with the **`hubs:write`** scope
+("Create and update your hubs" on the dashboard's API Tokens page). A free-plan
+token fails with `API access requires a paid plan.`, and a token without the
+scope fails with `Insufficient scopes`.
+
+```python
+api = ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])
+
+# 1. Create a runtime group to run the skills.
+group = api.create_runtime_group({"name": "kiosks", "description": "Lobby kiosks"})
+
+# 2. Create a hub attached to it.
+hub = api.create_hub(
+    {
+        "name": "joke-garden",
+        "runtime_group_id": group["id"],
+        "spec": {"protocols": {"wss": {"enabled": True}}},
+    }
+)
+
+# 3. Discover what is installable before installing anything.
+for skill in api.list_marketplace_skills()["data"]:
+    print(skill["skill_id"], skill["title"], skill["access_tier"])
+
+# 4. Install a skill from the marketplace catalog.
+api.install_runtime_group_skill(group["id"], "skill-weather")
+
+# 5. Release: roll the runtime and the hub onto a release channel.
+api.release_runtime_group(group["id"], channel="stable")
+api.release_hub(hub["id"], channel="stable")
+```
+
+Creating a hub is idempotent. `create_hub` sends a generated `Idempotency-Key`
+header, so a retried call after a timeout returns the hub that was already
+created instead of making a second one. Pass your own `idempotency_key=` to
+control the key.
+
+Updating and deleting a hub use optimistic locking. Pass the `etag` from the
+hub resource you read; the SDK sends it as `If-Match`, and the API rejects a
+stale or missing value with HTTP 412 without changing anything:
+
+```python
+hub = api.get_hub(hub["id"])
+hub = api.update_hub(hub["id"], {"active": False}, etag=hub["etag"])
+api.delete_hub(hub["id"], etag=hub["etag"])
+```
+
+Deleting a hub also deletes its clients and ACLs. Runtime groups have no
+`If-Match` requirement, but the API refuses to delete the workspace default
+group or a group that still has hubs attached (HTTP 409).
+
+Runtime configuration is merged, not replaced:
+
+```python
+api.update_runtime_group_config(group["id"], {"lang": "en-us"})
+print(api.get_runtime_group_config(group["id"])["config"])
+```
+
+Reading what a hub is actually running needs the `hubs:inspect` scope instead:
+
+```python
+capabilities = api.get_hub_runtime_capabilities(hub["id"])
+print(capabilities["counts"]["total_intents"])
+```
+
+## Discover Skills
+
+The marketplace catalog is readable with the **`hubs:read`** scope and, unlike
+the provisioning routes above, is **not paid-gated** — a free-plan token can
+browse the whole catalog before upgrading, and only the install needs a paid
+plan.
+
+```python
+for skill in api.list_marketplace_skills()["data"]:
+    print(skill["skill_id"], skill["category"], skill["access_tier"])
+```
+
+Each entry carries what an install needs (`skill_id`, `source_type`,
+`source_ref`, `config_schema`, `secret_schema`) next to presentation fields
+(`title`, `summary`, `tags`, `verified`). Admin tokens can additionally pass
+`owner_id=` to read another tenant's catalog and `include_inactive=True` to see
+retired entries; both are ignored for non-admin callers. `force_refresh=True`
+re-syncs the global catalog from source first, which is slower.
+
+Two group-scoped reads need the **`hubs:inspect`** scope and are likewise not
+paid-gated. The first resolves the catalog against one runtime group, so each
+entry reports whether it is already desired, whether it was observed running,
+and whether the tenant plan allows installing it:
+
+```python
+view = api.list_runtime_group_marketplace(group["id"])
+for entry in view["data"]:
+    if entry["installable"] and not entry.get("active"):
+        print("available:", entry["skill_id"])
+```
+
+The second answers what the group is actually running right now, rather than
+what could be installed:
+
+```python
+inventory = api.list_runtime_group_inventory(group["id"], refresh=True)
+print(inventory["source"], len(inventory["data"]))
+```
+
+Both answer from a cached inventory snapshot by default; pass
+`refresh_inventory=True` or `refresh=True` to force a live read from the
+runtime operator. When nothing is reporting yet, `list_runtime_group_inventory`
+returns an empty `data` list with a pending `source` rather than failing —
+`get_hub_runtime_capabilities` is the one that answers HTTP 409 in that case.
+
 ## Workspace Analytics
 
 Authenticated accounts can read the same overview used by the dashboard:
@@ -424,6 +537,23 @@ handshake, and transport health.
 - `control.get_public_hub(hub_ref)`
 - `control.list_hubs(limit=..., owner_id=...)`
 - `control.get_hub(hub_id)`
+- `control.create_hub(payload, idempotency_key=None)`
+- `control.update_hub(hub_id, payload, etag=...)`
+- `control.delete_hub(hub_id, etag=...)`
+- `control.release_hub(hub_id, channel=..., mode=..., version=..., images=..., reason=...)`
+- `control.set_hub_rating(hub_id, rating)`
+- `control.clear_hub_rating(hub_id)`
+- `control.get_hub_runtime_capabilities(hub_id)`
+- `control.list_runtime_groups(owner_id=...)`
+- `control.get_runtime_group(runtime_group_id)`
+- `control.create_runtime_group(payload)`
+- `control.update_runtime_group(runtime_group_id, payload)`
+- `control.get_runtime_group_config(runtime_group_id)`
+- `control.update_runtime_group_config(runtime_group_id, config, personas=None)`
+- `control.release_runtime_group(runtime_group_id, channel=..., ...)`
+- `control.delete_runtime_group(runtime_group_id)`
+- `control.install_runtime_group_skill(runtime_group_id, skill_id, ...)`
+- `control.uninstall_runtime_group_skill(runtime_group_id, skill_id)`
 - `control.get_operation(operation_id)`
 - `control.get_analytics_overview(...)`
 - `control.list_memory_items(...)`

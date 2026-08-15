@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.25
+
+- Add hub provisioning to `ThalovantControlPlane`. The hub surface was read-only, so the `hubs:write` scope the dashboard sells ("Create and update your hubs") had no SDK method that could use it. New: `create_hub`, `update_hub`, `delete_hub`, `release_hub`, `set_hub_rating`, `clear_hub_rating`, and `get_hub_runtime_capabilities`.
+- Add runtime group and skill management: `list_runtime_groups`, `get_runtime_group`, `create_runtime_group`, `update_runtime_group`, `get_runtime_group_config`, `update_runtime_group_config`, `release_runtime_group`, `delete_runtime_group`, `install_runtime_group_skill`, and `uninstall_runtime_group_skill`.
+- Honor the API's optimistic locking on the hub write routes. `update_hub` and `delete_hub` take a required `etag` keyword and send it as `If-Match`; the API rejects a stale or missing value with HTTP 412 and changes nothing. Runtime group routes do not use `If-Match`. `create_hub` sends an `Idempotency-Key` header, generated unless you pass `idempotency_key`, so a retried create cannot make a second hub.
+- Document the gates these routes sit behind. Everything except the rating, config-read, list/get, and runtime-capabilities methods needs a paid plan and a `hubs:write` token; the ratings need `hubs:write` only; `get_hub_runtime_capabilities` needs `hubs:inspect`; the runtime group reads need `hubs:read`. Both gates surface as the usual `ThalovantAPIError` (HTTP 402 `API access requires a paid plan.`, HTTP 403 `Insufficient scopes`).
+- Add skill discovery, which closes the gap left by shipping `install_runtime_group_skill` with no way to learn what is installable. New: `list_marketplace_skills` (`GET /v1/marketplace/skills`), `list_runtime_group_marketplace` (`GET /v1/runtime-groups/{id}/marketplace`), and `list_runtime_group_inventory` (`GET /v1/runtime-groups/{id}/inventory`).
+- The discovery reads are deliberately not paid-gated, matching the API: the catalog needs only `hubs:read` and the two group-scoped reads only `hubs:inspect`, so a free-plan token can browse the marketplace and inspect a runtime group before upgrading. Only the install itself needs a paid plan.
+- `list_runtime_group_marketplace` resolves the catalog against one group (desired state, observed state, and the `installable` / `purchase_required` plan verdict per entry), while `list_runtime_group_inventory` reports only what the group is observed running. Neither answers HTTP 409 when nothing is reporting, unlike `get_hub_runtime_capabilities`; the inventory route returns an empty list with a pending `source`.
+- Add a hub-provisioning walkthrough to the README (runtime group, hub, discover, skill, release) plus a "Discover Skills" section, and document every new method in `docs/api-reference.md`.
+- No existing method signature changed.
+
 ## 0.4.24
 
 - Fix the stale data-plane user agent. `thalovant.client.DEFAULT_USERAGENT` was pinned at `ThalovantPythonSDK/0.4.19`, so the 0.4.20, 0.4.21, 0.4.22, and 0.4.23 releases all identified themselves as 0.4.19 to hubs. The control-plane user agent was correct but only because it was hand-maintained every release.
