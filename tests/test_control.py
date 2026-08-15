@@ -674,6 +674,50 @@ def test_control_plane_update_and_delete_hub_send_if_match():
     assert updated["etag"] == "etag-2"
 
 
+def test_control_plane_update_hub_forwards_the_immutable_fields_untouched():
+    """``name``/``namespace``/``domain`` are the API's to reject, not the SDK's.
+
+    The API drops them when they match the stored hub and answers HTTP 400 only
+    for a changed value. The SDK cannot tell those apart without another read,
+    so refusing them client-side would reject patches the API accepts.
+    """
+
+    session = ProvisioningSession()
+
+    provisioning_api(session).update_hub(
+        "hub-1",
+        {"name": "joke-garden", "namespace": "tenant-1", "domain": "", "active": False},
+        etag="etag-1",
+    )
+
+    assert recorded_call(session, "PATCH", "/v1/hubs/hub-1")["json"] == {
+        "name": "joke-garden",
+        "namespace": "tenant-1",
+        "domain": "",
+        "active": False,
+    }
+
+
+def test_control_plane_update_hub_surfaces_immutable_field_rejection():
+    session = ProvisioningSession(
+        error=(400, {"detail": "Name cannot be changed after hub creation"})
+    )
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 400: Name cannot be changed"):
+        provisioning_api(session).update_hub("hub-1", {"name": "renamed"}, etag="etag-1")
+
+
+def test_control_plane_surfaces_the_per_skill_marketplace_payment_gate():
+    """The per-skill 402 is distinct from the plan-level API gate."""
+
+    session = ProvisioningSession(
+        error=(402, {"detail": "This skill requires paid marketplace access for the tenant plan."})
+    )
+
+    with pytest.raises(ThalovantAPIError, match="HTTP 402: This skill requires paid marketplace"):
+        provisioning_api(session).install_runtime_group_skill("rg-1", "skill-weather")
+
+
 def test_control_plane_update_hub_surfaces_etag_mismatch():
     session = ProvisioningSession(error=(412, {"detail": "ETag mismatch"}))
     api = provisioning_api(session)

@@ -114,23 +114,47 @@ gate, HTTP 403 `Insufficient scopes` for the scope gate. All of them return the
 API's JSON body as a `dict`, except `delete_hub`, `delete_runtime_group`, and
 `uninstall_runtime_group_skill`, which return `None`.
 
+The scope is checked **before** the plan, so a token lacking `hubs:write` never
+reaches the 402. Because free-plan API tokens can only be minted with
+`hubs:read`, `clients:read`, and `clients:write`, a free-plan API token can
+never carry `hubs:write` and so never sees the 402 at all — every provisioning
+call fails with HTTP 403. The 402 is reachable from a dashboard session token
+(whose scopes are not plan-capped) or from an API token minted on a paid plan
+and kept after a downgrade, since existing tokens retain their scopes.
+
+`hubs:read` implies `hubs:inspect` and `hubs:preview`, so the inspection reads
+below work on a free-plan API token.
+
 Payload arguments accept the API's snake_case field names and their camelCase
 spellings, which are converted before the request is sent.
 
 - `create_hub(payload, idempotency_key=None)` — `POST /v1/hubs`, HTTP 201.
   `payload` requires `name` and `spec`; `slug`, `namespace`,
   `runtime_group_id`, `domain`, `active`, `visibility`, `capacity_profile`,
-  and `owner_id` are optional. An `Idempotency-Key` header is always sent
-  (generated when not supplied), so a retried create returns the original hub.
+  and `owner_id` are optional. `spec` is schema-validated and **requires a
+  non-empty `version` string** — omitting it fails with HTTP 422
+  `Schema validation failed`, it is not defaulted. An `Idempotency-Key` header
+  is always sent (generated when not supplied), so a retried create returns
+  the original hub.
 - `update_hub(hub_id, payload, etag=...)` — `PATCH /v1/hubs/{hub_id}`. The
   route enforces optimistic locking, so `etag` is required and sent as
   `If-Match`; a stale or missing value fails with HTTP 412 `ETag mismatch` and
   changes nothing. Read the hub again with `get_hub` and retry with the fresh
-  `etag`. `name`, `slug`, `domain`, `active`, `visibility`,
-  `capacity_profile`, `runtime_group_id`, and `spec` are patchable;
-  `is_locked` is admin-only, and the API rejects changes to immutable fields.
+  `etag`. The prior read is mandatory and must be a **body** read: the
+  validator exists only as the `etag` field of the hub resource, and the API
+  emits **no `ETag` response header**.
+  `slug`, `active`, `visibility`, `capacity_profile`, `runtime_group_id`, and
+  `spec` are patchable; `is_locked` is admin-only. `name`, `namespace`, and
+  `domain` are **immutable after creation**: a *different* value fails with
+  HTTP 400 `<Field> cannot be changed after hub creation`, while a value equal
+  to the stored one (or `None`) is accepted and dropped from the patch. Send
+  only the fields you mean to change instead of round-tripping a whole hub
+  resource. The SDK forwards these fields rather than refusing them locally —
+  it cannot know the stored values without another read, and refusing them
+  would reject patches the API accepts.
 - `delete_hub(hub_id, etag=...)` — `DELETE /v1/hubs/{hub_id}`, HTTP 204. Also
-  requires `etag` as `If-Match`. Deletes the hub's clients and ACLs with it.
+  requires `etag` as `If-Match`, from the same body field. Deletes the hub's
+  clients and ACLs with it.
 - `release_hub(hub_id, ...)` — `POST /v1/hubs/{hub_id}/release`. Applies a
   release policy and returns the updated hub. Omitted options fall back to the
   workspace release policy; passing `images` implies `custom` mode unless
@@ -141,14 +165,25 @@ spellings, which are converted before the request is sent.
   be rated, and owners cannot rate their own hub.
 - `get_hub_runtime_capabilities(hub_id)` —
   `GET /v1/hubs/{hub_id}/runtime-capabilities`. Needs the `hubs:inspect` scope
-  instead of `hubs:write`, and no paid plan. Returns the live skill and intent
-  inventory with a `counts` summary; the API answers HTTP 409 when no
-  connected client can report inventory.
+  instead of `hubs:write`, and no paid plan. Returns skills, intents, and a
+  `counts` summary. **Branch on the envelope's `source`**: `ovos-runtime` is a
+  live reading from a connected client (the only one the API caches), while
+  `ovos-runtime-unavailable` and `ovos-runtime-timeout` mean no client
+  answered and the API fell back to the hub's runtime group snapshot — its
+  desired skills merged with the last observed inventory — and still returned
+  HTTP 200 with **stale** data. HTTP 409 comes back only when that fallback
+  has nothing to serve either: the hub is attached to no runtime group, or the
+  group has no desired and no observed skills. The route is rate limited per
+  caller and hub; HTTP 429 carries a `Retry-After` header in seconds.
 
 #### Runtime groups and skills
 
 - `list_runtime_groups(owner_id=None)` and `get_runtime_group(runtime_group_id)`
   — `GET /v1/runtime-groups[/{id}]`. Read-only, needing only `hubs:read`.
+  `owner_id` is **enforced**: a non-admin passing another tenant's id gets HTTP
+  403 `Ownership required` (members of that tenant are allowed). This differs
+  from `list_marketplace_skills`, whose `owner_id` is silently overridden for
+  non-admins. An admin omitting `owner_id` lists every tenant's groups.
 - `create_runtime_group(payload)` — `POST /v1/runtime-groups`, HTTP 201.
   `payload` requires `name`; `description`, `environment`, `owner_id`, and
   `clone_from_default` are optional. `clone_from_default` seeds the new group
@@ -168,12 +203,23 @@ spellings, which are converted before the request is sent.
   HTTP 204. The API answers HTTP 409 for the default group and for a group
   that still has hubs attached.
 - `install_runtime_group_skill(runtime_group_id, skill_id, ...)` —
-  `POST /v1/runtime-groups/{id}/skills`. The default `source_type="catalog"`
-  installs a marketplace skill and fails with HTTP 404 when the catalog has no
-  such skill; `source_type="git"` requires a `source_ref` repository URL.
-  Installing a skill that is already present updates that entry. Paid
-  marketplace skills additionally require marketplace access on the tenant
-  plan (HTTP 402).
+  `POST /v1/runtime-groups/{id}/skills`, HTTP **200** (not 201): the route
+  upserts, so installing a skill that is already present updates that entry in
+  place. `source_type` is a **free-form string of 1–32 characters, not an
+  enum**; only two values are interpreted specially. The default `"catalog"`
+  resolves the skill against the marketplace and fails with HTTP 404
+  `Marketplace skill not found.`; `"git"` requires `source_ref` to be a valid
+  repository URL (HTTP 422 otherwise). Any other value is lower-cased,
+  stripped, and stored as given, with `source_ref` defaulting to `skill_id`.
+  A deactivated catalog entry answers HTTP 409.
+
+  Two distinct HTTP 402s exist on this route: the plan-level API gate
+  (`API access requires a paid plan.`) and a per-skill marketplace check
+  (`This skill requires paid marketplace access for the tenant plan.`) that
+  fires when the catalog entry's `access_tier` is `paid` and the tenant plan
+  lacks marketplace access. A paid plan clears the first and can still fail the
+  second, so read `installable` / `purchase_required` from
+  `list_runtime_group_marketplace` before installing.
 - `uninstall_runtime_group_skill(runtime_group_id, skill_id)` —
   `DELETE /v1/runtime-groups/{id}/skills/{skill_id}`, HTTP 204.
 
@@ -192,10 +238,11 @@ body as a `dict`, and omit query parameters that are `None`, blank, or `False`.
   `secret_schema`) and the presentation and access fields (`title`, `summary`,
   `category`, `tags`, `verified`, `support_level`, `access_tier`,
   `billing_sku`, `rating_average`, `is_active`). `owner_id` and
-  `include_inactive` apply to admin tokens only — the API scopes a non-admin
-  caller to their own tenant and to active entries regardless of what is sent.
-  `force_refresh=True` re-syncs the global catalog from source before
-  answering.
+  `include_inactive` apply to admin tokens only — the API **silently** scopes a
+  non-admin caller to their own tenant and to active entries regardless of what
+  is sent, rather than raising (contrast `list_runtime_groups`, which answers
+  HTTP 403). `force_refresh=True` re-syncs the global catalog from source
+  before answering.
 - `list_runtime_group_marketplace(runtime_group_id, refresh_inventory=False)` —
   `GET /v1/runtime-groups/{id}/marketplace`, scope `hubs:inspect`, **no paid
   plan**. Resolves the catalog against one runtime group: every entry adds the
@@ -208,6 +255,16 @@ body as a `dict`, and omit query parameters that are `None`, blank, or `False`.
   `observed_at`, `source`, `operator_phase`, and `operator_message`.
   `refresh_inventory=True` forces a live operator read instead of the cached
   snapshot.
+
+  `data` is catalog-driven — the catalog unioned with the group's desired and
+  observed skills — so it stays populated even when nothing is reporting.
+  `source` describes only the *observation*, so an empty-sounding `source` does
+  not imply an empty `data`. On a default (non-refreshing) read `source` is
+  `runtime-group-cache`, `runtime-group-cache-empty` (unique to this route), or
+  `ovos-runtime-operator` when the operator's published status differed from
+  the stored snapshot and the API re-synced while serving.
+  `ovos-runtime-operator-pending` appears here **only** with
+  `refresh_inventory=True`.
 - `list_runtime_group_inventory(runtime_group_id, refresh=False)` —
   `GET /v1/runtime-groups/{id}/inventory`, scope `hubs:inspect`, **no paid
   plan**. Reports what the group is observed running, not what could be
@@ -215,14 +272,15 @@ body as a `dict`, and omit query parameters that are `None`, blank, or `False`.
   `adapt_intents`, `padatious_intents`, `total_intents`, and `observed_at`.
   The envelope's `source` names the provenance —
   `ovos-runtime-operator`, `runtime-group-cache`, or
-  `ovos-runtime-operator-pending`. `refresh=True` forces a live operator read;
-  the API also refreshes on its own when it holds no cached snapshot. Unlike
-  `get_hub_runtime_capabilities`, this route does **not** answer HTTP 409 when
-  nothing is reporting — it returns an empty `data` list with a pending
-  `source`.
+  `ovos-runtime-operator-pending`, never `runtime-group-cache-empty`.
+  `refresh=True` forces a live operator read; the API also refreshes on its own
+  when it holds no cached snapshot. When nothing is reporting this route
+  returns an empty `data` list with `source="ovos-runtime-operator-pending"`
+  rather than failing.
 
 Both group-scoped reads answer HTTP 404 for an unknown runtime group and HTTP
-403 when the caller neither owns the group nor is an admin.
+403 `Ownership required` when the caller neither owns the group nor is an
+admin.
 
 `create_client_identity` generates client secrets locally, sends them once to
 the API, and returns `BootstrapIdentityResult.identity`. API responses may

@@ -114,7 +114,31 @@ class BootstrapIdentityResult:
 
 
 class ThalovantControlPlane:
-    """Small authenticated client for the Thalovant API."""
+    """Small authenticated client for the Thalovant API.
+
+    **Provisioning gates.** The hub, runtime group, and skill provisioning
+    routes are guarded twice: by a required scope and by a paid-plan check. The
+    scope is checked **first**, so a token missing ``hubs:write`` gets HTTP 403
+    ``Insufficient scopes`` and never reaches the plan gate.
+
+    That ordering decides what a free-tier caller actually sees. Free-plan API
+    tokens can only be minted with ``hubs:read``, ``clients:read``, and
+    ``clients:write`` -- requesting more is refused at token creation -- so a
+    free-plan API token can never carry ``hubs:write`` and therefore **never
+    sees the HTTP 402 plan gate at all**: every provisioning call fails with
+    HTTP 403 ``Insufficient scopes``. Do not tell a free-tier user to read the
+    402 message; it will not arrive.
+
+    HTTP 402 ``API access requires a paid plan.`` is still reachable two ways:
+    from a dashboard *session* token, whose scopes are not capped by plan, and
+    from an API token minted while on a paid plan and kept after a downgrade,
+    since existing tokens retain the scopes they were created with.
+
+    ``hubs:read`` implies ``hubs:inspect`` and ``hubs:preview``, so the
+    inspection reads (:meth:`get_hub_runtime_capabilities`,
+    :meth:`list_runtime_group_marketplace`,
+    :meth:`list_runtime_group_inventory`) do work on a free-plan API token.
+    """
 
     def __init__(
         self,
@@ -442,11 +466,17 @@ class ThalovantControlPlane:
         ``active``, ``visibility``, ``capacity_profile``, and ``owner_id`` are
         optional. camelCase keys are accepted and sent as snake_case.
 
+        ``spec`` is validated against the API's hub schema, which **requires a
+        non-empty ``version`` string**; a spec without one fails with HTTP 422
+        ``Schema validation failed`` rather than being defaulted.
+
         The request is idempotent: a generated ``Idempotency-Key`` is sent
         unless you pass your own, so a retried create returns the first hub
         instead of making a second one.
 
-        Requires a paid plan and a token with the ``hubs:write`` scope.
+        Requires a paid plan and a token with the ``hubs:write`` scope; see
+        :class:`ThalovantControlPlane` for why the scope gate is the one a
+        free-plan API token actually hits.
         """
 
         headers = {"Idempotency-Key": idempotency_key or str(uuid4())}
@@ -466,7 +496,27 @@ class ThalovantControlPlane:
         or missing value fails the request with HTTP 412 and no change is made;
         re-read the hub with :meth:`get_hub` and retry with the new ``etag``.
 
-        Requires a paid plan and a token with the ``hubs:write`` scope.
+        A prior read is therefore mandatory, and it must be a *body* read: the
+        API carries the validator only in the ``etag`` field of the hub
+        resource and emits **no ``ETag`` response header**, so
+        ``response.headers["ETag"]`` is not an alternative source. Take it from
+        ``get_hub(hub_id)["etag"]`` (``list_hubs`` entries carry it too).
+
+        ``name``, ``namespace``, and ``domain`` are immutable after creation.
+        The API drops them from the patch when the value you send matches the
+        stored one (or is ``None``) and rejects a *different* value with HTTP
+        400 ``<Field> cannot be changed after hub creation``. This SDK sends
+        them through rather than rejecting them locally, because it cannot know
+        the stored values without a second read and refusing them outright
+        would reject patches the API accepts. Send only the fields you mean to
+        change and the distinction never comes up.
+
+        ``slug``, ``active``, ``visibility``, ``capacity_profile``,
+        ``runtime_group_id``, and ``spec`` are patchable; ``is_locked`` is
+        admin-only.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope; see
+        :class:`ThalovantControlPlane` for the gate ordering.
         """
 
         return self._request(
@@ -480,7 +530,9 @@ class ThalovantControlPlane:
         """Delete a hub and its dependent clients and ACLs.
 
         Like :meth:`update_hub` this route requires the hub's current ``etag``,
-        sent as ``If-Match``; a stale value fails with HTTP 412.
+        sent as ``If-Match``; a stale value fails with HTTP 412. The value
+        comes only from the hub resource's ``etag`` body field -- the API sends
+        no ``ETag`` response header -- so a prior :meth:`get_hub` is mandatory.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
@@ -536,16 +588,44 @@ class ThalovantControlPlane:
         return self._request("DELETE", f"/v1/hubs/{hub_id}/rating")
 
     def get_hub_runtime_capabilities(self, hub_id: str) -> dict[str, Any]:
-        """Read the live skill and intent inventory a hub runtime exposes.
+        """Read the skill and intent inventory a hub runtime exposes.
 
-        Requires a token with the ``hubs:inspect`` scope. The API answers HTTP
-        409 when the hub has no connected client that can report inventory.
+        The response is not always live, so **branch on the envelope's
+        ``source``** rather than assuming the counts are current:
+
+        ``ovos-runtime``
+            A connected client answered. This is the only live, canonical
+            reading, and the only one the API caches.
+        ``ovos-runtime-unavailable`` / ``ovos-runtime-timeout``
+            No client could answer, so the API fell back to the hub's runtime
+            group snapshot (its desired skills merged with the last observed
+            inventory) and still returned HTTP 200. Treat the skills and
+            intents as **stale**: they describe what the group is configured
+            to run, not what is running now.
+
+        HTTP 409 is answered only when that fallback has nothing to serve
+        either -- the hub is attached to no runtime group, or the group has no
+        desired and no observed skills at all. A hub with a configured group is
+        therefore far likelier to return a stale 200 than a 409.
+
+        The route is also rate limited per caller and hub: HTTP 429 carries a
+        ``Retry-After`` header with the number of seconds to wait.
+
+        Requires a token with the ``hubs:inspect`` scope; no paid plan is
+        needed.
         """
 
         return self._request("GET", f"/v1/hubs/{hub_id}/runtime-capabilities")
 
     def list_runtime_groups(self, *, owner_id: str | None = None) -> dict[str, Any]:
         """List runtime groups visible to the authenticated user.
+
+        ``owner_id`` is **enforced, not silently scoped**: a non-admin caller
+        passing another tenant's id gets HTTP 403 ``Ownership required``
+        (tenant members of that owner are allowed). This is the opposite of
+        :meth:`list_marketplace_skills`, where a non-admin's ``owner_id`` is
+        quietly overridden with their own. Admin tokens may pass any
+        ``owner_id``; omitting it as an admin lists every tenant's groups.
 
         Requires a token with the ``hubs:read`` scope.
         """
@@ -685,9 +765,12 @@ class ThalovantControlPlane:
         entries are both included.
 
         ``owner_id`` and ``include_inactive`` are honoured for admin tokens
-        only; the API silently scopes a non-admin caller to their own tenant
-        and to active entries. ``force_refresh`` re-syncs the global catalog
-        from its source before answering, which is slower.
+        only; the API **silently** scopes a non-admin caller to their own
+        tenant and to active entries -- no error is raised, so a non-admin
+        passing another tenant's ``owner_id`` gets their own catalog back.
+        Contrast :meth:`list_runtime_groups`, which answers HTTP 403 for the
+        same mistake. ``force_refresh`` re-syncs the global catalog from its
+        source before answering, which is slower.
 
         Requires a token with the ``hubs:read`` scope. Unlike the provisioning
         routes this catalog is **not** paid-gated, so free-tier callers can
@@ -721,12 +804,34 @@ class ThalovantControlPlane:
         ``runtime_group_id``, ``observed_at``, ``source``, ``operator_phase``
         and ``operator_message``.
 
-        ``refresh_inventory`` forces a live read from the runtime operator
-        instead of answering from the cached inventory snapshot.
+        ``data`` is driven by the **catalog**, not by the runtime observation:
+        it is the catalog unioned with the group's desired and observed skills,
+        so it stays populated even when nothing is reporting. A ``source``
+        saying the snapshot is empty therefore tells you nothing about the
+        length of ``data`` -- do not use one as a proxy for the other. (``data``
+        is empty only in the degenerate case of an empty catalog with no
+        desired and no observed skills.)
+
+        ``source`` on this route reports where the *observation* came from, and
+        the default read draws from a different set of values than
+        :meth:`list_runtime_group_inventory`:
+
+        ``runtime-group-cache``
+            Answered from a stored inventory snapshot.
+        ``runtime-group-cache-empty``
+            No snapshot is stored yet. This value is unique to this route.
+        ``ovos-runtime-operator``
+            The operator's published status differed from the stored snapshot,
+            so the API re-synced it while serving the request.
+
+        ``ovos-runtime-operator-pending`` appears here **only** when
+        ``refresh_inventory=True``, which forces a live operator read (and can
+        then return any of the inventory route's values).
 
         Requires a token with the ``hubs:inspect`` scope; no paid plan is
         needed to browse. The API answers HTTP 404 for an unknown group and
-        HTTP 403 when the caller does not own it.
+        HTTP 403 ``Ownership required`` when the caller neither owns it nor is
+        an admin.
         """
 
         params: dict[str, Any] = {}
@@ -753,16 +858,17 @@ class ThalovantControlPlane:
         ``observed_at``. The envelope reports ``source`` -- the observation's
         provenance, one of ``ovos-runtime-operator``, ``runtime-group-cache``
         or ``ovos-runtime-operator-pending`` -- plus ``operator_phase`` and
-        ``operator_message``.
+        ``operator_message``. ``runtime-group-cache-empty`` never appears here;
+        it belongs to :meth:`list_runtime_group_marketplace`.
 
         ``refresh`` forces a live operator read; the API also refreshes on its
-        own when it holds no cached snapshot. Unlike
-        :meth:`get_hub_runtime_capabilities` this route does not answer HTTP
-        409 when nothing is reporting -- it returns an empty ``data`` list
-        with a pending ``source`` instead.
+        own when it holds no cached snapshot. When nothing is reporting this
+        route returns an empty ``data`` list with
+        ``source="ovos-runtime-operator-pending"`` rather than failing.
 
         Requires a token with the ``hubs:inspect`` scope; no paid plan is
-        needed.
+        needed. HTTP 404 for an unknown group, HTTP 403 ``Ownership required``
+        when the caller neither owns it nor is an admin.
         """
 
         params: dict[str, Any] = {}
@@ -787,13 +893,36 @@ class ThalovantControlPlane:
     ) -> dict[str, Any]:
         """Install (or re-install) a skill in a runtime group.
 
-        The default ``source_type`` of ``catalog`` installs a marketplace skill
-        and requires the skill to exist in the catalog. ``git`` installs need a
-        ``source_ref`` repository URL. Installing a skill that is already
-        present updates the existing entry.
+        Answers HTTP **200**, not 201: the route upserts, so installing a skill
+        that is already present updates the existing entry in place, and the
+        returned desired-skill resource is the same shape either way.
 
-        Requires a paid plan and a token with the ``hubs:write`` scope. Paid
-        marketplace skills also need marketplace access on the tenant plan.
+        ``source_type`` is a free-form string of 1-32 characters, not an
+        enumeration. Only two values are interpreted specially -- ``catalog``
+        (the default) resolves the skill against the marketplace and answers
+        HTTP 404 ``Marketplace skill not found.`` when it is absent, and
+        ``git`` requires ``source_ref`` to be a valid repository URL (HTTP 422
+        otherwise). Any other value is accepted and stored as given, with
+        ``source_ref`` defaulting to ``skill_id``. The API lower-cases and
+        strips whatever you send.
+
+        Two *different* HTTP 402s can come back, and they mean different
+        things:
+
+        * ``API access requires a paid plan.`` -- the plan-level API gate that
+          guards every provisioning route.
+        * ``This skill requires paid marketplace access for the tenant plan.``
+          -- a per-skill check on a catalog entry whose ``access_tier`` is
+          ``paid`` when the tenant plan lacks marketplace access. The plan can
+          be paid and this can still fail, so read
+          ``installable``/``purchase_required`` from
+          :meth:`list_runtime_group_marketplace` before installing.
+
+        A deactivated catalog entry answers HTTP 409 instead.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope; see
+        :class:`ThalovantControlPlane` for why a free-plan API token sees HTTP
+        403 here and never either 402.
         """
 
         body: dict[str, Any] = {
