@@ -264,9 +264,11 @@ def test_identity_repr_hides_secret_material():
         ):
             assert secret not in rendered
 
-    # Non-secret fields stay visible for debugging.
+    # Non-secret fields stay visible for debugging. Assert against the object's
+    # own accessor rather than a URL string literal (a literal URL on the left
+    # of ``in`` reads as broken host validation to static analysis).
     assert "site_id='site'" in repr(identity)
-    assert "mqtts://mqtt.example.com:8883" in repr(identity.mqtt)
+    assert identity.mqtt.endpoint in repr(identity.mqtt)
 
     # The endpoint map only ever absorbs the broker URL from the credentials
     # block, so the default as_dict carries no secret through it either.

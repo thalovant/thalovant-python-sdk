@@ -663,7 +663,11 @@ def test_transport_error_strings_redact_url_query():
     assert "QWdlbnQ6c2VjcmV0LWtleQ" not in surfaced
     assert "?<redacted>" in health.last_error
     assert "?<redacted>" in health.connection.last_error
-    assert "hub.local" in health.last_error  # the useful part survives
+    # Only the query is dropped: the diagnostic prefix (host, error type) up to
+    # the "?" survives intact. Compare against the computed prefix rather than a
+    # host string literal, which static analysis reads as broken host checking.
+    surviving_prefix = str(leaky).split("?", 1)[0]
+    assert health.last_error.startswith(surviving_prefix)
     assert transport.last_error() is leaky  # the raw exception object is untouched
 
     wss = HiveMindWSSTransport(identity(), useragent="agent")
