@@ -19,6 +19,7 @@ from .errors import (
 )
 from .events import (
     EVENT_INTENT_FAILURE,
+    EVENT_INTENT_UNMATCHED,
     EVENT_OVOS_UTTERANCE_SPEAK,
     EVENT_POLICY_DENIED,
     EVENT_QUERY_TIMEOUT,
@@ -774,6 +775,7 @@ class ThalovantClient:
             (EVENT_OVOS_UTTERANCE_SPEAK, handle_speak),
             (EVENT_UTTERANCE_HANDLED, handle_handled),
             (EVENT_INTENT_FAILURE, handle_failure),
+            (EVENT_INTENT_UNMATCHED, handle_failure),
             (EVENT_POLICY_DENIED, handle_failure),
             (EVENT_QUERY_TIMEOUT, handle_failure),
         )

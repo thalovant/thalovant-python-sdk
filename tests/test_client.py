@@ -19,6 +19,7 @@ from thalovant import (
     ThalovantConnectionError,
     ThalovantHealth,
     ThalovantIdentity,
+    ThalovantRuntimeError,
     ThalovantTimeoutError,
     ThalovantUnsupportedProtocolError,
     build_client_context,
@@ -282,6 +283,39 @@ def test_ask_includes_identity_metadata():
         "plan": "paid",
         "channel": "test",
     }
+
+
+class IntentMissTransport(FakeTransport):
+    """Emits a terminal intent-failure bus event on the ask, and nothing else.
+
+    Drives the real `_ask_once` handler-registration path: if the SDK does not
+    register a handler for the emitted event name, the ask blocks until timeout
+    instead of failing fast.
+    """
+
+    def __init__(self, *, fail_event: str) -> None:
+        super().__init__(answer=None, handled=False)
+        self._fail_event = fail_event
+
+    def emit_event(self, event_type, data, context):
+        self.emitted.append((event_type, data, context))
+        self.push(self._fail_event, {}, context)
+
+
+def test_ask_fails_fast_on_ovos_intent_unmatched():
+    transport = IntentMissTransport(fail_event="ovos.intent.unmatched")
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
+
+    with pytest.raises(ThalovantRuntimeError):
+        client.ask("flibbertigibbet wumpus", timeout=0.5, context={"source": "test"})
+
+
+def test_ask_fails_fast_on_legacy_complete_intent_failure():
+    transport = IntentMissTransport(fail_event="complete_intent_failure")
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
+
+    with pytest.raises(ThalovantRuntimeError):
+        client.ask("flibbertigibbet wumpus", timeout=0.5, context={"source": "test"})
 
 
 def test_query_uses_direct_hivemind_query_frame():
