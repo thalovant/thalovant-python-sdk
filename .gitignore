@@ -12,3 +12,6 @@ site/
 .venv/
 .env
 _identity.json
+
+# uv is not the canonical lockfile for this project (pyproject.toml is authoritative)
+uv.lock
