@@ -13,10 +13,18 @@ EVENT_RECOGNIZER_LOOP_UTTERANCE = "recognizer_loop:utterance"
 EVENT_SPEAK = "speak"
 EVENT_OVOS_UTTERANCE_SPEAK = "ovos.utterance.speak"
 EVENT_UTTERANCE_HANDLED = "ovos.utterance.handled"
+# Legacy Mycroft name for an utterance that matched no intent.
 EVENT_INTENT_FAILURE = "complete_intent_failure"
+# Current OVOS name for the same terminal "no intent matched" event.
+EVENT_INTENT_UNMATCHED = "ovos.intent.unmatched"
 EVENT_POLICY_DENIED = "hive.policy.denied"
 EVENT_QUERY_TIMEOUT = "hive.query.timeout"
-FAILURE_EVENTS = (EVENT_INTENT_FAILURE, EVENT_POLICY_DENIED, EVENT_QUERY_TIMEOUT)
+FAILURE_EVENTS = (
+    EVENT_INTENT_FAILURE,
+    EVENT_INTENT_UNMATCHED,
+    EVENT_POLICY_DENIED,
+    EVENT_QUERY_TIMEOUT,
+)
 
 EventHandler = Callable[["ThalovantEvent"], Any]
 EventPredicate = Callable[["ThalovantEvent"], bool]
