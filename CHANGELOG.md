@@ -17,6 +17,8 @@ Security hardening, plus a HiveMind MQTT data-plane topic migration. The securit
 
 - Stop a closed WSS bus client from reconnecting forever. A failed `connect()` — or a `close()`/`disconnect()` while the underlying `ovos_bus_client` was in its reconnect backoff — left its `run_forever` thread reconnecting indefinitely, and once the hub was reachable each orphan re-completed HELLO/HANDSHAKE on the same access key and stayed connected for the process life. `_shutdown_wss_client` now sets a `thalovant_closed` flag that suppresses the reconnect (`on_error` no longer sleeps-and-reconnects, and `create_client` raises `WebSocketException` to end the base retry loop), so a thread already asleep in the backoff also stops (#26).
 
+- Wake a WSS bus client's `run_forever` thread when the transport closes it after a hung handshake. When a hub accepts the socket and never completes the WebSocket handshake, the thread blocks in the handshake `recv()`; `close()` closes the file descriptor but does not wake a thread already blocked in `recv()`, so each such failed `connect()` parked one thread and one socket for the process life. `_shutdown_wss_client` now `shutdown(SHUT_RDWR)`s the raw socket before `close()`, which wakes the blocked read (#28, follow-up to #26).
+
 ## 0.4.26
 
 - Correct the provisioning contract documentation. 0.4.25 was the reference implementation for six ports, and each port re-verified it against the API; the corrections below were confirmed against the API source before being written here. No runtime behavior changes, and no method signature changes.
