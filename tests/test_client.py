@@ -318,6 +318,48 @@ def test_ask_fails_fast_on_legacy_complete_intent_failure():
         client.ask("flibbertigibbet wumpus", timeout=0.5, context={"source": "test"})
 
 
+def test_shutdown_wss_client_shuts_down_the_raw_socket_before_close():
+    """#28: a hub that accepts the socket and never completes the handshake parks
+    the run_forever thread in recv(). Closing the fd does not wake it -- only
+    shutdown() does -- so _shutdown_wss_client must shutdown(SHUT_RDWR) the raw
+    socket, before close()."""
+    import socket as socket_mod
+    import threading as threading_mod
+
+    calls: list[tuple] = []
+
+    class RawSock:
+        def shutdown(self, how: int) -> None:
+            calls.append(("shutdown", how))
+
+    class WsSock:
+        sock = RawSock()
+
+    class WebSocketApp:
+        sock = WsSock()
+
+    class FakeClient:
+        client = WebSocketApp()
+        thalovant_closed = False
+
+        def __init__(self) -> None:
+            self.handshake_event = threading_mod.Event()
+            self.connected_event = threading_mod.Event()
+
+        def close(self) -> None:
+            calls.append(("close",))
+
+    transport = HiveMindWSSTransport(identity_with_wss(), useragent="ua")
+    client = FakeClient()
+    transport._shutdown_wss_client(client)
+
+    assert ("shutdown", socket_mod.SHUT_RDWR) in calls, "must shutdown the raw socket"
+    assert calls.index(("shutdown", socket_mod.SHUT_RDWR)) < calls.index(("close",)), (
+        "shutdown() must precede close() to wake the blocked recv()"
+    )
+    assert client.thalovant_closed is True
+
+
 def test_wss_closed_flag_stops_the_reconnect_loop():
     """#26: a closed bus client must not sleep-and-reconnect. The base class ends
     its retry loop when create_client raises WebSocketException, and on_error must

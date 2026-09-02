@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import re
+import socket
 import threading
 import time
 import uuid
@@ -764,6 +765,16 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
             client.handshake_event.clear()
         except Exception:
             pass
+        # close() closes the fd and sets keep_running=False, but a run_forever
+        # thread already blocked in the handshake recv() (hub accepted the socket
+        # and never replied) is not woken by closing the fd -- only shutdown() does
+        # that. Without this, each such failed connect() parks a thread forever (#28).
+        raw = getattr(getattr(getattr(client, "client", None), "sock", None), "sock", None)
+        if raw is not None:
+            try:
+                raw.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
         try:
             client.close()
         except Exception:
