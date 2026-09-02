@@ -318,6 +318,59 @@ def test_ask_fails_fast_on_legacy_complete_intent_failure():
         client.ask("flibbertigibbet wumpus", timeout=0.5, context={"source": "test"})
 
 
+def test_wss_closed_flag_stops_the_reconnect_loop():
+    """#26: a closed bus client must not sleep-and-reconnect. The base class ends
+    its retry loop when create_client raises WebSocketException, and on_error must
+    short-circuit instead of delegating to the base reconnect path."""
+    import threading
+
+    from websocket import WebSocketException
+
+    reconnect_calls: list[int] = []
+
+    class FakeBase:
+        def __init__(self) -> None:
+            self.key = "k"
+            self.useragent = "ua"
+            self.on_open = lambda *a: None
+            self.on_close = lambda *a: None
+            self.on_message = lambda *a: None
+            self.connected_event = threading.Event()
+            self.handshake_event = threading.Event()
+
+        def on_error(self, *args: object) -> None:
+            reconnect_calls.append(1)  # stands in for the base sleep-and-reconnect
+
+    made: list[str] = []
+
+    def fake_web_socket_app(url: str, **_kw: object) -> object:
+        made.append(url)
+        return object()
+
+    transport = HiveMindWSSTransport(identity_with_wss(), useragent="ua")
+    observed_cls = transport._build_wss_client_class(FakeBase, fake_web_socket_app)
+    client = observed_cls()
+
+    # Open: create_client builds a socket app; on_error delegates to base reconnect.
+    client.create_client()
+    assert len(made) == 1
+    client.on_error("boom")
+    assert reconnect_calls == [1]
+
+    # Closed: create_client raises to end the base retry loop; on_error no longer
+    # reconnects and clears the connection state.
+    client.connected_event.set()
+    client.handshake_event.set()
+    client.thalovant_closed = True
+    with pytest.raises(WebSocketException):
+        client.create_client()
+    client.on_error("boom")
+    assert reconnect_calls == [1], "a closed client must not reconnect"
+    assert not client.connected_event.is_set()
+    assert not client.handshake_event.is_set()
+    assert len(made) == 1, "no new socket app after close"
+
+
 def test_query_uses_direct_hivemind_query_frame():
     transport = QueryTransport(answer=None)
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
