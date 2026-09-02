@@ -418,8 +418,26 @@ class HiveMindHTTPTransport:
 
         class _ObservedHiveMessageBusClient(base_class):  # type: ignore[misc, valid-type]
             thalovant_last_error: BaseException | None = None
+            thalovant_closed: bool = False
+
+            def on_error(inner_self: Any, *args: Any) -> None:
+                # The transport closed us on purpose: do not sleep-and-reconnect.
+                if inner_self.thalovant_closed:
+                    try:
+                        inner_self.connected_event.clear()
+                        inner_self.handshake_event.clear()
+                    except Exception:
+                        pass
+                    return
+                super().on_error(*args)
 
             def create_client(inner_self: Any) -> Any:
+                if inner_self.thalovant_closed:
+                    # Reached from the base on_error's retry after its sleep; the
+                    # WebSocketException is swallowed there and the loop ends.
+                    from websocket import WebSocketException
+
+                    raise WebSocketException("transport closed")
                 return web_socket_app(
                     transport._authorized_wss_url(
                         key=inner_self.key,
@@ -738,6 +756,10 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
         return client
 
     def _shutdown_wss_client(self, client: Any) -> None:
+        try:
+            client.thalovant_closed = True
+        except Exception:
+            pass
         try:
             client.handshake_event.clear()
         except Exception:
