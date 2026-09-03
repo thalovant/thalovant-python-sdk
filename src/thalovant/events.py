@@ -195,43 +195,31 @@ def _context_with_correlation(
     return context
 
 
-def _session_ids_match(expected: str, actual: str) -> bool:
-    """True when a reply's session id is the one we asked for.
-
-    A hub rewrites a client-declared session id before the orchestrator sees
-    it: hivemind-core derives a Layer-1 identity as ``f"{conn_nonce}:{declared}"``
-    so two clients cannot collide on the same declared name (HIVEMIND-BRIDGE-1
-    §4), and only admin connections are exempt. Replies can therefore carry
-    either form, and comparing for equality rejected every one of them --
-    ``ask()`` timed out while the hub had already answered and emitted
-    ``ovos.utterance.handled``.
-
-    Matching the suffix after a single ``:`` mirrors what the hub does on the
-    way out, and is deliberately not a bare "endswith": a declared id of
-    ``b`` must not match a reply for ``a:xb``.
-    """
-    if actual == expected:
-        return True
-    _, separator, declared = actual.partition(":")
-    return bool(separator) and declared == expected
-
-
 def _event_matches_context(
     event: ThalovantEvent,
     expected_context: dict[str, Any] | None,
 ) -> bool:
-    expected_session_id = _session_id_from_context(expected_context)
-    actual_session_id = event.session_id
-    if (
-        expected_session_id
-        and actual_session_id
-        and not _session_ids_match(expected_session_id, actual_session_id)
-    ):
-        return False
-
+    # The request id decides, when both sides carry one. A hub does not echo a
+    # client-declared session id: it substitutes its own. Observed against a
+    # live hub on 2026-09-03 -- sent "observe-me", every reply came back as
+    # "71048b7f-e7b0-4360-8fb5-a03816f78617" -- so comparing session ids
+    # rejected replies the request id had already identified as ours, and
+    # ask() timed out while the hub had answered and emitted
+    # ovos.utterance.handled. Verified across a matched skill, an unmatched
+    # fallback and a French utterance: the request id is present and equal on
+    # every speak and every handled event in all three.
     expected_request_id = _request_id_from_context(expected_context)
     actual_request_id = event.request_id
-    if expected_request_id and actual_request_id and actual_request_id != expected_request_id:
+    if expected_request_id and actual_request_id:
+        return actual_request_id == expected_request_id
+
+    # No request id on one side or the other: fall back to the session, which
+    # is all a caller had before request ids existed. Deliberately unchanged --
+    # a reply that carries no request id is not evidence of anything, and
+    # rejecting it here would break hubs and fakes that never send one.
+    expected_session_id = _session_id_from_context(expected_context)
+    actual_session_id = event.session_id
+    if expected_session_id and actual_session_id and actual_session_id != expected_session_id:
         return False
 
     return True

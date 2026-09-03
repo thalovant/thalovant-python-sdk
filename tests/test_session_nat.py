@@ -1,83 +1,85 @@
-"""A hub rewrites a declared session id; replies must still be recognised.
+"""A hub substitutes its own session id; the request id is what correlates.
 
-hivemind-core derives a Layer-1 identity for every client-declared session as
-``f"{conn_nonce}:{declared}"`` so two clients cannot collide on the same name
-(HIVEMIND-BRIDGE-1 §4). Comparing the returned id to the sent one for equality
-rejected every reply: ``ask()`` timed out while the hub had already answered
-and emitted ``ovos.utterance.handled``. Reproduced against a live hub on
-2026-09-03 -- 480 ms with no session id, a full timeout with one.
+Observed against a live hub on 2026-09-03: a client that declares
+``session_id="observe-me"`` gets every reply back carrying
+``session_id="71048b7f-e7b0-4360-8fb5-a03816f78617"`` -- the hub's own id, not
+the declared one and not a derivative of it. Comparing session ids therefore
+rejected replies the request id had already identified as ours, and ``ask()``
+waited out its whole timeout while the hub had answered and emitted
+``ovos.utterance.handled``. Verified across a matched skill, an unmatched
+fallback and a French utterance: the request id is present and equal on every
+``speak`` and every ``handled`` event in all three.
 """
 
 import pytest
 
 from thalovant import ThalovantEvent
-from thalovant.events import _event_matches_context, _session_ids_match
+from thalovant.events import _event_matches_context
 
 
-def _event(session_id):
+def _event(session_id=None, request_id=None):
+    context = {}
+    if session_id is not None:
+        context["session"] = {"session_id": session_id}
+    if request_id is not None:
+        context["request_id"] = request_id
     return ThalovantEvent(
-        name="ovos.utterance.handled",
-        data={},
-        context={"session": {"session_id": session_id}},
-        raw=None,
+        name="ovos.utterance.handled", data={}, context=context, raw=None
     )
 
 
-def _asked(session_id):
-    return {"session": {"session_id": session_id}}
+def _asked(session_id=None, request_id=None):
+    asked = {}
+    if session_id is not None:
+        asked["session"] = {"session_id": session_id}
+    if request_id is not None:
+        asked["request_id"] = request_id
+    return asked
 
 
-# -- the regression itself ----------------------------------------------------
+# -- the regression ----------------------------------------------------------
 
-def test_a_nat_rewritten_reply_is_recognised():
-    """The exact shape a non-admin client gets back."""
-    assert _event_matches_context(_event("d41d8cd98f00b204:my-session"), _asked("my-session"))
-
-
-def test_an_unrewritten_reply_is_still_recognised():
-    """Admin connections skip the NAT, so the id comes back untouched."""
-    assert _event_matches_context(_event("my-session"), _asked("my-session"))
+def test_a_matching_request_id_wins_over_a_substituted_session():
+    """The exact shape a live hub returns."""
+    event = _event(session_id="71048b7f-e7b0-4360-8fb5-a03816f78617", request_id="req-1")
+    assert _event_matches_context(event, _asked(session_id="observe-me", request_id="req-1"))
 
 
-def test_a_reply_for_a_different_session_is_still_rejected():
-    """The point of the check must survive the fix."""
-    assert not _event_matches_context(_event("nonce:other-session"), _asked("my-session"))
-    assert not _event_matches_context(_event("other-session"), _asked("my-session"))
+def test_a_wrong_request_id_is_rejected_even_if_sessions_agree():
+    """The point of correlating must survive the fix."""
+    event = _event(session_id="same", request_id="req-2")
+    assert not _event_matches_context(event, _asked(session_id="same", request_id="req-1"))
 
 
-def test_no_session_asked_accepts_anything():
-    """Omitting the id is how every caller worked around this; keep it working."""
-    assert _event_matches_context(_event("nonce:whatever"), None)
-    assert _event_matches_context(_event("nonce:whatever"), {})
+def test_a_reply_without_a_request_id_falls_back_to_the_session():
+    """Deliberately lenient, and unchanged by this fix.
 
-
-# -- the suffix rule is a prefix-strip, not a bare endswith -------------------
-
-@pytest.mark.parametrize(
-    "actual, expected, match",
-    [
-        ("nonce:abc", "abc", True),
-        ("abc", "abc", True),
-        # a bare endswith would wrongly accept these
-        ("nonce:xabc", "abc", False),
-        ("nonce:abc:def", "abc", False),
-        # the declared half may itself contain colons only if it matches whole
-        ("nonce:a:b", "a:b", True),
-        ("", "abc", False),
-        ("nonce:", "abc", False),
-    ],
-)
-def test_only_the_declared_half_after_the_first_colon_matches(actual, expected, match):
-    assert _session_ids_match(expected, actual) is match
-
-
-def test_a_session_id_is_never_confused_with_a_request_id():
-    """Both are compared; a matching session must not excuse a wrong request."""
-    event = ThalovantEvent(
-        name="ovos.utterance.handled",
-        data={},
-        context={"session": {"session_id": "nonce:mine"}, "request_id": "req-2"},
-        raw=None,
+    A reply carrying no request id is not evidence of anything either way, and
+    hubs and test fakes exist that never send one. Rejecting it here would
+    break them for no gain, so the session check still decides.
+    """
+    unlabelled = _event(session_id="s1", request_id=None)
+    assert _event_matches_context(unlabelled, _asked(session_id="s1", request_id="req-1"))
+    assert not _event_matches_context(
+        _event(session_id="other", request_id=None), _asked(session_id="s1", request_id="req-1")
     )
-    asked = {"session": {"session_id": "mine"}, "request_id": "req-1"}
-    assert not _event_matches_context(event, asked)
+
+
+# -- the pre-request-id fallback still behaves --------------------------------
+
+def test_without_request_ids_the_session_still_decides():
+    assert _event_matches_context(_event(session_id="s1"), _asked(session_id="s1"))
+    assert not _event_matches_context(_event(session_id="s2"), _asked(session_id="s1"))
+
+
+def test_asking_for_nothing_accepts_anything():
+    assert _event_matches_context(_event(session_id="x", request_id="y"), None)
+    assert _event_matches_context(_event(session_id="x", request_id="y"), {})
+
+
+@pytest.mark.parametrize("session_id", ["observe-me", "nonce:observe-me", None])
+def test_the_session_id_never_vetoes_a_matching_request(session_id):
+    """Whatever a hub does to the session id -- echo it, namespace it, or
+    replace it -- a matching request id is authoritative."""
+    event = _event(session_id=session_id, request_id="req-1")
+    assert _event_matches_context(event, _asked(session_id="observe-me", request_id="req-1"))
