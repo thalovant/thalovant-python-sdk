@@ -195,13 +195,38 @@ def _context_with_correlation(
     return context
 
 
+def _session_ids_match(expected: str, actual: str) -> bool:
+    """True when a reply's session id is the one we asked for.
+
+    A hub rewrites a client-declared session id before the orchestrator sees
+    it: hivemind-core derives a Layer-1 identity as ``f"{conn_nonce}:{declared}"``
+    so two clients cannot collide on the same declared name (HIVEMIND-BRIDGE-1
+    §4), and only admin connections are exempt. Replies can therefore carry
+    either form, and comparing for equality rejected every one of them --
+    ``ask()`` timed out while the hub had already answered and emitted
+    ``ovos.utterance.handled``.
+
+    Matching the suffix after a single ``:`` mirrors what the hub does on the
+    way out, and is deliberately not a bare "endswith": a declared id of
+    ``b`` must not match a reply for ``a:xb``.
+    """
+    if actual == expected:
+        return True
+    _, separator, declared = actual.partition(":")
+    return bool(separator) and declared == expected
+
+
 def _event_matches_context(
     event: ThalovantEvent,
     expected_context: dict[str, Any] | None,
 ) -> bool:
     expected_session_id = _session_id_from_context(expected_context)
     actual_session_id = event.session_id
-    if expected_session_id and actual_session_id and actual_session_id != expected_session_id:
+    if (
+        expected_session_id
+        and actual_session_id
+        and not _session_ids_match(expected_session_id, actual_session_id)
+    ):
         return False
 
     expected_request_id = _request_id_from_context(expected_context)
