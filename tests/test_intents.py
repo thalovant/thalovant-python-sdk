@@ -444,3 +444,41 @@ def test_describes_go_out_in_bounded_batches() -> None:
     c2.connect()
     wanted = [(WEATHER, f"intent.{n:03d}", "en-us") for n in range(69)]
     assert len(describe_many(c2, wanted, timeout=5.0)) == 69
+
+
+def test_a_silent_window_keeps_what_the_earlier_windows_found() -> None:
+    """Windows are contiguous slices, so a skill that stops answering can own a
+    whole window. Losing its sentences is right; losing the inventory is not."""
+    quiet_from = 40
+
+    class GoesQuiet(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.intent.describe":
+                index = int(str(data["intent_name"]).rpartition(".")[2])
+                if index >= quiet_from:
+                    self.emitted.append((event_type, dict(data), dict(context)))
+                    return
+            super().emit_event(event_type, data, context)
+
+    many = {"en-us": {(WEATHER, f"intent.{n:03d}"): [f"sentence {n}"] for n in range(69)}}
+    inventory = client(GoesQuiet(registrations=many)).intents(["en-us"], timeout=0.3)
+
+    with_sentences = [i for i in inventory.intents if i.phrases_for("en-us")]
+    assert len(inventory.intents) == 69, "every intent is still listed"
+    # Windows are 0-31, 32-63, 64-68. The first answers in full, the second in
+    # part, the third not at all -- and the third does not discard the rest.
+    assert len(with_sentences) == quiet_from
+    assert inventory.has_phrases
+
+
+def test_a_hub_silent_from_the_first_window_still_fails_fast() -> None:
+    many = {"en-us": {(WEATHER, f"intent.{n:03d}"): [f"sentence {n}"] for n in range(69)}}
+    hub = FakeHubTransport(registrations=many, silent=("ovos.intent.describe",))
+    with pytest.raises(ThalovantTimeoutError):
+        from thalovant.intents import describe_many
+
+        c = client(hub)
+        c.connect()
+        describe_many(c, [(WEATHER, f"intent.{n:03d}", "en-us") for n in range(69)], timeout=0.2)
+    describes = [t for t, _, _ in hub.emitted if t == "ovos.intent.describe"]
+    assert len(describes) == 32, "it gives up after one window, not after all 69"
