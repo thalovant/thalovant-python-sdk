@@ -482,3 +482,23 @@ def test_a_hub_silent_from_the_first_window_still_fails_fast() -> None:
         describe_many(c, [(WEATHER, f"intent.{n:03d}", "en-us") for n in range(69)], timeout=0.2)
     describes = [t for t, _, _ in hub.emitted if t == "ovos.intent.describe"]
     assert len(describes) == 32, "it gives up after one window, not after all 69"
+
+
+def test_a_refusal_in_a_later_window_is_not_swallowed_as_a_partial_answer() -> None:
+    """Only a timeout means "this window had nothing". A hub that starts
+    refusing part-way is a policy problem and must reach the caller."""
+    from thalovant.intents import describe_many
+
+    class RefusesLater(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.intent.describe" and len(self.emitted) >= 32:
+                self.refuse = ("ovos.intent.describe",)
+            super().emit_event(event_type, data, context)
+
+    many = {"en-us": {(WEATHER, f"intent.{n:03d}"): [f"sentence {n}"] for n in range(69)}}
+    hub = RefusesLater(registrations=many)
+    c = client(hub)
+    c.connect()
+    with pytest.raises(ThalovantPolicyDeniedError) as caught:
+        describe_many(c, [(WEATHER, f"intent.{n:03d}", "en-us") for n in range(69)], timeout=0.3)
+    assert caught.value.denied_type == "ovos.intent.describe"
