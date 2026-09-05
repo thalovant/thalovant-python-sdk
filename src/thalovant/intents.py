@@ -224,7 +224,11 @@ class HubIntentInventory:
 
     @property
     def has_phrases(self) -> bool:
-        return any(intent.phrases for intent in self.intents)
+        """True when at least one intent carries at least one sentence."""
+
+        return any(
+            sentences for intent in self.intents for sentences in intent.phrases.values()
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -481,8 +485,9 @@ def _inventory_from_names(names: dict[str, list[str]], languages: tuple[str, ...
             skill_id, _, intent_name = raw.partition(":")
             if not intent_name:
                 skill_id, intent_name = "", raw
-            by_skill.setdefault(skill_id, {})[intent_name] = HubIntent(
-                skill_id=skill_id, name=intent_name, engine=engine
+            # First engine to name it wins, as on the manifest path.
+            by_skill.setdefault(skill_id, {}).setdefault(
+                intent_name, HubIntent(skill_id=skill_id, name=intent_name, engine=engine)
             )
     skills = tuple(
         HubSkillIntents(skill_id=skill_id, intents=tuple(sorted(intents.values(), key=lambda i: i.name)))
@@ -507,7 +512,11 @@ def inventory(
     manifests give the names and the result says so.
     """
 
-    asked = tuple(dict.fromkeys(str(lang) for lang in languages if str(lang).strip()))
+    asked: tuple[str, ...] = ()
+    for lang in languages:
+        tag = str(lang).strip()
+        if tag and not any(same_language(tag, seen) for seen in asked):
+            asked += (tag,)
     if not asked:
         raise ValueError("inventory() needs at least one language.")
 
@@ -546,7 +555,12 @@ def inventory(
                     if definition.samples:
                         sentences = definition.samples
                         break
-            phrases.setdefault(key, {})[lang] = sentences
+            # An intent registered under both engines has two rows for the
+            # language; the keyword row carries no sentences and must not
+            # erase the template row's.
+            per_language = phrases.setdefault(key, {})
+            if sentences or lang not in per_language:
+                per_language[lang] = sentences
 
     by_skill: dict[str, list[HubIntent]] = {}
     for (skill_id, intent_name), per_language in phrases.items():
