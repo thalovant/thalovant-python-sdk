@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.38
+
+- Send describes in batches of at most 32 (`intents.DESCRIBE_BATCH`), each batch its own subscription window, instead of putting every request in flight at once. A hub with 69 intents in two languages is 138 requests and, with every reply delivered twice, 276 inbound events; an SDK whose reply queue is bounded — the Rust port's bus channel holds 64 — dropped replies past its capacity and returned an inventory missing sentences. Reported by the Rust port's review. `describe_many(batch=0)` restores the old behaviour, and the per-batch deadline means a hub that answers nothing now fails after one batch rather than holding every request open.
+
 ## 0.4.37
 
 - `HubIntentInventory.has_phrases` is true only when at least one intent carries at least one sentence; a manifest-path inventory whose describes all came back empty no longer reads as having phrases. Ports (Node, Swift, .NET) had already chosen this reading; the reference now matches them.

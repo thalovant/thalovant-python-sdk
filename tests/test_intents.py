@@ -412,3 +412,35 @@ def test_the_fallback_keeps_the_first_engine_that_names_an_intent() -> None:
     inventory = client(BothEngines(refuse=("ovos.intent.list",))).intents(["en-us"])
     weather = next(i for i in inventory.intents if i.name == "current.weather")
     assert weather.engine == "adapt"
+
+
+def test_describes_go_out_in_bounded_batches() -> None:
+    """A hub with many intents must not put more requests in flight than a
+    bounded reply queue can hold: 69 intents is 69 describes, and every reply
+    arrives twice. They go out 32 at a time, each batch its own window."""
+    from thalovant.intents import DESCRIBE_BATCH, describe_many
+
+    many = {"en-us": {(WEATHER, f"intent.{n:03d}"): [f"sentence {n}"] for n in range(69)}}
+    hub = FakeHubTransport(registrations=many)
+    windows = 0
+    subscribe = hub.on_mycroft
+
+    def counting(event_name, handler):
+        nonlocal windows
+        if event_name == "ovos.intent.describe.response":
+            windows += 1
+        subscribe(event_name, handler)
+
+    hub.on_mycroft = counting  # type: ignore[method-assign]
+    inventory = client(hub).intents(["en-us"])
+
+    assert DESCRIBE_BATCH == 32
+    assert windows == 3, "69 describes go out in three batches of at most 32"
+    assert len(inventory.intents) == 69
+    assert all(intent.phrases_for("en-us") for intent in inventory.intents)
+
+    hub2 = FakeHubTransport(registrations=many)
+    c2 = client(hub2)
+    c2.connect()
+    wanted = [(WEATHER, f"intent.{n:03d}", "en-us") for n in range(69)]
+    assert len(describe_many(c2, wanted, timeout=5.0)) == 69
