@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.42
+
+- Documentation: `ovos.intent.describe` is required only when the client has to ask for definitions separately. A runtime that honours `include_definitions` attaches them to `ovos.intent.list` and no describe is sent, so the permission is not needed at all there — which is about to be the common case. The previous wording said the permission was needed whenever `describe=True`. Reported by the Rust port's review.
+
 ## 0.4.41
 
 - `ThalovantPolicyDeniedError.allowed` drops blank entries and trims the rest, alongside the non-string entries 0.4.40 already dropped. An empty string is no more a message type than `3` is, and printing one gives an operator a blank line among the types to allow. Settled with the .NET port, which had it right first.
