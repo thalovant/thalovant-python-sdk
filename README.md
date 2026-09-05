@@ -362,10 +362,12 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 
 Each intent carries the sentences a person says to reach it, per language, as
 the skill wrote them (`{location}` marks a slot). The hub's connection must be
-allowed to publish `ovos.intent.list` and `ovos.intent.describe`; a hub that
-refuses raises `ThalovantPolicyDeniedError` naming the type, or with the default
-`fallback=True` lists intent names only and marks the result
-`source="engine-manifests"`. From the CLI: `thalovant --identity _identity.json intents`.
+allowed to publish `ovos.intent.list`, and `ovos.intent.describe` for the
+sentences (`describe=False` needs only the first). A hub that refuses
+`ovos.intent.list` raises `ThalovantPolicyDeniedError` naming the type, or with
+the default `fallback=True` lists intent names only from the engines' manifests
+and marks the result `source="engine-manifests"`, `denied=("ovos.intent.list",)`.
+From the CLI: `thalovant --identity _identity.json intents`.
 
 ## Use An Existing Identity
 

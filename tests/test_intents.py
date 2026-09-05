@@ -340,3 +340,19 @@ def test_languages_default_to_english() -> None:
     hub.emitted.clear()
     client(hub).intents([])
     assert hub.emitted[0][1]["lang"] == "en-us"
+
+
+def test_the_cli_prints_every_intent_and_neutralises_control_characters(monkeypatch, capsys) -> None:
+    from thalovant import cli as cli_module
+
+    hub = FakeHubTransport(registrations={
+        "en-us": {
+            (WEATHER, "current.weather"): ["what is the\x1b[31m weather"],
+            (SHADOW, "custos.incidents"): [],
+        },
+    })
+    monkeypatch.setattr(cli_module, "_client_from_args", lambda args: client(hub))
+    assert cli_module.main(["--identity", "unused", "intents"]) == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "what is the[31m weather" in out
+    assert "custos.incidents" in out, "an intent with no sentences is still listed"

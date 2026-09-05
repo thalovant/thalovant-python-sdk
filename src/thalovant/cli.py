@@ -149,18 +149,26 @@ def _cmd_intents(client: ThalovantClient, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     for skill in inventory.skills:
-        print(skill.skill_id)
+        print(_plain(skill.skill_id))
         for intent in skill.intents:
+            shown = False
             for lang in inventory.languages:
                 examples = intent.examples(lang, 0 if args.all else 2)
                 if not examples:
                     continue
-                print(f"  {intent.name} [{lang}]")
+                shown = True
+                print(f"  {_plain(intent.name)} [{_plain(lang)}]")
                 for text in examples:
-                    print(f"    {text}")
-            if not intent.phrases:
-                print(f"  {intent.name}")
+                    print(f"    {_plain(text)}")
+            if not shown:
+                print(f"  {_plain(intent.name)}")
     return 0
+
+
+def _plain(text: str) -> str:
+    """Hub-provided text for a terminal: printable characters only."""
+
+    return "".join(ch for ch in str(text) if ch.isprintable())
 
 
 def _cmd_listen(client: ThalovantClient, args: argparse.Namespace) -> int:

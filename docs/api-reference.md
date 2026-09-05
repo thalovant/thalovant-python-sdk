@@ -38,10 +38,12 @@ Common methods:
 intent each skill registered, per language, with the sentences a person says
 to reach it as the skill's locale files wrote them, `{slot}` placeholders
 included. No control-plane credential is involved. The hub's connection must
-be allowed to publish `ovos.intent.list` and `ovos.intent.describe`; a refusal
-raises `ThalovantPolicyDeniedError` naming the type, or with `fallback=True`
-(the default) falls back to the engines' own manifests, which carry names and
-no language, and marks the result `source="engine-manifests"`.
+be allowed to publish `ovos.intent.list`, and `ovos.intent.describe` as well
+unless `describe=False` (names and languages only). A refusal of
+`ovos.intent.list` raises `ThalovantPolicyDeniedError` naming the type, or with
+`fallback=True` (the default) falls back to the engines' own manifests, which
+carry names and no language, and marks the result `source="engine-manifests"`
+with `denied=("ovos.intent.list",)`.
 
 ## Control Plane
 
