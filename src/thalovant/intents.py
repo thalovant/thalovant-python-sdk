@@ -56,6 +56,13 @@ SOURCE_ENGINES = "engine-manifests"
 
 _ENGINE_BY_METHOD = {"template": "padatious", "keyword": "adapt"}
 
+# How many describes may be in flight at once. A hub with 69 intents in two
+# languages is 138 requests and, with every reply delivered twice, 276 inbound
+# events; an SDK whose reply queue is bounded (the Rust bus channel holds 64)
+# drops replies past its capacity and the inventory comes back missing
+# sentences. Batching also spares the hub a burst it never asked for.
+DESCRIBE_BATCH = 32
+
 
 def same_language(a: str, b: str) -> bool:
     """``fr-fr`` and ``fr_FR`` are the same language tag."""
@@ -375,16 +382,26 @@ def describe_many(
     wanted: Iterable[tuple[str, str, str]],
     *,
     timeout: float = 5.0,
+    batch: int = DESCRIBE_BATCH,
 ) -> dict[tuple[str, str, str], list[IntentDefinition]]:
-    """Describe many registrations with the requests in flight together.
+    """Describe many registrations, at most ``batch`` of them in flight.
 
-    One subscription, one request id per registration, replies matched by
-    that id, repeats dropped. The deadline covers the whole batch.
+    One subscription per batch, one request id per registration, replies
+    matched by that id, repeats dropped. The deadline covers each batch, so a
+    hub that answers nothing fails after one batch rather than holding every
+    request open. ``batch=0`` sends them all at once.
     """
 
     wanted = list(dict.fromkeys(wanted))
     if not wanted:
         return {}
+    if batch > 0 and len(wanted) > batch:
+        batched: dict[tuple[str, str, str], list[IntentDefinition]] = {}
+        for start in range(0, len(wanted), batch):
+            batched.update(
+                describe_many(client, wanted[start:start + batch], timeout=timeout, batch=0)
+            )
+        return batched
     by_request: dict[str, tuple[str, str, str]] = {}
     found: dict[tuple[str, str, str], list[IntentDefinition]] = {}
     lock = threading.Lock()
