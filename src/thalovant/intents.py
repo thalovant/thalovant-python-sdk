@@ -398,9 +398,19 @@ def describe_many(
     if batch > 0 and len(wanted) > batch:
         batched: dict[tuple[str, str, str], list[IntentDefinition]] = {}
         for start in range(0, len(wanted), batch):
-            batched.update(
-                describe_many(client, wanted[start:start + batch], timeout=timeout, batch=0)
-            )
+            try:
+                batched.update(
+                    describe_many(client, wanted[start:start + batch], timeout=timeout, batch=0)
+                )
+            except ThalovantTimeoutError:
+                # A partial answer is an answer, across windows as within one:
+                # windows are contiguous slices, so an unresponsive skill with
+                # more than one window's worth of intents would otherwise turn
+                # the whole inventory into a timeout while the same skill with
+                # fewer intents only loses its sentences. A hub silent from the
+                # start still fails at the first window, since nothing is found.
+                if not batched:
+                    raise
         return batched
     by_request: dict[str, tuple[str, str, str]] = {}
     found: dict[tuple[str, str, str], list[IntentDefinition]] = {}

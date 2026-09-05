@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.39
+
+- Keep partial results across describe batches. 0.4.38 sends describes in windows of 32, and a window that received no reply at all raised, discarding every earlier window's definitions. Windows are contiguous slices of the work, so a skill that stops answering can own a whole window: an unresponsive skill with more than 32 intents turned the entire inventory into a timeout, while the same skill with fewer intents only lost its sentences. A window with nothing now contributes nothing, and the call fails only when no window produced a definition — so a hub silent from the start still fails at the first window rather than after all of them. Reported by the Rust port's review.
+
 ## 0.4.38
 
 - Send describes in batches of at most 32 (`intents.DESCRIBE_BATCH`), each batch its own subscription window, instead of putting every request in flight at once. A hub with 69 intents in two languages is 138 requests and, with every reply delivered twice, 276 inbound events; an SDK whose reply queue is bounded — the Rust port's bus channel holds 64 — dropped replies past its capacity and returned an inventory missing sentences. Reported by the Rust port's review. `describe_many(batch=0)` restores the old behaviour, and the per-batch deadline means a hub that answers nothing now fails after one batch rather than holding every request open.
