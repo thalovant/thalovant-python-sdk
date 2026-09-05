@@ -58,10 +58,10 @@ class ThalovantPolicyDeniedError(ThalovantRuntimeError):
             str(data.get("denied_type") or ""),
             code=str(data.get("code") or ""),
             reason=str(data.get("reason") or ""),
-            # Only strings: a number or a null in the list is not a message
-            # type, and stringifying one would put "3" or "None" in front of
-            # an operator reading which types to allow.
-            allowed=tuple(item for item in allowed if isinstance(item, str))
+            # Only non-empty strings: a number, a null or a blank in the list
+            # is not a message type, and stringifying one would put "3" or
+            # "None" in front of an operator reading which types to allow.
+            allowed=tuple(item.strip() for item in allowed if isinstance(item, str) and item.strip())
             if isinstance(allowed, list)
             else (),
         )

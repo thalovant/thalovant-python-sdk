@@ -552,3 +552,11 @@ def test_only_string_entries_survive_in_the_allowed_list() -> None:
          "data": {"allowed": ["speak", 3, None, "recognizer_loop:utterance"]}},
     ))
     assert error.allowed == ("speak", "recognizer_loop:utterance")
+
+
+def test_a_blank_entry_is_not_a_message_type_either() -> None:
+    error = ThalovantPolicyDeniedError.from_event(FakeMessage(
+        {"denied_type": "ovos.intent.list",
+         "data": {"allowed": ["speak", "", "  ", "  mycroft.volume.get  "]}},
+    ))
+    assert error.allowed == ("speak", "mycroft.volume.get")

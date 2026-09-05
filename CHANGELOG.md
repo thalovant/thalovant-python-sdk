@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.41
+
+- `ThalovantPolicyDeniedError.allowed` drops blank entries and trims the rest, alongside the non-string entries 0.4.40 already dropped. An empty string is no more a message type than `3` is, and printing one gives an operator a blank line among the types to allow. Settled with the .NET port, which had it right first.
+
 ## 0.4.40
 
 - `list_intents` raises `ThalovantRuntimeError` when the hub answers `ovos.intent.list` with `ok: false`, instead of reading the missing `intents` key as an empty list. A refused listing is not an empty hub, and reporting it as no intents showed a person a device that can do nothing. `describe_intent` keeps returning an empty list for `ok: false`, which is a real answer: the hub does not know that registration. Reported by the Kotlin port's review.
