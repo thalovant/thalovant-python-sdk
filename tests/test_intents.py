@@ -356,3 +356,59 @@ def test_the_cli_prints_every_intent_and_neutralises_control_characters(monkeypa
     out = capsys.readouterr().out
     assert "\x1b" not in out and "what is the[31m weather" in out
     assert "custos.incidents" in out, "an intent with no sentences is still listed"
+
+
+def test_has_phrases_means_at_least_one_sentence() -> None:
+    hub = FakeHubTransport(registrations={"en-us": {(SHADOW, "custos.incidents"): []}})
+    inventory = client(hub).intents(["en-us"])
+    assert inventory.intents and not inventory.has_phrases
+
+
+def test_languages_are_folded_and_deduplicated_before_asking() -> None:
+    hub = FakeHubTransport()
+    inventory = client(hub).intents([" en-us ", "en-US", "en_us", "fr-fr"])
+    assert inventory.languages == ("en-us", "fr-fr")
+    assert [d["lang"] for t, d, _ in hub.emitted if t == "ovos.intent.list"] == ["en-us", "fr-fr"]
+
+
+def test_a_keyword_row_does_not_erase_the_template_rows_sentences() -> None:
+    """One intent, two registrations in one language: the keyword row has no
+    samples and arrives after the template row."""
+
+    class Dual(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.intent.list":
+                lang = data["lang"]
+                rows = [
+                    {"skill_id": WEATHER, "intent_name": "current.weather", "lang": lang,
+                     "method": "template", "enabled": True, "session_id": "default",
+                     "definition": {"skill_id": WEATHER, "intent_name": "current.weather",
+                                    "lang": lang, "samples": ["what is the weather"]}},
+                    {"skill_id": WEATHER, "intent_name": "current.weather", "lang": lang,
+                     "method": "keyword", "enabled": True, "session_id": "default",
+                     "definition": {"skill_id": WEATHER, "intent_name": "current.weather",
+                                    "lang": lang, "required": [["WeatherKeyword"]]}},
+                ]
+                self.emitted.append((event_type, dict(data), dict(context)))
+                self._deliver("ovos.intent.list.response", {"ok": True, "intents": rows}, context)
+                return
+            super().emit_event(event_type, data, context)
+
+    inventory = client(Dual()).intents(["en-us"])
+    assert inventory.intents[0].phrases_for("en-us") == ("what is the weather",)
+    assert inventory.intents[0].engine == "padatious", "the first row names the engine"
+
+
+def test_the_fallback_keeps_the_first_engine_that_names_an_intent() -> None:
+    class BothEngines(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "intent.service.adapt.manifest.get":
+                self.emitted.append((event_type, dict(data), dict(context)))
+                self._deliver("intent.service.adapt.manifest",
+                              {"intents": [f"{WEATHER}:current.weather"]}, context)
+                return
+            super().emit_event(event_type, data, context)
+
+    inventory = client(BothEngines(refuse=("ovos.intent.list",))).intents(["en-us"])
+    weather = next(i for i in inventory.intents if i.name == "current.weather")
+    assert weather.engine == "adapt"

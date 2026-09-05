@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.37
+
+- `HubIntentInventory.has_phrases` is true only when at least one intent carries at least one sentence; a manifest-path inventory whose describes all came back empty no longer reads as having phrases. Ports (Node, Swift, .NET) had already chosen this reading; the reference now matches them.
+- `intents(languages)` trims each tag and drops a repeat of a language already asked for under another spelling (`en-us`, `en-US`, `en_us` are one language), so the hub is asked once per language. Reported by the Node port's review.
+- An intent registered under both engines in one language keeps the template row's sentences; the keyword row, which carries none, no longer overwrites them. On the names-only fallback the first engine to name an intent decides its `engine`, as on the manifest path. Both reported by the Go port's review.
+
 ## 0.4.36
 
 - Add the intent inventory: `ThalovantClient.intents(languages)` reads the hub runtime's intent manifest (OVOS-INTENT-4 §10) over the client's own session and returns a `HubIntentInventory` — every intent each skill registered, per language, with the sentences a person says to reach it as the skill's locale files wrote them, `{slot}` placeholders included. No control-plane credential is involved. `list_intents(lang)` and `describe_intent(skill_id, intent_name, lang)` expose the two underlying queries (`ovos.intent.list` / `ovos.intent.describe`); `AsyncThalovantClient` mirrors all three; the CLI gains `thalovant intents`.
