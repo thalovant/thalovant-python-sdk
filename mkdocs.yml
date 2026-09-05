@@ -97,6 +97,7 @@ nav:
           - Conversations: reference/conversation.md
           - Agents: reference/agent.md
           - Events: reference/events.md
+          - Intents: reference/intents.md
           - Context: reference/context.md
           - Rich Output: reference/rich.md
           - Identity: reference/identity.md

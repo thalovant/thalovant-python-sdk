@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.36
+
+- Add the intent inventory: `ThalovantClient.intents(languages)` reads the hub runtime's intent manifest (OVOS-INTENT-4 §10) over the client's own session and returns a `HubIntentInventory` — every intent each skill registered, per language, with the sentences a person says to reach it as the skill's locale files wrote them, `{slot}` placeholders included. No control-plane credential is involved. `list_intents(lang)` and `describe_intent(skill_id, intent_name, lang)` expose the two underlying queries (`ovos.intent.list` / `ovos.intent.describe`); `AsyncThalovantClient` mirrors all three; the CLI gains `thalovant intents`.
+- Queries are correlated by `context.request_id` like every other request, and a reply delivered more than once is taken once. Describes are sent together and matched by request id, or by the definition's own `skill_id`/`intent_name`/`lang` for a hub that does not echo the id.
+- Add `ThalovantPolicyDeniedError` (a `ThalovantRuntimeError`), raised at once from the hub's `hive.policy.denied` with `denied_type`, `code`, `reason` and the `allowed` list, instead of waiting for a timeout. `intents(fallback=True)`, the default, falls back to the engines' own manifests (`intent.service.adapt.manifest.get` / `intent.service.padatious.manifest.get`) when `ovos.intent.list` is refused; the result then carries names only and `source="engine-manifests"`.
+- A runtime that attaches each row's `definition` to `ovos.intent.list` when asked with `include_definitions` is used as such; one that does not is described row by row.
+
 ## Unreleased
 
 Security hardening, plus a HiveMind MQTT data-plane topic migration. The security fixes below change no wire-protocol or identity-file behavior: API request bodies, `as_dict(include_secrets=True)`, and identity-file round-trips still carry the real secret values.

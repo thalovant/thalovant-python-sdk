@@ -30,6 +30,18 @@ Common methods:
 - `wait_for_event(event_name, timeout=12.0, predicate=None, context=None, session_id=None, request_id=None) -> ThalovantEvent`
 - `listen(event_name, timeout=None, max_events=None, predicate=None, context=None, session_id=None, request_id=None)`
 - `emit(event_type, data=None, context=None)`
+- `intents(languages=None, timeout=5.0, describe=True, fallback=True) -> HubIntentInventory`
+- `list_intents(lang=None, timeout=5.0, include_definitions=False) -> list[IntentRegistration]`
+- `describe_intent(skill_id, intent_name, lang=None, timeout=5.0) -> list[IntentDefinition]`
+
+`intents()` reads the hub runtime's intent manifest over this session: every
+intent each skill registered, per language, with the sentences a person says
+to reach it as the skill's locale files wrote them, `{slot}` placeholders
+included. No control-plane credential is involved. The hub's connection must
+be allowed to publish `ovos.intent.list` and `ovos.intent.describe`; a refusal
+raises `ThalovantPolicyDeniedError` naming the type, or with `fallback=True`
+(the default) falls back to the engines' own manifests, which carry names and
+no language, and marks the result `source="engine-manifests"`.
 
 ## Control Plane
 
@@ -372,6 +384,28 @@ Helpers:
 - `as_dict()`
 - `rich_media`
 - `display_items(max_text_chars=None)`
+
+### `HubIntentInventory`
+
+What a hub can be asked, from `ThalovantClient.intents()`.
+
+- `languages: tuple[str, ...]` — the languages asked for
+- `skills: tuple[HubSkillIntents, ...]` — each with `skill_id`, `intents`, `languages`
+- `intents: tuple[HubIntent, ...]` — every intent across skills
+- `source: str` — `intent-manifest` (sentences per language) or `engine-manifests` (names only)
+- `denied: tuple[str, ...]` — the query the hub refused when `source` is the fallback
+- `has_phrases: bool`
+- `as_dict() -> dict`
+
+A `HubIntent` has `skill_id`, `name`, `id` (`skill_id:name`), `engine`
+(`padatious` or `adapt`), `enabled`, `phrases: dict[str, tuple[str, ...]]` keyed
+by language, `phrases_for(lang)`, `languages`, and `examples(lang=None, limit=2)`,
+which prefers whole sentences over ones with a slot.
+
+`IntentRegistration` is one row of the manifest (`skill_id`, `intent_name`,
+`lang`, `method`, `enabled`, `session_id`, optional `definition`).
+`IntentDefinition` is one registration as the skill made it (`skill_id`,
+`intent_name`, `lang`, `method`, `samples`, `raw`).
 
 ### `ThalovantReply`
 

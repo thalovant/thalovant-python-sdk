@@ -58,6 +58,21 @@ thalovant --identity _identity.json --json ask "Tell me a joke"
 
 Sends a text utterance and waits for the hub reply.
 
+### `intents`
+
+```bash
+thalovant --identity _identity.json intents
+thalovant --identity _identity.json intents --lang en-us --lang fr-fr --all
+thalovant --identity _identity.json --json intents
+```
+
+Lists what the hub can be asked, grouped by skill, with the sentences a person
+says to reach each intent in each language, as the skill wrote them (`{location}`
+marks a slot). Two sentences per intent by default, `--all` for every one. The
+hub's connection must be allowed to publish `ovos.intent.list` and
+`ovos.intent.describe`; a hub allowed for only the engine manifests lists names
+and says so.
+
 ### `utter`
 
 ```bash

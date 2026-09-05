@@ -17,12 +17,17 @@ from .errors import (
     ThalovantConnectionError,
     ThalovantError,
     ThalovantIdentityError,
+    ThalovantPolicyDeniedError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
     ThalovantUnsupportedProtocolError,
 )
 from .events import (
+    EVENT_INTENT_DESCRIBE,
+    EVENT_INTENT_DESCRIBE_RESPONSE,
     EVENT_INTENT_FAILURE,
+    EVENT_INTENT_LIST,
+    EVENT_INTENT_LIST_RESPONSE,
     EVENT_OVOS_UTTERANCE_SPEAK,
     EVENT_POLICY_DENIED,
     EVENT_QUERY_TIMEOUT,
@@ -34,6 +39,13 @@ from .events import (
     ThalovantEvent,
 )
 from .identity import MqttBrokerCredentials, ThalovantIdentity, default_config_path
+from .intents import (
+    HubIntent,
+    HubIntentInventory,
+    HubSkillIntents,
+    IntentDefinition,
+    IntentRegistration,
+)
 from .models import (
     ThalovantConnectionInfo,
     ThalovantDoctorCheck,
@@ -62,7 +74,16 @@ __all__ = [
     "DEFAULT_CONTROL_API_URL",
     "EVENT_INTENT_FAILURE",
     "EVENT_OVOS_UTTERANCE_SPEAK",
+    "EVENT_INTENT_DESCRIBE",
+    "EVENT_INTENT_DESCRIBE_RESPONSE",
+    "EVENT_INTENT_LIST",
+    "EVENT_INTENT_LIST_RESPONSE",
     "EVENT_POLICY_DENIED",
+    "HubIntent",
+    "HubIntentInventory",
+    "HubSkillIntents",
+    "IntentDefinition",
+    "IntentRegistration",
     "EVENT_QUERY_TIMEOUT",
     "EVENT_RECOGNIZER_LOOP_UTTERANCE",
     "EVENT_SPEAK",
@@ -93,6 +114,7 @@ __all__ = [
     "ThalovantHealth",
     "ThalovantIdentity",
     "ThalovantIdentityError",
+    "ThalovantPolicyDeniedError",
     "ThalovantReply",
     "ThalovantRuntimeError",
     "ThalovantSubscription",
