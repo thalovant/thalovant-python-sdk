@@ -69,6 +69,14 @@ def _build_parser() -> argparse.ArgumentParser:
     emit.add_argument("--context", default="{}", help="JSON event context.")
     emit.set_defaults(handler=_cmd_emit)
 
+    intents = subparsers.add_parser("intents", help="List what the hub can be asked, per language.")
+    intents.add_argument("--lang", action="append", dest="langs", metavar="LANG",
+                         help="Language to list; repeat for several. Default en-us.")
+    intents.add_argument("--timeout", type=float, default=5.0)
+    intents.add_argument("--all", action="store_true",
+                         help="Every sentence each intent answers to, not two.")
+    intents.set_defaults(handler=_cmd_intents)
+
     utter = subparsers.add_parser("utter", help="Send an utterance without waiting for a reply.")
     utter.add_argument("text", help="Text to send to the hub.")
     utter.add_argument("--lang", default="en-us")
@@ -126,6 +134,41 @@ def _cmd_ask(client: ThalovantClient, args: argparse.Namespace) -> int:
     else:
         print(reply.text)
     return 0
+
+
+def _cmd_intents(client: ThalovantClient, args: argparse.Namespace) -> int:
+    inventory = client.intents(args.langs or None, timeout=args.timeout)
+    if args.json:
+        print(json.dumps(inventory.as_dict(), indent=2, sort_keys=True))
+        return 0
+    if inventory.denied:
+        print(
+            f"The hub refused {', '.join(inventory.denied)}; listing intent names only. "
+            "Allow ovos.intent.list and ovos.intent.describe on this connection for the "
+            "sentences.",
+            file=sys.stderr,
+        )
+    for skill in inventory.skills:
+        print(_plain(skill.skill_id))
+        for intent in skill.intents:
+            shown = False
+            for lang in inventory.languages:
+                examples = intent.examples(lang, 0 if args.all else 2)
+                if not examples:
+                    continue
+                shown = True
+                print(f"  {_plain(intent.name)} [{_plain(lang)}]")
+                for text in examples:
+                    print(f"    {_plain(text)}")
+            if not shown:
+                print(f"  {_plain(intent.name)}")
+    return 0
+
+
+def _plain(text: str) -> str:
+    """Hub-provided text for a terminal: printable characters only."""
+
+    return "".join(ch for ch in str(text) if ch.isprintable())
 
 
 def _cmd_listen(client: ThalovantClient, args: argparse.Namespace) -> int:

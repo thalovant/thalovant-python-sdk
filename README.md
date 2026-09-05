@@ -345,6 +345,30 @@ items = api.list_memory_items(scope="workspace", query="timezone")
 print(items["data"])
 ```
 
+## What Can I Ask?
+
+A connected client can ask its hub what it can be asked, over its own session,
+with no control-plane token:
+
+```python
+from thalovant import ThalovantClient
+
+with ThalovantClient.from_identity_file("_identity.json") as client:
+    inventory = client.intents(["en-us", "fr-fr"])
+    for skill in inventory.skills:
+        for intent in skill.intents:
+            print(intent.id, intent.examples("fr-fr"))
+```
+
+Each intent carries the sentences a person says to reach it, per language, as
+the skill wrote them (`{location}` marks a slot). The hub's connection must be
+allowed to publish `ovos.intent.list`, and `ovos.intent.describe` for the
+sentences (`describe=False` needs only the first). A hub that refuses
+`ovos.intent.list` raises `ThalovantPolicyDeniedError` naming the type, or with
+the default `fallback=True` lists intent names only from the engines' manifests
+and marks the result `source="engine-manifests"`, `denied=("ovos.intent.list",)`.
+From the CLI: `thalovant --identity _identity.json intents`.
+
 ## Use An Existing Identity
 
 For local development, store one or more identities in the protected SDK config:

@@ -7,7 +7,7 @@ from pathlib import Path
 import queue
 import threading
 import time
-from typing import Any, AsyncIterator, Callable, Iterator
+from typing import Any, AsyncIterator, Callable, Iterable, Iterator
 from urllib.parse import urlparse
 
 from .conversation import AsyncThalovantConversation, ThalovantConversation
@@ -42,6 +42,7 @@ from .events import (
     _utterance_payload,
 )
 from .identity import ThalovantIdentity
+from .intents import HubIntentInventory, IntentDefinition, IntentRegistration
 from .models import (
     ThalovantConnectionInfo,
     ThalovantDoctorCheck,
@@ -600,6 +601,73 @@ class ThalovantClient:
             "HiveMind transport failed while waiting for reply."
         ) from last_error
 
+    def intents(
+        self,
+        languages: Iterable[str] | None = None,
+        *,
+        timeout: float = 5.0,
+        describe: bool = True,
+        fallback: bool = True,
+    ) -> HubIntentInventory:
+        """Everything the hub can be asked, per language, grouped by skill.
+
+        Read from the runtime's intent manifest over this session, so no
+        control-plane credential is involved. Each intent carries the
+        sentences a person says to reach it, as the skill wrote them,
+        ``{slot}`` placeholders included. ``languages`` defaults to the
+        identity's language or ``en-us``.
+
+        Raises :class:`ThalovantPolicyDeniedError` when the hub refuses the
+        query and ``fallback`` is off; with it on, a hub allowed for only the
+        engines' manifests yields intent names with ``source`` set to
+        ``engine-manifests``.
+        """
+
+        from . import intents as _intents
+
+        chosen = list(languages) if languages else [self._default_lang()]
+        return _intents.inventory(
+            self, chosen, timeout=timeout, describe=describe, fallback=fallback
+        )
+
+    def list_intents(
+        self,
+        lang: str | None = None,
+        *,
+        timeout: float = 5.0,
+        include_definitions: bool = False,
+    ) -> list[IntentRegistration]:
+        """The hub's intent manifest for one language, one row per registration."""
+
+        from . import intents as _intents
+
+        return _intents.list_intents(
+            self,
+            lang or self._default_lang(),
+            timeout=timeout,
+            include_definitions=include_definitions,
+        )
+
+    def describe_intent(
+        self,
+        skill_id: str,
+        intent_name: str,
+        lang: str | None = None,
+        *,
+        timeout: float = 5.0,
+    ) -> list[IntentDefinition]:
+        """The registrations behind one intent in one language, sentences included."""
+
+        from . import intents as _intents
+
+        return _intents.describe_intent(
+            self, skill_id, intent_name, lang or self._default_lang(), timeout=timeout
+        )
+
+    @staticmethod
+    def _default_lang() -> str:
+        return "en-us"
+
     def query(
         self,
         text: str,
@@ -974,6 +1042,48 @@ class AsyncThalovantClient:
 
     async def healthcheck(self) -> ThalovantHealth:
         return await asyncio.to_thread(self._client.healthcheck)
+
+    async def intents(
+        self,
+        languages: Iterable[str] | None = None,
+        *,
+        timeout: float = 5.0,
+        describe: bool = True,
+        fallback: bool = True,
+    ) -> HubIntentInventory:
+        return await asyncio.to_thread(
+            self._client.intents,
+            languages,
+            timeout=timeout,
+            describe=describe,
+            fallback=fallback,
+        )
+
+    async def list_intents(
+        self,
+        lang: str | None = None,
+        *,
+        timeout: float = 5.0,
+        include_definitions: bool = False,
+    ) -> list[IntentRegistration]:
+        return await asyncio.to_thread(
+            self._client.list_intents,
+            lang,
+            timeout=timeout,
+            include_definitions=include_definitions,
+        )
+
+    async def describe_intent(
+        self,
+        skill_id: str,
+        intent_name: str,
+        lang: str | None = None,
+        *,
+        timeout: float = 5.0,
+    ) -> list[IntentDefinition]:
+        return await asyncio.to_thread(
+            self._client.describe_intent, skill_id, intent_name, lang, timeout=timeout
+        )
 
     async def doctor(self) -> ThalovantDoctorReport:
         return await asyncio.to_thread(self._client.doctor)

@@ -18,6 +18,16 @@ EVENT_INTENT_FAILURE = "complete_intent_failure"
 # Current OVOS name for the same terminal "no intent matched" event.
 EVENT_INTENT_UNMATCHED = "ovos.intent.unmatched"
 EVENT_POLICY_DENIED = "hive.policy.denied"
+# The hub runtime's intent manifest (OVOS-INTENT-4 section 10) and the engines'
+# own manifests. See ``thalovant.intents``.
+EVENT_INTENT_LIST = "ovos.intent.list"
+EVENT_INTENT_LIST_RESPONSE = "ovos.intent.list.response"
+EVENT_INTENT_DESCRIBE = "ovos.intent.describe"
+EVENT_INTENT_DESCRIBE_RESPONSE = "ovos.intent.describe.response"
+EVENT_ADAPT_MANIFEST_GET = "intent.service.adapt.manifest.get"
+EVENT_ADAPT_MANIFEST = "intent.service.adapt.manifest"
+EVENT_PADATIOUS_MANIFEST_GET = "intent.service.padatious.manifest.get"
+EVENT_PADATIOUS_MANIFEST = "intent.service.padatious.manifest"
 EVENT_QUERY_TIMEOUT = "hive.query.timeout"
 FAILURE_EVENTS = (
     EVENT_INTENT_FAILURE,
