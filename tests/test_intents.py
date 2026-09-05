@@ -20,6 +20,7 @@ from thalovant import (
     ThalovantClient,
     ThalovantIdentity,
     ThalovantPolicyDeniedError,
+    ThalovantRuntimeError,
     ThalovantTimeoutError,
 )
 from thalovant.intents import SOURCE_ENGINES, SOURCE_MANIFEST, same_language
@@ -502,3 +503,37 @@ def test_a_refusal_in_a_later_window_is_not_swallowed_as_a_partial_answer() -> N
     with pytest.raises(ThalovantPolicyDeniedError) as caught:
         describe_many(c, [(WEATHER, f"intent.{n:03d}", "en-us") for n in range(69)], timeout=0.3)
     assert caught.value.denied_type == "ovos.intent.describe"
+
+
+def test_a_refused_listing_is_an_error_not_an_empty_hub() -> None:
+    """`ok: false` on a listing means the query failed. Reporting it as no
+    intents would show a person an empty hub."""
+
+    class Refuses(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.intent.list":
+                self.emitted.append((event_type, dict(data), dict(context)))
+                self._deliver("ovos.intent.list.response",
+                              {"ok": False, "error": "manifest unavailable"}, context)
+                return
+            super().emit_event(event_type, data, context)
+
+    with pytest.raises(ThalovantRuntimeError, match="manifest unavailable"):
+        client(Refuses()).intents(["en-us"])
+
+
+def test_a_describe_that_does_not_know_the_intent_is_not_an_error() -> None:
+    """The other half of the rule: describe answering `ok: false` for an
+    intent it does not know is a real answer, and leaves it without sentences."""
+    inventory = client(FakeHubTransport()).intents(["fr-fr"])
+    assert all(not i.phrases_for("fr-fr") or i.skill_id == WEATHER for i in inventory.intents)
+
+
+def test_only_string_entries_survive_in_the_allowed_list() -> None:
+    """A number or a null in `allowed` is not a message type; stringifying one
+    would put "3" in front of an operator reading which types to allow."""
+    error = ThalovantPolicyDeniedError.from_event(FakeMessage(
+        {"denied_type": "ovos.intent.list", "code": "acl_disallowed_type",
+         "data": {"allowed": ["speak", 3, None, "recognizer_loop:utterance"]}},
+    ))
+    assert error.allowed == ("speak", "recognizer_loop:utterance")
