@@ -524,9 +524,24 @@ def test_a_refused_listing_is_an_error_not_an_empty_hub() -> None:
 
 def test_a_describe_that_does_not_know_the_intent_is_not_an_error() -> None:
     """The other half of the rule: describe answering `ok: false` for an
-    intent it does not know is a real answer, and leaves it without sentences."""
-    inventory = client(FakeHubTransport()).intents(["fr-fr"])
-    assert all(not i.phrases_for("fr-fr") or i.skill_id == WEATHER for i in inventory.intents)
+    intent it does not know is a real answer, not a failure."""
+    hub = FakeHubTransport()
+    c = client(hub)
+    c.connect()
+
+    # The hub has no French registration for the shadow skill, so it answers
+    # `ok: false` -- which is an empty list, not a raise.
+    assert c.describe_intent(SHADOW, "custos.incidents", "fr-fr") == []
+
+    # And an intent the hub does know still comes back with its sentences.
+    known = c.describe_intent(WEATHER, "current.weather", "fr-fr")
+    assert known and known[0].samples[0] == "quel temps fait-il"
+
+    # Through the inventory: the intent the hub could not describe is listed
+    # without sentences, and the one it could keeps them.
+    inventory = c.intents(["en-us"])
+    by_id = {intent.id: intent for intent in inventory.intents}
+    assert by_id[f"{WEATHER}:current.weather"].phrases_for("en-us")
 
 
 def test_only_string_entries_survive_in_the_allowed_list() -> None:
