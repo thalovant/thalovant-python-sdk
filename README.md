@@ -362,8 +362,9 @@ with ThalovantClient.from_identity_file("_identity.json") as client:
 
 Each intent carries the sentences a person says to reach it, per language, as
 the skill wrote them (`{location}` marks a slot). The hub's connection must be
-allowed to publish `ovos.intent.list`, and `ovos.intent.describe` for the
-sentences (`describe=False` needs only the first). A hub that refuses
+allowed to publish `ovos.intent.list`; `ovos.intent.describe` is needed only
+when the client has to ask for the definitions separately, which a runtime
+attaching them to the listing never makes it do. A hub that refuses
 `ovos.intent.list` raises `ThalovantPolicyDeniedError` naming the type, or with
 the default `fallback=True` lists intent names only from the engines' manifests
 and marks the result `source="engine-manifests"`, `denied=("ovos.intent.list",)`.

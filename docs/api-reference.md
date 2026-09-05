@@ -38,8 +38,11 @@ Common methods:
 intent each skill registered, per language, with the sentences a person says
 to reach it as the skill's locale files wrote them, `{slot}` placeholders
 included. No control-plane credential is involved. The hub's connection must
-be allowed to publish `ovos.intent.list`, and `ovos.intent.describe` as well
-unless `describe=False` (names and languages only). A refusal of
+be allowed to publish `ovos.intent.list`; `ovos.intent.describe` is needed only
+when the client actually has to ask for definitions, which is when they were
+requested (`describe=True`, the default) *and* the runtime did not attach them
+to the listing itself. A runtime that honours `include_definitions` answers in
+one round trip per language and no describe is ever sent. A refusal of
 `ovos.intent.list` raises `ThalovantPolicyDeniedError` naming the type, or with
 `fallback=True` (the default) falls back to the engines' own manifests, which
 carry names and no language, and marks the result `source="engine-manifests"`
