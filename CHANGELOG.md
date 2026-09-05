@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.40
+
+- `list_intents` raises `ThalovantRuntimeError` when the hub answers `ovos.intent.list` with `ok: false`, instead of reading the missing `intents` key as an empty list. A refused listing is not an empty hub, and reporting it as no intents showed a person a device that can do nothing. `describe_intent` keeps returning an empty list for `ok: false`, which is a real answer: the hub does not know that registration. Reported by the Kotlin port's review.
+- `ThalovantPolicyDeniedError.allowed` keeps only string entries. A number or a null in the hub's `allowed` list is not a message type, and stringifying one put `"3"` or `"None"` in front of an operator reading which types to allow. Reported by the Kotlin port's review.
+
 ## 0.4.39
 
 - Keep partial results across describe batches. 0.4.38 sends describes in windows of 32, and a window that received no reply at all raised, discarding every earlier window's definitions. Windows are contiguous slices of the work, so a skill that stops answering can own a whole window: an unresponsive skill with more than 32 intents turned the entire inventory into a timeout, while the same skill with fewer intents only lost its sentences. A window with nothing now contributes nothing, and the call fails only when no window produced a definition — so a hub silent from the start still fails at the first window rather than after all of them. Reported by the Rust port's review.

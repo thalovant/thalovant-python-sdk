@@ -33,7 +33,11 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
-from .errors import ThalovantPolicyDeniedError, ThalovantTimeoutError
+from .errors import (
+    ThalovantPolicyDeniedError,
+    ThalovantRuntimeError,
+    ThalovantTimeoutError,
+)
 from .events import (
     EVENT_ADAPT_MANIFEST,
     EVENT_ADAPT_MANIFEST_GET,
@@ -343,6 +347,13 @@ def list_intents(
     event = request_reply(
         client, EVENT_INTENT_LIST, EVENT_INTENT_LIST_RESPONSE, data, lang=lang, timeout=timeout
     )
+    if event.data.get("ok") is False:
+        # A refused listing is not an empty hub. Describe answers `ok: false`
+        # for an intent it does not know, which is a real answer; a listing
+        # that fails has told us nothing, and reporting it as no intents would
+        # show a person an empty hub.
+        detail = str(event.data.get("error") or "").strip() or "the hub refused the listing"
+        raise ThalovantRuntimeError(f"{EVENT_INTENT_LIST} failed: {detail}")
     rows = event.data.get("intents")
     if not isinstance(rows, list):
         return []
