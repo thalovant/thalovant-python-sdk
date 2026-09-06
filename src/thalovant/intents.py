@@ -28,6 +28,7 @@ fallback for a hub allowed for those alone.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -587,6 +588,11 @@ def _inventory_from_names(names: dict[str, list[str]], languages: tuple[str, ...
     return HubIntentInventory(languages=languages, skills=skills, source=SOURCE_ENGINES, denied=(denied,))
 
 
+#: How long to wait for `ovos.skills.fallback.list` before calling the answer
+#: unknowable. Bounded separately from the caller's timeout: see _with_fallbacks.
+FALLBACK_PROBE_TIMEOUT = 1.5
+
+
 def list_fallbacks(
     client: "ThalovantClient", *, timeout: float = 5.0
 ) -> tuple[HubFallback, ...] | None:
@@ -618,10 +624,20 @@ def list_fallbacks(
         if not isinstance(skill_id, str) or not skill_id:
             continue
         priority = row.get("priority")
-        found.append(HubFallback(
-            skill_id=skill_id,
-            priority=int(priority) if isinstance(priority, (int, float)) else 0,
-        ))
+        if isinstance(priority, int):
+            # An int is always finite, and math.isfinite() would raise
+            # OverflowError converting a big one to a float.
+            rank = int(priority)
+        elif isinstance(priority, float):
+            if not math.isfinite(priority):
+                # NaN and infinity are floats, and int() raises ValueError
+                # and OverflowError on them. One malformed row must not
+                # abort discovery for every other.
+                continue
+            rank = int(priority)
+        else:
+            rank = 0
+        found.append(HubFallback(skill_id=skill_id, priority=rank))
     return tuple(sorted(found, key=lambda f: (f.priority, f.skill_id)))
 
 
@@ -716,7 +732,13 @@ def _with_fallbacks(
 ) -> HubIntentInventory:
     """Attach what answers outside the manifest, or record that it is unknown."""
 
-    fallbacks = list_fallbacks(client, timeout=timeout)
+    # An ovos-core without `ovos.skills.fallback.list` never replies, and this
+    # runs on every inventory() call. Waiting the caller's full timeout to
+    # learn "unknowable" would add that much to every listing against an older
+    # hub. A hub that has the handler answers from memory, so a short window is
+    # enough for a real answer while an unsupporting one costs a fraction of
+    # the budget. It is never longer than the caller asked for.
+    fallbacks = list_fallbacks(client, timeout=min(timeout, FALLBACK_PROBE_TIMEOUT))
     return replace(
         found,
         fallbacks=fallbacks or (),

@@ -683,3 +683,76 @@ def test_may_answer_ignores_an_intent_that_is_switched_off() -> None:
     inventory = client(hub).intents(["fr-fr"])
     assert inventory.fallbacks_known is True and inventory.fallbacks == ()
     assert inventory.may_answer("fr-FR") is False
+
+
+def test_a_bare_language_string_is_one_language_not_five_characters() -> None:
+    """``intents("en-us")`` must not expand into ["e", "n", "-", "u", "s"].
+
+    ``str`` satisfies the ``Iterable[str]`` hint, so this went through
+    ``list()`` and asked the hub five nonsense manifest queries, then
+    reported an inventory built from the answers to none of them.
+    """
+
+    hub = FakeHubTransport()
+    inventory = client(hub).intents("en-us")
+
+    assert inventory.languages == ("en-us",)
+    asked = [data.get("lang") for event, data, _ in hub.emitted if event == "ovos.intent.list"]
+    assert asked == ["en-us"], f"asked the hub for {asked}"
+
+
+def test_an_empty_language_still_falls_back_to_the_default() -> None:
+    """"" is falsy and was always the default-language path.
+
+    Wrapping every str would have turned it into one blank tag, which
+    inventory() rejects outright -- trading a silent bug for a crash.
+    """
+
+    hub = FakeHubTransport()
+    inventory = client(hub).intents("")
+
+    assert inventory.languages == ("en-us",)
+
+
+def test_a_non_finite_fallback_priority_does_not_abort_discovery() -> None:
+    """``int(nan)`` raises ValueError and ``int(inf)`` OverflowError.
+
+    One malformed row used to take the whole inventory down with it.
+    """
+
+    hub = FakeHubTransport(fallbacks=[
+        ("thalovant-skill-source-scout.thalovant", 10),
+        ("broken-nan.thalovant", float("nan")),
+        ("broken-inf.thalovant", float("inf")),
+        # Not malformed, just large. math.isfinite() raises OverflowError
+        # converting this to a float, so guarding with it alone reintroduced
+        # the crash it was added to remove.
+        ("huge-but-finite.thalovant", 10 ** 400),
+    ])
+    inventory = client(hub).intents(["en-us"])
+
+    assert inventory.fallbacks_known
+    assert [row.skill_id for row in inventory.fallbacks] == [
+        "thalovant-skill-source-scout.thalovant",
+        "huge-but-finite.thalovant",
+    ]
+
+
+def test_unsupported_fallback_discovery_does_not_cost_the_whole_timeout() -> None:
+    """An ovos-core without #951 never answers, and this runs every call.
+
+    The probe is bounded separately, so learning "unknowable" costs a
+    fraction of the caller's budget instead of all of it.
+    """
+
+    import time
+
+    from thalovant.intents import FALLBACK_PROBE_TIMEOUT
+
+    hub = FakeHubTransport(fallbacks=None)
+    started = time.monotonic()
+    inventory = client(hub).intents(["en-us"], timeout=10.0)
+    elapsed = time.monotonic() - started
+
+    assert not inventory.fallbacks_known, "the hub could not say, which is not ()"
+    assert elapsed < FALLBACK_PROBE_TIMEOUT + 3.0, f"waited {elapsed:.1f}s of a 10s budget"

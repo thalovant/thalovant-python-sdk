@@ -624,7 +624,17 @@ class ThalovantClient:
 
         from . import intents as _intents
 
-        chosen = list(languages) if languages else [self._default_lang()]
+        # A str is an Iterable[str], so intents("en-us") would otherwise
+        # expand into ["e", "n", "-", "u", "s"] and ask the hub five
+        # nonsense manifest queries. The empty check stays first so that
+        # "" keeps falling back to the default language rather than
+        # becoming a single blank tag that inventory() then rejects.
+        if not languages:
+            chosen = [self._default_lang()]
+        elif isinstance(languages, str):
+            chosen = [languages]
+        else:
+            chosen = list(languages)
         return _intents.inventory(
             self, chosen, timeout=timeout, describe=describe, fallback=fallback
         )

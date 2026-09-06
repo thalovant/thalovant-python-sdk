@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.3
+
+- `client.intents("en-us")` asks for one language again. A `str` satisfies the
+  `Iterable[str]` hint, so a bare tag went through `list()` and became
+  `["e", "n", "-", "u", "s"]`: the client sent five nonsense manifest queries
+  and built an inventory from the answers to none of them. Both the sync and
+  async methods take the same path.
+- A fallback row whose `priority` is `NaN` or infinity no longer aborts intent
+  discovery. Both are floats, and `int()` raises `ValueError` and
+  `OverflowError` on them, so one malformed row took the whole inventory with
+  it. The row is skipped and the rest are kept. A large but perfectly finite
+  integer priority is kept too: `math.isfinite()` raises `OverflowError`
+  converting one to a float, so guarding with it alone would have swapped one
+  crash for another.
+- Discovering fallbacks no longer costs the caller's whole timeout. An
+  ovos-core without `ovos.skills.fallback.list` never answers it, and
+  `inventory()` asks on every call, so each listing against an older hub waited
+  out the full budget only to report the answer as unknowable. The probe now
+  has its own short bound and is never longer than the caller asked for.
+
 ## 0.5.0
 
 - **Breaking.** `ThalovantIdentity.crypto_key` is gone. Hubs stopped issuing a
