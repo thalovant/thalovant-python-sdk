@@ -985,7 +985,6 @@ class ThalovantControlPlane:
         site = _clean_site_id(site_id or name)
         api_key = _new_secret()
         password = _new_secret()
-        crypto_key = _new_secret()
 
         client_spec = dict(spec or {})
         client_spec.setdefault("version", "1")
@@ -993,7 +992,6 @@ class ThalovantControlPlane:
             {
                 "apiKey": api_key,
                 "password": password,
-                "cryptoKey": crypto_key,
                 "siteId": site,
             }
         )
@@ -1022,7 +1020,6 @@ class ThalovantControlPlane:
             identity = ThalovantIdentity(
                 access_key=api_key,
                 password=password,
-                crypto_key=crypto_key,
                 site_id=site,
                 default_master=_default_master(hub_resource, endpoints, selected),
                 default_port=443,

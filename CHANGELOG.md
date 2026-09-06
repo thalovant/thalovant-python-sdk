@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0
+
+- **Breaking.** `ThalovantIdentity.crypto_key` is gone. Hubs stopped issuing a
+  crypto key with HiveMind protocol v3, which derives its Noise pre-shared key
+  from the client `password`, so the field named a credential that no longer
+  exists. A `crypto_key` in an older identity file, config profile or API
+  payload is still accepted and ignored, and both spellings stay in the
+  bootstrap redaction set so an older stored payload carrying one cannot be
+  logged. `create_client_identity` no longer mints one.
+- **Breaking.** The WSS transport no longer installs a protocol subclass that
+  short-circuits the pre-shared handshake. That override is what stopped this
+  SDK reaching a HiveMind-core 5.x hub, which accepts only the v3 Noise
+  handshake and closes anything else with `1008`; the bus client performs it
+  from the identity password.
+- The HTTPS transport no longer wraps outgoing messages in the crypto-key JSON
+  envelope, and the MQTT transport no longer seeds its cipher from the identity.
+  MQTT still derives a key from the password handshake where the hub offers one,
+  and TLS protects both paths.
+- `_runtime_crypto_key` is removed. It truncated an identity crypto key to the
+  HiveMind runtime key size, and nothing derives a key from an identity field
+  any more.
+
 ## 0.4.42
 
 - Documentation: `ovos.intent.describe` is required only when the client has to ask for definitions separately. A runtime that honours `include_definitions` attaches them to `ovos.intent.list` and no describe is sent, so the permission is not needed at all there — which is about to be the common case. The previous wording said the permission was needed whenever `describe=True`. Reported by the Rust port's review.

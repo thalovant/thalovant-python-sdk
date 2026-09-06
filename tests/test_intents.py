@@ -182,7 +182,7 @@ class FakeHubTransport:
 
 def identity() -> ThalovantIdentity:
     return ThalovantIdentity(
-        access_key="key", password="password", crypto_key="crypto",
+        access_key="key", password="password",
         site_id="site", default_master="http://hub.local", default_port=5679,
     )
 

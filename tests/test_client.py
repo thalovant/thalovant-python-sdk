@@ -24,7 +24,7 @@ from thalovant import (
     ThalovantUnsupportedProtocolError,
     build_client_context,
 )
-from thalovant.client import _runtime_bus_context, _runtime_crypto_key
+from thalovant.client import _runtime_bus_context
 from thalovant.transport import HiveMindHTTPTransport, HiveMindWSSTransport
 from thalovant.transport import _mqtt_default_port, _mqtt_tls_enabled
 from thalovant.transport import mqtt_topics_for_identity
@@ -189,7 +189,6 @@ def identity() -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="crypto",
         site_id="site",
         default_master="http://hub.local",
         default_port=5679,
@@ -200,7 +199,6 @@ def identity_with_wss() -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="crypto",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -216,7 +214,6 @@ def identity_with_mqtt() -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -267,7 +264,6 @@ def test_ask_includes_identity_metadata():
     sdk_identity = ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="crypto",
         site_id="site",
         default_master="http://hub.local",
         default_port=5679,
@@ -538,7 +534,6 @@ def test_mqtt_topics_strip_surrounding_slashes_from_prefix():
     identity = ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -562,7 +557,6 @@ def test_mqtt_topics_require_topic_prefix():
     identity = ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -582,7 +576,6 @@ def _identity_with_topic_prefix(topic_prefix: str) -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -984,12 +977,6 @@ def test_emit_reconnects_once_after_transport_failure():
     assert transport.connect_count == 2
     assert transport.emitted == [("skillmanager.list", {"x": 1}, {})]
 
-
-def test_runtime_crypto_key_matches_hivemind_runtime_truncation():
-    assert _runtime_crypto_key("  abcdefghijklmnopqrstuvwxyz  ") == "abcdefghijklmnop"
-    assert _runtime_crypto_key("0123456789abcdef") == "0123456789abcdef"
-    assert _runtime_crypto_key("   ") is None
-    assert _runtime_crypto_key(None) is None
 
 
 def test_runtime_bus_context_injects_non_default_session():

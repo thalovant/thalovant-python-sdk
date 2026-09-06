@@ -18,10 +18,13 @@ The SDK accepts the identity fields already used by HiveMind clients:
 
 - `access_key`
 - `password`
-- `crypto_key`
 - `site_id`
 - `default_master`
 - `default_port`
+
+A `crypto_key` left in an older identity file is accepted and ignored. It keyed
+the pre-shared transport cipher that the v3 Noise handshake replaced, and hubs
+no longer issue one: v3 derives its pre-shared key from `password`.
 
 `default_master` remains the backward-compatible hub endpoint. Newer payloads
 may also include `data_plane_endpoints` for `https`, `wss`, and `mqtt`, plus
