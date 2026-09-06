@@ -1007,6 +1007,15 @@ def test_control_plane_manages_runtime_groups():
 
 
 def test_control_plane_reads_and_merges_runtime_group_config():
+    """The read is what makes the merge real.
+
+    This test asserted that the PATCH body was exactly what the caller passed,
+    which is the *replacing* behaviour, while its name said merging -- the
+    fixture stores ``{"lang": "en-us"}`` and the call passed ``{"lang":
+    "en-us"}``, so the two were indistinguishable here. On a real group they
+    were not: patching one key dropped every other.
+    """
+
     session = ProvisioningSession()
     api = provisioning_api(session)
 
@@ -1019,7 +1028,12 @@ def test_control_plane_reads_and_merges_runtime_group_config():
     without_personas = ProvisioningSession()
     provisioning_api(without_personas).update_runtime_group_config("rg-1", {"lang": "fr-fr"})
 
-    recorded_call(session, "GET", "/v1/runtime-groups/rg-1/config")
+    # Two reads now: the caller's own, and the one the merge does for itself.
+    assert len([
+        kwargs for method, url, kwargs in session.requests
+        if method == "GET"
+        and url == ProvisioningSession.BASE_URL + "v1/runtime-groups/rg-1/config"
+    ]) == 2
     assert recorded_call(session, "PATCH", "/v1/runtime-groups/rg-1/config")["json"] == {
         "config": {"lang": "en-us"},
         "personas": {"default": "friendly"},
@@ -1355,3 +1369,77 @@ def test_create_client_identity_drops_a_callers_legacy_crypto_key():
     assert "cryptoKey" not in sent_spec, "a caller-supplied cryptoKey reached /v1/clients"
     assert "crypto_key" not in sent_spec, "a caller-supplied crypto_key reached /v1/clients"
     assert sent_spec["label"] == "keep-me", "the rest of the caller's spec must survive"
+
+class ConfigSession:
+    """A control plane whose config route replaces, the way the real one does."""
+
+    def __init__(self, stored):
+        self.stored = stored
+        self.sent = []
+
+    def request(self, method, url, **kwargs):
+        if url.endswith("/v1/auth/token"):
+            return FakeResponse(200, {"access_token": "token", "expires_in": 3600})
+        if url.endswith("/config") and method == "GET":
+            return FakeResponse(200, {"runtime_group_id": "g", "config": self.stored,
+                                      "personas": {}})
+        if url.endswith("/config") and method == "PATCH":
+            body = kwargs["json"]
+            self.sent.append(body)
+            self.stored = body["config"]  # replaces, which is the whole problem
+            return FakeResponse(200, {"runtime_group_id": "g", "config": self.stored})
+        raise AssertionError(url)
+
+
+def _plane(session):
+    api = ThalovantControlPlane("https://dash.example.com/api", session=session)
+    api.login("ada@example.com", "secret")
+    return api
+
+
+ENV = [{"name": "REDIS_HOST", "value": "redis.internal"},
+       {"name": "REDIS_PASSWORD",
+        "valueFrom": {"secretKeyRef": {"name": "db-creds", "key": "password"}}}]
+
+
+def test_updating_one_config_key_does_not_drop_the_others():
+    """The API replaces. Sending a language setting once dropped a group's
+    entire env block, taking two secretKeyRef credential bindings with it, and
+    the call succeeded and read back exactly what was sent."""
+    session = ConfigSession({"env": ENV, "mycroft": {"mycroft": {"lang": "en-us"}}})
+    _plane(session).update_runtime_group_config(
+        "g", {"mycroft": {"mycroft": {"secondary_langs": ["fr-fr"]}}})
+
+    sent = session.sent[-1]["config"]
+    assert sent["env"] == ENV, "the untouched block survives"
+    assert sent["mycroft"]["mycroft"] == {"lang": "en-us",
+                                          "secondary_langs": ["fr-fr"]}
+
+
+def test_a_list_is_replaced_rather_than_appended():
+    """A list is a value, not a namespace: nobody passing one means "add"."""
+    session = ConfigSession({"mycroft": {"mycroft": {"secondary_langs": ["de-de"]}}})
+    _plane(session).update_runtime_group_config(
+        "g", {"mycroft": {"mycroft": {"secondary_langs": ["fr-fr"]}}})
+    assert session.sent[-1]["config"]["mycroft"]["mycroft"]["secondary_langs"] == ["fr-fr"]
+
+
+def test_merge_false_sends_exactly_what_it_was_given():
+    """For a caller who really does mean to define the whole configuration."""
+    session = ConfigSession({"env": ENV})
+    _plane(session).update_runtime_group_config("g", {"mycroft": {}}, merge=False)
+    assert session.sent[-1]["config"] == {"mycroft": {}}
+    assert "env" not in session.sent[-1]["config"]
+
+
+def test_merging_reads_the_stored_config_first():
+    session = ConfigSession({"env": ENV})
+    api = _plane(session)
+    api.update_runtime_group_config("g", {"a": 1})
+    assert session.sent[-1]["config"]["env"] == ENV
+
+
+def test_personas_are_still_replaced_when_provided():
+    session = ConfigSession({"env": ENV})
+    _plane(session).update_runtime_group_config("g", {"a": 1}, personas={"p": 1})
+    assert session.sent[-1]["personas"] == {"p": 1}
