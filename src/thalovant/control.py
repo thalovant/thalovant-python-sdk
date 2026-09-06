@@ -716,6 +716,23 @@ class ThalovantControlPlane:
     ) -> dict[str, Any]:
         """Update a runtime group's configuration.
 
+        **The top level of ``config`` is the OVOS mycroft configuration**, plus
+        an ``env`` key for container variables. It is not a wrapper around one.
+        The renderer pops ``env`` and passes everything else through as the
+        runtime's mycroft config, so::
+
+            # right -- these are read by ovos-core at load
+            {"lang": "en-us", "secondary_langs": ["fr-fr"], "env": [...]}
+
+            # wrong -- renders as spec.config.mycroft.mycroft and is ignored
+            {"mycroft": {"lang": "en-us", "secondary_langs": ["fr-fr"]}}
+
+        The wrong form fails silently: unknown keys are copied into mycroft.conf
+        verbatim, so the call succeeds, reads back exactly what was sent, and
+        the runtime never sees the setting. Worth stating because the CR and the
+        gitops manifests *do* nest it one deeper -- ``spec.config.mycroft.*`` --
+        and copying that shape into this call is the natural mistake.
+
         **The API replaces the stored configuration; it does not merge.** This
         docstring claimed the opposite, and the cost of believing it was real:
         sending ``{"mycroft": {...}}`` to add a language setting dropped the
