@@ -10,7 +10,10 @@
 - A fallback row whose `priority` is `NaN` or infinity no longer aborts intent
   discovery. Both are floats, and `int()` raises `ValueError` and
   `OverflowError` on them, so one malformed row took the whole inventory with
-  it. The row is skipped and the rest are kept.
+  it. The row is skipped and the rest are kept. A large but perfectly finite
+  integer priority is kept too: `math.isfinite()` raises `OverflowError`
+  converting one to a float, so guarding with it alone would have swapped one
+  crash for another.
 - Discovering fallbacks no longer costs the caller's whole timeout. An
   ovos-core without `ovos.skills.fallback.list` never answers it, and
   `inventory()` asks on every call, so each listing against an older hub waited

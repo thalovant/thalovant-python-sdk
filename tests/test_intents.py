@@ -711,12 +711,17 @@ def test_a_non_finite_fallback_priority_does_not_abort_discovery() -> None:
         ("thalovant-skill-source-scout.thalovant", 10),
         ("broken-nan.thalovant", float("nan")),
         ("broken-inf.thalovant", float("inf")),
+        # Not malformed, just large. math.isfinite() raises OverflowError
+        # converting this to a float, so guarding with it alone reintroduced
+        # the crash it was added to remove.
+        ("huge-but-finite.thalovant", 10 ** 400),
     ])
     inventory = client(hub).intents(["en-us"])
 
     assert inventory.fallbacks_known
     assert [row.skill_id for row in inventory.fallbacks] == [
-        "thalovant-skill-source-scout.thalovant"
+        "thalovant-skill-source-scout.thalovant",
+        "huge-but-finite.thalovant",
     ]
 
 

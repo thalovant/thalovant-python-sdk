@@ -624,14 +624,19 @@ def list_fallbacks(
         if not isinstance(skill_id, str) or not skill_id:
             continue
         priority = row.get("priority")
-        if not isinstance(priority, (int, float)):
-            rank = 0
-        elif not math.isfinite(priority):
-            # NaN and infinity are floats, and int() raises on both. One
-            # malformed row must not abort discovery for every other.
-            continue
-        else:
+        if isinstance(priority, int):
+            # An int is always finite, and math.isfinite() would raise
+            # OverflowError converting a big one to a float.
             rank = int(priority)
+        elif isinstance(priority, float):
+            if not math.isfinite(priority):
+                # NaN and infinity are floats, and int() raises ValueError
+                # and OverflowError on them. One malformed row must not
+                # abort discovery for every other.
+                continue
+            rank = int(priority)
+        else:
+            rank = 0
         found.append(HubFallback(skill_id=skill_id, priority=rank))
     return tuple(sorted(found, key=lambda f: (f.priority, f.skill_id)))
 
