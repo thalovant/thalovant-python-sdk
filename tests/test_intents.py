@@ -701,6 +701,19 @@ def test_a_bare_language_string_is_one_language_not_five_characters() -> None:
     assert asked == ["en-us"], f"asked the hub for {asked}"
 
 
+def test_an_empty_language_still_falls_back_to_the_default() -> None:
+    """"" is falsy and was always the default-language path.
+
+    Wrapping every str would have turned it into one blank tag, which
+    inventory() rejects outright -- trading a silent bug for a crash.
+    """
+
+    hub = FakeHubTransport()
+    inventory = client(hub).intents("")
+
+    assert inventory.languages == ("en-us",)
+
+
 def test_a_non_finite_fallback_priority_does_not_abort_discovery() -> None:
     """``int(nan)`` raises ValueError and ``int(inf)`` OverflowError.
 
