@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from .errors import (
@@ -41,6 +41,8 @@ from .errors import (
 from .events import (
     EVENT_ADAPT_MANIFEST,
     EVENT_ADAPT_MANIFEST_GET,
+    EVENT_FALLBACK_LIST,
+    EVENT_FALLBACK_LIST_RESPONSE,
     EVENT_INTENT_DESCRIBE,
     EVENT_INTENT_DESCRIBE_RESPONSE,
     EVENT_INTENT_LIST,
@@ -216,18 +218,64 @@ class HubSkillIntents:
 
 
 @dataclass(frozen=True)
+class HubFallback:
+    """A skill that answers whatever nothing else matched.
+
+    It has no intents and no sentences to publish -- that is what being a
+    fallback means -- so a caller can learn that it exists and in what order it
+    will be tried, and nothing more. That is still the difference between "no
+    skill handles this" and "something will try".
+    """
+
+    skill_id: str
+    priority: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"skill_id": self.skill_id, "priority": self.priority}
+
+
+@dataclass(frozen=True)
 class HubIntentInventory:
     """Everything a hub can be asked, grouped by skill.
 
     ``source`` says how it was read: ``intent-manifest`` carries sentences per
     language; ``engine-manifests`` is the names-only fallback, and ``denied``
     then names the query the hub refused.
+
+    ``fallbacks`` is the other half of the answer, and the reason it exists is
+    a bug this SDK caused. A hub answered French correctly while its manifest
+    reported 69 registrations, every one en-US and none for fr-FR, because the
+    French was served by fallback handlers -- which register no intents and no
+    phrasings, and so cannot appear in a manifest. A satellite reading only the
+    manifest told its user their house did not speak French while the house was
+    answering them in French.
+
+    ``fallbacks_known`` is the distinction that stops the same mistake being
+    made about fallbacks themselves: ``False`` means the hub was not able to
+    say (an older ovos-core without `ovos.skills.fallback.list`, or a
+    connection not allowed to publish it), and an empty ``fallbacks`` then
+    means *unknown*, not *none*.
     """
 
     languages: tuple[str, ...]
     skills: tuple[HubSkillIntents, ...]
     source: str = SOURCE_MANIFEST
     denied: tuple[str, ...] = ()
+    fallbacks: tuple[HubFallback, ...] = ()
+    fallbacks_known: bool = False
+
+    def may_answer(self, lang: str) -> bool:
+        """Whether anything on this hub might answer in ``lang``.
+
+        True when a skill registered sentences in it, and also when the hub has
+        fallbacks, since a fallback is offered every utterance whatever its
+        language. Callers use this to avoid saying "nothing here speaks that",
+        which is a claim a manifest alone cannot support.
+        """
+
+        if any(intent.phrases_for(lang) for intent in self.intents):
+            return True
+        return bool(self.fallbacks) or not self.fallbacks_known
 
     @property
     def intents(self) -> tuple[HubIntent, ...]:
@@ -247,6 +295,8 @@ class HubIntentInventory:
             "source": self.source,
             "denied": list(self.denied),
             "skills": [skill.as_dict() for skill in self.skills],
+            "fallbacks": [fallback.as_dict() for fallback in self.fallbacks],
+            "fallbacks_known": self.fallbacks_known,
         }
 
 
@@ -534,6 +584,44 @@ def _inventory_from_names(names: dict[str, list[str]], languages: tuple[str, ...
     return HubIntentInventory(languages=languages, skills=skills, source=SOURCE_ENGINES, denied=(denied,))
 
 
+def list_fallbacks(
+    client: "ThalovantClient", *, timeout: float = 5.0
+) -> tuple[HubFallback, ...] | None:
+    """Which skills answer whatever nothing else matched, or None if unknowable.
+
+    ``None`` and ``()`` are deliberately different answers. ``()`` means the
+    hub said it has no fallbacks; ``None`` means it could not say -- an
+    ovos-core without `ovos.skills.fallback.list` (added in #951), a connection
+    not allowed to publish it, or a hub that did not reply. Collapsing those
+    into "none" is the mistake this whole feature exists to correct, so it is
+    not made here either.
+    """
+
+    try:
+        event = request_reply(
+            client, EVENT_FALLBACK_LIST, EVENT_FALLBACK_LIST_RESPONSE, {},
+            lang=None, timeout=timeout,
+        )
+    except (ThalovantPolicyDeniedError, ThalovantTimeoutError):
+        return None
+    rows = event.data.get("fallbacks")
+    if not isinstance(rows, list):
+        return None
+    found = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        skill_id = row.get("skill_id")
+        if not isinstance(skill_id, str) or not skill_id:
+            continue
+        priority = row.get("priority")
+        found.append(HubFallback(
+            skill_id=skill_id,
+            priority=int(priority) if isinstance(priority, (int, float)) else 0,
+        ))
+    return tuple(sorted(found, key=lambda f: (f.priority, f.skill_id)))
+
+
 def inventory(
     client: "ThalovantClient",
     languages: Iterable[str],
@@ -568,7 +656,8 @@ def inventory(
         if not fallback or denied.denied_type != EVENT_INTENT_LIST:
             raise
         names = intent_names(client, asked[0], timeout=timeout)
-        return _inventory_from_names(names, asked, denied.denied_type)
+        found = _inventory_from_names(names, asked, denied.denied_type)
+        return _with_fallbacks(found, client, timeout)
 
     wanted = []
     for lang, entries in listed.items():
@@ -613,12 +702,29 @@ def inventory(
         HubSkillIntents(skill_id=skill_id, intents=tuple(sorted(intents, key=lambda i: i.name)))
         for skill_id, intents in sorted(by_skill.items())
     )
-    return HubIntentInventory(languages=asked, skills=skills, source=SOURCE_MANIFEST)
+    return _with_fallbacks(
+        HubIntentInventory(languages=asked, skills=skills, source=SOURCE_MANIFEST),
+        client, timeout,
+    )
+
+
+def _with_fallbacks(
+    found: HubIntentInventory, client: "ThalovantClient", timeout: float
+) -> HubIntentInventory:
+    """Attach what answers outside the manifest, or record that it is unknown."""
+
+    fallbacks = list_fallbacks(client, timeout=timeout)
+    return replace(
+        found,
+        fallbacks=fallbacks or (),
+        fallbacks_known=fallbacks is not None,
+    )
 
 
 __all__ = [
     "SOURCE_ENGINES",
     "SOURCE_MANIFEST",
+    "HubFallback",
     "HubIntent",
     "HubIntentInventory",
     "HubSkillIntents",
@@ -628,6 +734,7 @@ __all__ = [
     "describe_many",
     "intent_names",
     "inventory",
+    "list_fallbacks",
     "list_intents",
     "request_reply",
     "same_language",
