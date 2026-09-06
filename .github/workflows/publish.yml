@@ -101,7 +101,7 @@ jobs:
           python -m build
 
       - name: Check distribution metadata
-        run: python -m twine check dist/*
+        run: pipx run twine check dist/*   # isolated: twine needs rich>=14.3.3, ovos-utils pins rich~=13.7
 
       - name: Build reproducible CycloneDX SBOM from the wheel
         id: artifacts

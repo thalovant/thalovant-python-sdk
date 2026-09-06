@@ -147,7 +147,7 @@ jobs:
 
       - name: Check distribution metadata
         if: steps.plan.outputs.release_needed == 'true'
-        run: python -m twine check dist/*
+        run: pipx run twine check dist/*   # isolated: twine needs rich>=14.3.3, ovos-utils pins rich~=13.7
 
       - name: Create GitHub release
         if: steps.plan.outputs.release_needed == 'true'

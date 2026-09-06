@@ -31,7 +31,15 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "hivemind-bus-client>=0.4.4",
+    # 1.1.1a1 is the floor for the v3 Noise handshake
+    # (hivemind_bus_client.noise). HiveMind-core 5.0 made v3 the sole
+    # transport crypto and closes anything that cannot complete it with a
+    # 1008; 0.4.4 has no noise module at all.
+    "hivemind-bus-client>=1.1.1a1",
+    # the primitive hivemind_bus_client.noise imports. Without it
+    # NOISE_SUPPORTED is False and HiveMindSlaveProtocol._should_use_noise
+    # silently selects the legacy handshake the hub no longer offers.
+    "poorman-handshake>=2.0.0a3",
     "paho-mqtt>=2.1.0",
     "PyYAML>=6.0.2",
     "requests>=2.31.0",
@@ -47,9 +55,16 @@ Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 thalovant = "thalovant.cli:main"
 
 [project.optional-dependencies]
+# Test tooling only. twine lives in `publish` because it requires
+# rich>=14.3.3 while ovos-utils (via hivemind-bus-client) pins rich~=13.7:
+# installing both alongside the package is unresolvable, and the test
+# environment has no use for the publishing tools.
 dev = [
     "build>=1.2",
     "pytest>=8.0",
+]
+publish = [
+    "build>=1.2",
     "twine>=7.0",
 ]
 docs = [
