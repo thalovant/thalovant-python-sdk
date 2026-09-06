@@ -985,15 +985,19 @@ class ThalovantControlPlane:
         site = _clean_site_id(site_id or name)
         api_key = _new_secret()
         password = _new_secret()
-        crypto_key = _new_secret()
 
         client_spec = dict(spec or {})
+        # ``spec`` is caller-supplied and passed straight into the request body,
+        # and the error redaction covers only the secrets minted here -- so a
+        # legacy crypto key left in could be echoed back inside an API error.
+        # v3 issues no crypto key, so drop both spellings.
+        client_spec.pop("cryptoKey", None)
+        client_spec.pop("crypto_key", None)
         client_spec.setdefault("version", "1")
         client_spec.update(
             {
                 "apiKey": api_key,
                 "password": password,
-                "cryptoKey": crypto_key,
                 "siteId": site,
             }
         )
@@ -1022,7 +1026,6 @@ class ThalovantControlPlane:
             identity = ThalovantIdentity(
                 access_key=api_key,
                 password=password,
-                crypto_key=crypto_key,
                 site_id=site,
                 default_master=_default_master(hub_resource, endpoints, selected),
                 default_port=443,

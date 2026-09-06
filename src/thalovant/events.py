@@ -297,15 +297,6 @@ def _failure_reason(event: ThalovantEvent | None) -> str:
     return f"Hub reported {event.name}."
 
 
-def _runtime_crypto_key(raw_crypto_key: str | None) -> str | None:
-    if not isinstance(raw_crypto_key, str):
-        return None
-    normalized = raw_crypto_key.strip()
-    if not normalized:
-        return None
-    return normalized[:16]
-
-
 def _runtime_bus_context(
     raw_context: dict[str, Any] | None,
     *,

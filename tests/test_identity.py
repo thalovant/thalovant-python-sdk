@@ -42,7 +42,9 @@ def test_loads_identity_from_file(tmp_path):
 
     assert identity.access_key == "key"
     assert identity.password == "password"
-    assert identity.crypto_key == "crypto"
+    # crypto_key is left over from before v3. It parses and is ignored:
+    # the Noise pre-shared key comes from the password now.
+    assert not hasattr(identity, "crypto_key")
     assert identity.site_id == "client-site"
     assert identity.default_master == "http://hub.local"
     assert identity.default_port == 5679
@@ -126,7 +128,7 @@ profiles:
     identity = ThalovantIdentity.from_config(path)
 
     assert identity.access_key == "key"
-    assert identity.crypto_key == "crypto"
+    assert not hasattr(identity, "crypto_key")
     assert identity.default_master == "https://hub.example.com"
     assert identity.mqtt is not None
     assert identity.mqtt.password == "broker-password"
@@ -148,7 +150,6 @@ def test_loads_identity_aliases():
         {
             "key": "key",
             "password": "password",
-            "cryptoKey": "crypto",
             "siteId": "site",
             "host": "http://hub.local",
             "port": 5680,
@@ -156,7 +157,6 @@ def test_loads_identity_aliases():
     )
 
     assert identity.access_key == "key"
-    assert identity.crypto_key == "crypto"
     assert identity.site_id == "site"
     assert identity.default_master == "http://hub.local"
     assert identity.default_port == 5680
@@ -241,7 +241,6 @@ def test_identity_repr_hides_secret_material():
         {
             "access_key": "access-key-secret",
             "password": "password-secret",
-            "crypto_key": "crypto-key-secret",
             "site_id": "site",
             "default_master": "wss://hub.example.com",
             "default_port": 443,
@@ -258,7 +257,6 @@ def test_identity_repr_hides_secret_material():
         for secret in (
             "access-key-secret",
             "password-secret",
-            "crypto-key-secret",
             "broker-username-secret",
             "broker-password-secret",
         ):
@@ -281,7 +279,6 @@ def test_identity_repr_hides_secret_material():
     full = identity.as_dict(include_secrets=True)
     assert full["access_key"] == "access-key-secret"
     assert full["password"] == "password-secret"
-    assert full["crypto_key"] == "crypto-key-secret"
     assert full["mqtt"]["password"] == "broker-password-secret"
 
 
@@ -370,7 +367,6 @@ def test_identity_loads_operator_generated_client_config_aliases():
         {
             "apiKey": "client-access-key",
             "password": "client-password",
-            "cryptoKey": "client-crypto",
             "site_id": "32",
             "defaultMaster": "https://daily-desk.thalovant.io",
             "default_port": 443,
@@ -384,7 +380,6 @@ def test_identity_loads_operator_generated_client_config_aliases():
     )
 
     assert identity.access_key == "client-access-key"
-    assert identity.crypto_key == "client-crypto"
     assert identity.site_id == "32"
     assert identity.default_master == "https://daily-desk.thalovant.io"
     assert identity.mqtt is not None

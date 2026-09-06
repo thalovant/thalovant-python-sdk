@@ -19,7 +19,7 @@ from .errors import (
     ThalovantRuntimeError,
     ThalovantTimeoutError,
 )
-from .events import _runtime_bus_context, _runtime_crypto_key
+from .events import _runtime_bus_context
 from .identity import ThalovantIdentity
 from .models import ThalovantConnectionInfo, ThalovantHealth
 
@@ -67,6 +67,18 @@ class Transport(Protocol):
     def is_connected(self) -> bool: ...
 
     def last_error(self) -> BaseException | None: ...
+
+
+
+def _require_tls_endpoint(endpoint: str) -> None:
+    """Refuse a hub endpoint that is not https."""
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "https":
+        raise ThalovantConnectionError(
+            f"Refusing to use the HTTP transport over {parsed.scheme or 'no'}://. "
+            "It needs an https:// endpoint: without TLS every message and the "
+            "access key travel in the clear."
+        )
 
 
 class HiveMindHTTPTransport:
@@ -172,6 +184,12 @@ class HiveMindHTTPTransport:
     def connect(self) -> None:
         if self.is_connected():
             return
+
+        # TLS is the only confidentiality on this path. The identity crypto key
+        # that once sealed HTTP payloads separately is gone with v3, so a plain
+        # http:// hub would put every message, and the access key in the
+        # authorization query, on the wire in the clear.
+        _require_tls_endpoint(self.identity.endpoint_base())
 
         deps = self._load_deps()
         self._begin_connection()
@@ -281,13 +299,6 @@ class HiveMindHTTPTransport:
         deps = self._load_deps()
         client = self._require_live_client()
         payload = deps.serialize_message(hive_message)
-        if encrypt and client.crypto_key:
-            payload = deps.encrypt_as_json(
-                client.crypto_key,
-                payload,
-                cipher=client.cipher,
-                encoding=client.json_encoding,
-            )
 
         try:
             response = deps.requests.post(
@@ -482,7 +493,6 @@ class HiveMindHTTPTransport:
                         return
                     should_start_handshake = (
                         inner_self.connected_event.is_set()
-                        and not _runtime_crypto_key(transport.identity.crypto_key)
                         and time.monotonic() >= proactive_handshake_at
                     )
                     if should_start_handshake:
@@ -548,44 +558,13 @@ class HiveMindHTTPTransport:
             raise ThalovantRuntimeError(f"HiveMind HTTP send failed: {detail}")
 
     def _build_protocol(self, client: Any, deps: "_HiveMindDeps") -> Any:
-        crypto_key = _runtime_crypto_key(self.identity.crypto_key)
+        """Build the slave protocol.
 
-        if not crypto_key:
-            return deps.HiveMindSlaveProtocol(
-                client,
-                shared_bus=client.share_bus,
-                site_id=self.identity.site_id or "unknown",
-                identity=client.identity,
-            )
-
-        class _ThalovantPresharedProtocol(deps.HiveMindSlaveProtocol):  # type: ignore[misc, valid-type]
-            def handle_handshake(inner_self: Any, message: Any) -> None:
-                payload = getattr(message, "payload", None)
-                if (
-                    isinstance(payload, dict)
-                    and "envelope" not in payload
-                    and payload.get("preshared_key")
-                    and not payload.get("handshake")
-                ):
-                    inner_self.binarize = bool(payload.get("binarize", False))
-                    session = deps.Session(inner_self.hm.session_id)
-                    session.site_id = inner_self.site_id
-                    inner_self.hm.emit(
-                        deps.HiveMessage(
-                            deps.HiveMessageType.HELLO,
-                            {
-                                "pubkey": inner_self.identity.public_key,
-                                "session": session.serialize(),
-                                "site_id": inner_self.site_id,
-                            },
-                        )
-                    )
-                    inner_self.hm.crypto_key = crypto_key
-                    inner_self.hm.handshake_event.set()
-                    return
-                super().handle_handshake(message)
-
-        return _ThalovantPresharedProtocol(
+        There is nothing to choose between any more: a HiveMind-core 5.x hub
+        accepts only the v3 Noise handshake, which the bus client performs
+        itself from the identity password.
+        """
+        return deps.HiveMindSlaveProtocol(
             client,
             shared_bus=client.share_bus,
             site_id=self.identity.site_id or "unknown",
@@ -818,7 +797,9 @@ class HiveMindMQTTTransport:
         self._last_error: BaseException | None = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
         self._hive_handlers: dict[str, list[Callable[[Any], None]]] = {}
-        self._crypto_key = _runtime_crypto_key(identity.crypto_key)
+        # No key until the password handshake derives one. The identity
+        # crypto key that used to seed this is gone with v3.
+        self._crypto_key: str | None = None
         self._cipher = "AES-GCM"
         self._json_encoding = "JSON-HEX"
         self._password_handshake: Any | None = None
@@ -831,6 +812,13 @@ class HiveMindMQTTTransport:
 
     def _begin_connection(self) -> None:
         self._last_error = None
+        # The session key now comes from the password handshake, not from a
+        # static identity field, so it belongs to one connection. Carrying it
+        # into a reconnect would encrypt the next hello with the previous
+        # session's key and the broker could not read it.
+        self._crypto_key = None
+        self._password_handshake = None
+        self._handshake.clear()
         self._connect_started = time.monotonic()
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo(
@@ -1097,11 +1085,6 @@ class HiveMindMQTTTransport:
             self._password_handshake.receive_and_verify(payload["envelope"])
             self._crypto_key = self._password_handshake.secret
             self._send_hive_message(self._hello_message())
-            self._handshake.set()
-            return
-        if payload.get("preshared_key") and not payload.get("handshake"):
-            if not self._crypto_key:
-                raise ThalovantConnectionError("HiveMind requested a preshared key, but identity.crypto_key is missing.")
             self._handshake.set()
             return
         if payload.get("password") and self.identity.password:

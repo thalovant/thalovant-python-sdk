@@ -226,7 +226,9 @@ class FakeSession:
             payload = kwargs["json"]
             assert payload["spec"]["apiKey"]
             assert payload["spec"]["password"]
-            assert payload["spec"]["cryptoKey"]
+            # v3 derives the Noise pre-shared key from the password, so the
+            # SDK mints no crypto key and must not send one.
+            assert "cryptoKey" not in payload["spec"]
             if payload["hub_id"] == "hub-mqtt":
                 return FakeResponse(
                     201,
@@ -239,13 +241,11 @@ class FakeSession:
                             "siteId": payload["spec"]["siteId"],
                             "apiKey": payload["spec"]["apiKey"],
                             "password": payload["spec"]["password"],
-                            "cryptoKey": payload["spec"]["cryptoKey"],
                         },
                         "initial_identify_token": "identify-token-secret",
                         "initial_identify": {
                             "password": payload["spec"]["password"],
                             "access_key": payload["spec"]["apiKey"],
-                            "crypto_key": payload["spec"]["cryptoKey"],
                             "site_id": payload["spec"]["siteId"],
                             "default_port": 443,
                             "default_master": "wss://mqtt.thalovant.io",
@@ -283,7 +283,6 @@ def test_control_plane_bootstrap_generates_local_identity_secrets():
 
     assert result.identity.access_key
     assert result.identity.password
-    assert result.identity.crypto_key
     assert result.identity.site_id == "kiosk"
     assert result.identity.endpoint_for("https") == "https://jokes.thalovant.io:443"
     assert result.selected_protocol == "wss"
@@ -480,7 +479,6 @@ def _bootstrap_mqtt_result():
     secrets = {
         "access_key": result.identity.access_key,
         "password": result.identity.password,
-        "crypto_key": result.identity.crypto_key,
         "mqtt_password": result.identity.mqtt.password,
         "initial_identify_token": "identify-token-secret",
     }
@@ -514,7 +512,6 @@ def test_bootstrap_result_include_secrets_still_returns_everything():
     assert full["client"] is result.client, "client must pass through unchanged"
     assert full["identity"]["access_key"] == secrets["access_key"]
     assert full["identity"]["password"] == secrets["password"]
-    assert full["identity"]["crypto_key"] == secrets["crypto_key"]
     assert full["identity"]["mqtt"]["password"] == secrets["mqtt_password"]
     assert full["client"]["initial_identify_token"] == "identify-token-secret"
     assert full["client"]["initial_identify"]["access_key"] == secrets["access_key"]
@@ -534,7 +531,6 @@ def test_bootstrap_redaction_does_not_touch_the_wire_request():
     ][0]["json"]
     assert wire_body["spec"]["apiKey"] == secrets["access_key"]
     assert wire_body["spec"]["password"] == secrets["password"]
-    assert wire_body["spec"]["cryptoKey"] == secrets["crypto_key"]
     assert result.client["initial_identify"]["access_key"] == secrets["access_key"]
 
 
@@ -552,7 +548,6 @@ def test_bootstrap_identity_file_round_trip_keeps_secrets(tmp_path):
     loaded = ThalovantIdentity.from_file(path)
     assert loaded.access_key == secrets["access_key"]
     assert loaded.password == secrets["password"]
-    assert loaded.crypto_key == secrets["crypto_key"]
     assert loaded.mqtt is not None
     assert loaded.mqtt.password == secrets["mqtt_password"]
 
@@ -581,7 +576,6 @@ def test_bootstrap_result_keeps_spec_references_in_default_as_dict():
     for value in (
         result.identity.access_key,
         result.identity.password,
-        result.identity.crypto_key,
     ):
         assert value not in serialized
 
@@ -1334,3 +1328,30 @@ def test_control_plane_device_poll_times_out():
         api._poll_device_token("device-code-1", interval=5.0, timeout=10.0, sleep=sleep, clock=clock)
     assert len(session.requests) == 3
     assert now["value"] == 10.0
+
+
+def test_create_client_identity_drops_a_callers_legacy_crypto_key():
+    """``spec`` is caller-supplied and passed straight into the request body,
+    and the redaction covers only the secrets minted here -- so a legacy value
+    left in by a caller could be echoed back inside an API error."""
+    session = FakeSession()
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api", access_token="token", session=session
+    )
+
+    api.create_client_identity(
+        "hub-1",
+        name="kiosk",
+        spec={
+            "cryptoKey": "caller-supplied-SECRET",
+            "crypto_key": "caller-supplied-SECRET-2",
+            "label": "keep-me",
+        },
+    )
+
+    sent_spec = [
+        kwargs for _, url, kwargs in session.requests if url.endswith("/v1/clients")
+    ][0]["json"]["spec"]
+    assert "cryptoKey" not in sent_spec, "a caller-supplied cryptoKey reached /v1/clients"
+    assert "crypto_key" not in sent_spec, "a caller-supplied crypto_key reached /v1/clients"
+    assert sent_spec["label"] == "keep-me", "the rest of the caller's spec must survive"

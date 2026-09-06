@@ -105,8 +105,8 @@ class MqttBrokerCredentials:
 class ThalovantIdentity:
     """HiveMind identity material provisioned by Thalovant.
 
-    ``repr()`` hides the secret fields (``access_key``, ``password``,
-    ``crypto_key``); serialization is unaffected — use
+    ``repr()`` hides the secret fields (``access_key``, ``password``);
+    serialization is unaffected — use
     ``as_dict(include_secrets=True)`` when persisting an identity file.
     """
 
@@ -116,7 +116,6 @@ class ThalovantIdentity:
     site_id: str
     default_port: int = 5679
     default_path: str = ""
-    crypto_key: str | None = field(default=None, repr=False)
     data_plane_endpoints: HubDataPlaneEndpoints = field(
         default_factory=HubDataPlaneEndpoints
     )
@@ -182,7 +181,6 @@ class ThalovantIdentity:
             {
                 "access_key": env.get(f"{prefix}ACCESS_KEY"),
                 "password": env.get(f"{prefix}PASSWORD"),
-                "crypto_key": env.get(f"{prefix}CRYPTO_KEY"),
                 "site_id": env.get(f"{prefix}SITE_ID"),
                 "default_master": env.get(f"{prefix}HUB_HTTP_HOST")
                 or env.get(f"{prefix}DEFAULT_MASTER"),
@@ -232,7 +230,6 @@ class ThalovantIdentity:
             "default_path",
             aliases=("defaultPath", "hub_http_path", "path", "uri_path"),
         )
-        crypto_key = _optional_string(values, "crypto_key", aliases=("cryptoKey",))
 
         return cls(
             access_key=access_key,
@@ -241,7 +238,6 @@ class ThalovantIdentity:
             default_port=default_port or 5679,
             default_path=_normalize_path(default_path),
             site_id=site_id,
-            crypto_key=crypto_key,
             data_plane_endpoints=HubDataPlaneEndpoints.from_mapping(values),
             protocols=HubProtocolSettings.from_mapping(values),
             mqtt=MqttBrokerCredentials.from_mapping(values.get("mqtt")),
@@ -293,7 +289,6 @@ class ThalovantIdentity:
                 {
                     "access_key": self.access_key,
                     "password": self.password,
-                    "crypto_key": self.crypto_key,
                 }
             )
         if self.mqtt:

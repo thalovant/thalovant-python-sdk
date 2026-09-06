@@ -37,7 +37,6 @@ from .events import (
     _new_request_id,
     _new_session_id,
     _runtime_bus_context,
-    _runtime_crypto_key,
     _session_id_from_context,
     _utterance_payload,
 )

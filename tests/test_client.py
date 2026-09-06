@@ -24,7 +24,7 @@ from thalovant import (
     ThalovantUnsupportedProtocolError,
     build_client_context,
 )
-from thalovant.client import _runtime_bus_context, _runtime_crypto_key
+from thalovant.client import _runtime_bus_context
 from thalovant.transport import HiveMindHTTPTransport, HiveMindWSSTransport
 from thalovant.transport import _mqtt_default_port, _mqtt_tls_enabled
 from thalovant.transport import mqtt_topics_for_identity
@@ -189,7 +189,6 @@ def identity() -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="crypto",
         site_id="site",
         default_master="http://hub.local",
         default_port=5679,
@@ -200,7 +199,6 @@ def identity_with_wss() -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="crypto",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -216,7 +214,6 @@ def identity_with_mqtt() -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -267,7 +264,6 @@ def test_ask_includes_identity_metadata():
     sdk_identity = ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="crypto",
         site_id="site",
         default_master="http://hub.local",
         default_port=5679,
@@ -538,7 +534,6 @@ def test_mqtt_topics_strip_surrounding_slashes_from_prefix():
     identity = ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -562,7 +557,6 @@ def test_mqtt_topics_require_topic_prefix():
     identity = ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -582,7 +576,6 @@ def _identity_with_topic_prefix(topic_prefix: str) -> ThalovantIdentity:
     return ThalovantIdentity(
         access_key="key",
         password="password",
-        crypto_key="0123456789abcdef",
         site_id="site",
         default_master="https://hub.local",
         default_port=443,
@@ -985,12 +978,6 @@ def test_emit_reconnects_once_after_transport_failure():
     assert transport.emitted == [("skillmanager.list", {"x": 1}, {})]
 
 
-def test_runtime_crypto_key_matches_hivemind_runtime_truncation():
-    assert _runtime_crypto_key("  abcdefghijklmnopqrstuvwxyz  ") == "abcdefghijklmnop"
-    assert _runtime_crypto_key("0123456789abcdef") == "0123456789abcdef"
-    assert _runtime_crypto_key("   ") is None
-    assert _runtime_crypto_key(None) is None
-
 
 def test_runtime_bus_context_injects_non_default_session():
     context = _runtime_bus_context(
@@ -1157,3 +1144,57 @@ def test_agent_runs_registered_handler_until_stopped():
 
     assert values == ["hello agent"]
     assert not thread.is_alive()
+
+
+def test_http_transport_refuses_a_cleartext_endpoint():
+    """TLS is the only confidentiality on this path now that v3 removed the
+    payload cipher, and the access key travels in the authorization query."""
+    from thalovant.transport import HiveMindHTTPTransport
+
+    identity = ThalovantIdentity(
+        access_key="access",
+        password="secret",
+        site_id="site",
+        default_master="http://hub.example.com",
+        default_port=80,
+    )
+    transport = HiveMindHTTPTransport(identity, useragent="test")
+
+    with pytest.raises(ThalovantConnectionError, match="https://"):
+        transport.connect()
+
+
+def test_mqtt_reconnect_starts_from_a_clean_session_key():
+    """The session key comes from the password handshake now, not a static
+    identity field, so it belongs to one connection. Carrying it into a
+    reconnect would encrypt the next hello with the previous session's key."""
+    from thalovant.transport import HiveMindMQTTTransport
+
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "access",
+            "password": "secret",
+            "site_id": "site",
+            "default_master": "https://hub.example.com",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://broker.example.com:8883",
+                "username": "access",
+                "password": "broker-secret",
+                "topic_prefix": "hubs/hub-1/client-1",
+                "tls": True,
+            },
+        }
+    )
+    transport = HiveMindMQTTTransport(identity, useragent="test")
+
+    # Stand in for a completed password handshake on a previous connection.
+    transport._crypto_key = "left-over-session-key"
+    transport._password_handshake = object()
+    transport._handshake.set()
+
+    transport._begin_connection()
+
+    assert transport._crypto_key is None, "a stale session key survived into the reconnect"
+    assert transport._password_handshake is None, "a stale password handshake survived"
+    assert not transport._handshake.is_set(), "the handshake event was still set"
