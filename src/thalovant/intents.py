@@ -273,7 +273,10 @@ class HubIntentInventory:
         which is a claim a manifest alone cannot support.
         """
 
-        if any(intent.phrases_for(lang) for intent in self.intents):
+        # `enabled` matters: a disabled intent keeps its phrases in the
+        # manifest and cannot answer with them, so counting it would make this
+        # say True on the strength of something switched off.
+        if any(intent.enabled and intent.phrases_for(lang) for intent in self.intents):
             return True
         return bool(self.fallbacks) or not self.fallbacks_known
 

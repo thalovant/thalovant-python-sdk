@@ -734,6 +734,15 @@ class ThalovantControlPlane:
         Pass ``merge=False`` for the raw replacing call, when the intent really
         is to define the whole configuration.
 
+        **The merge is read-then-write and the API offers nothing to make it
+        atomic** -- the config route carries no ETag or revision, so there is
+        nothing to send back conditionally. Two callers merging different keys
+        at the same time will both succeed and the later write wins, losing the
+        earlier one. That is strictly better than the replacing behaviour it
+        replaces, which lost every key the caller did not name whether or not
+        anyone else was writing, but it is not a lock: a caller that must not
+        race should serialise its own updates.
+
         ``personas`` is replaced only when provided, merge or not.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.

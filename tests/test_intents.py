@@ -71,6 +71,7 @@ class FakeHubTransport:
         echo_request_id: bool = True,
         repeats: int = 2,
         fallbacks: list[tuple[str, int]] | None = None,
+        disabled: set[tuple[str, str]] | None = None,
     ) -> None:
         self.registrations = registrations
         self.refuse = refuse
@@ -82,6 +83,9 @@ class FakeHubTransport:
         # which is every ovos-core before #951 -- and the default here, so the
         # rest of the suite exercises the unknown path rather than a fiction.
         self.fallbacks = fallbacks
+        # Intents the hub reports but has switched off. They keep their
+        # phrases in the manifest and cannot answer with them.
+        self.disabled = disabled or set()
         self.connected = False
         self.emitted: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         self.handlers: dict[str, list[Callable[[Any], None]]] = {}
@@ -163,7 +167,9 @@ class FakeHubTransport:
                 row = {
                     "skill_id": skill_id, "intent_name": intent_name, "lang": lang.upper()
                     if lang == "fr-fr" else lang,
-                    "method": "template", "enabled": True, "session_id": "default",
+                    "method": "template",
+                    "enabled": (skill_id, intent_name) not in self.disabled,
+                    "session_id": "default",
                 }
                 if self.definitions_in_list and data.get("include_definitions"):
                     row["definition"] = {
@@ -662,3 +668,18 @@ def test_the_inventory_serialises_what_it_knows_about_fallbacks() -> None:
     payload = client(hub).intents(["en-us"]).as_dict()
     assert payload["fallbacks"] == [{"skill_id": "skill-a", "priority": 10}]
     assert payload["fallbacks_known"] is True
+
+
+def test_may_answer_ignores_an_intent_that_is_switched_off() -> None:
+    """A disabled intent keeps its phrases in the manifest and cannot use them.
+
+    Counting it would make may_answer say True on the strength of something
+    the hub has switched off -- the same shape of false certainty this whole
+    API exists to remove.
+    """
+    hub = FakeHubTransport(fallbacks=[], registrations={
+        "fr-fr": {(WEATHER, "current.weather"): ["quel temps fait-il"]},
+    }, disabled={(WEATHER, "current.weather")})
+    inventory = client(hub).intents(["fr-fr"])
+    assert inventory.fallbacks_known is True and inventory.fallbacks == ()
+    assert inventory.may_answer("fr-FR") is False
