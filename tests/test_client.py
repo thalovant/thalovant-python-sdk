@@ -1144,3 +1144,21 @@ def test_agent_runs_registered_handler_until_stopped():
 
     assert values == ["hello agent"]
     assert not thread.is_alive()
+
+
+def test_http_transport_refuses_a_cleartext_endpoint():
+    """TLS is the only confidentiality on this path now that v3 removed the
+    payload cipher, and the access key travels in the authorization query."""
+    from thalovant.transport import HiveMindHTTPTransport
+
+    identity = ThalovantIdentity(
+        access_key="access",
+        password="secret",
+        site_id="site",
+        default_master="http://hub.example.com",
+        default_port=80,
+    )
+    transport = HiveMindHTTPTransport(identity, useragent="test")
+
+    with pytest.raises(ThalovantConnectionError, match="https://"):
+        transport.connect()

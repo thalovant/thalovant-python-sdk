@@ -987,6 +987,12 @@ class ThalovantControlPlane:
         password = _new_secret()
 
         client_spec = dict(spec or {})
+        # ``spec`` is caller-supplied and passed straight into the request body,
+        # and the error redaction covers only the secrets minted here -- so a
+        # legacy crypto key left in could be echoed back inside an API error.
+        # v3 issues no crypto key, so drop both spellings.
+        client_spec.pop("cryptoKey", None)
+        client_spec.pop("crypto_key", None)
         client_spec.setdefault("version", "1")
         client_spec.update(
             {

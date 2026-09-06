@@ -69,6 +69,18 @@ class Transport(Protocol):
     def last_error(self) -> BaseException | None: ...
 
 
+
+def _require_tls_endpoint(endpoint: str) -> None:
+    """Refuse a hub endpoint that is not https."""
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "https":
+        raise ThalovantConnectionError(
+            f"Refusing to use the HTTP transport over {parsed.scheme or 'no'}://. "
+            "It needs an https:// endpoint: without TLS every message and the "
+            "access key travel in the clear."
+        )
+
+
 class HiveMindHTTPTransport:
     """Thin adapter around `hivemind_bus_client.http_client.HiveMindHTTPClient`."""
 
@@ -172,6 +184,12 @@ class HiveMindHTTPTransport:
     def connect(self) -> None:
         if self.is_connected():
             return
+
+        # TLS is the only confidentiality on this path. The identity crypto key
+        # that once sealed HTTP payloads separately is gone with v3, so a plain
+        # http:// hub would put every message, and the access key in the
+        # authorization query, on the wire in the clear.
+        _require_tls_endpoint(self.identity.endpoint_base())
 
         deps = self._load_deps()
         self._begin_connection()

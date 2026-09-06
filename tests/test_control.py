@@ -1328,3 +1328,30 @@ def test_control_plane_device_poll_times_out():
         api._poll_device_token("device-code-1", interval=5.0, timeout=10.0, sleep=sleep, clock=clock)
     assert len(session.requests) == 3
     assert now["value"] == 10.0
+
+
+def test_create_client_identity_drops_a_callers_legacy_crypto_key():
+    """``spec`` is caller-supplied and passed straight into the request body,
+    and the redaction covers only the secrets minted here -- so a legacy value
+    left in by a caller could be echoed back inside an API error."""
+    session = FakeSession()
+    api = ThalovantControlPlane(
+        "https://dash.example.com/api", access_token="token", session=session
+    )
+
+    api.create_client_identity(
+        "hub-1",
+        name="kiosk",
+        spec={
+            "cryptoKey": "caller-supplied-SECRET",
+            "crypto_key": "caller-supplied-SECRET-2",
+            "label": "keep-me",
+        },
+    )
+
+    sent_spec = [
+        kwargs for _, url, kwargs in session.requests if url.endswith("/v1/clients")
+    ][0]["json"]["spec"]
+    assert "cryptoKey" not in sent_spec, "a caller-supplied cryptoKey reached /v1/clients"
+    assert "crypto_key" not in sent_spec, "a caller-supplied crypto_key reached /v1/clients"
+    assert sent_spec["label"] == "keep-me", "the rest of the caller's spec must survive"

@@ -14,6 +14,14 @@
   SDK reaching a HiveMind-core 5.x hub, which accepts only the v3 Noise
   handshake and closes anything else with `1008`; the bus client performs it
   from the identity password.
+- **Breaking.** The HTTPS transport refuses a hub endpoint that is not
+  `https://`. Removing the crypto key took the separate payload cipher with it,
+  so TLS is the only confidentiality left on that hop, and the access key
+  travels in the `authorization` query.
+- `create_client_identity` drops `cryptoKey` and `crypto_key` from a
+  caller-supplied `spec` rather than passing them through. The error redaction
+  covers only what the SDK mints, so a legacy value left in by a caller could
+  otherwise be echoed back inside an API error.
 - The HTTPS transport no longer wraps outgoing messages in the crypto-key JSON
   envelope, and the MQTT transport no longer seeds its cipher from the identity.
   MQTT still derives a key from the password handshake where the hub offers one,
