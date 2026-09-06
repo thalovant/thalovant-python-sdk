@@ -55,9 +55,16 @@ Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 thalovant = "thalovant.cli:main"
 
 [project.optional-dependencies]
+# Test tooling only. twine lives in `publish` because it requires
+# rich>=14.3.3 while ovos-utils (via hivemind-bus-client) pins rich~=13.7:
+# installing both alongside the package is unresolvable, and the test
+# environment has no use for the publishing tools.
 dev = [
     "build>=1.2",
     "pytest>=8.0",
+]
+publish = [
+    "build>=1.2",
     "twine>=7.0",
 ]
 docs = [
