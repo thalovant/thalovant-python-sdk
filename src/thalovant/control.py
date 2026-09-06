@@ -123,6 +123,25 @@ class BootstrapIdentityResult:
         }
 
 
+def _deep_merge(base: Mapping[str, Any], incoming: Mapping[str, Any]) -> dict[str, Any]:
+    """``incoming`` layered onto ``base``, mappings merged key by key.
+
+    Anything that is not a mapping replaces rather than combines -- lists
+    included. A list is a value, not a namespace, and a caller passing
+    ``secondary_langs: ["fr-fr"]`` means that list and not "add these to
+    whatever is there".
+    """
+
+    merged = dict(base)
+    for key, value in incoming.items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class ThalovantControlPlane:
     """Small authenticated client for the Thalovant API.
 
@@ -693,16 +712,45 @@ class ThalovantControlPlane:
         config: Mapping[str, Any],
         *,
         personas: Mapping[str, Any] | None = None,
+        merge: bool = True,
     ) -> dict[str, Any]:
-        """Merge runtime configuration into a runtime group.
+        """Update a runtime group's configuration.
 
-        The API merges ``config`` into the stored configuration rather than
-        replacing it, and marks the group pending so the runtime operator
-        reconciles the change. ``personas`` is replaced only when provided.
+        **The API replaces the stored configuration; it does not merge.** This
+        docstring claimed the opposite, and the cost of believing it was real:
+        sending ``{"mycroft": {...}}`` to add a language setting dropped the
+        group's entire ``env`` block, taking the hub memory's Redis host, key
+        prefix and both ``secretKeyRef`` credential bindings with it. Nothing
+        in the response says so -- the call succeeds and reads back exactly
+        what was sent.
+
+        So by default this reads the stored configuration first and deep-merges
+        ``config`` into it, which is the behaviour the old docstring described
+        and every caller reasonably assumed. Mappings are merged key by key;
+        anything else, lists included, is replaced by the incoming value,
+        because a list is a value rather than a namespace and no caller means
+        "append" by passing one.
+
+        Pass ``merge=False`` for the raw replacing call, when the intent really
+        is to define the whole configuration.
+
+        **The merge is read-then-write and the API offers nothing to make it
+        atomic** -- the config route carries no ETag or revision, so there is
+        nothing to send back conditionally. Two callers merging different keys
+        at the same time will both succeed and the later write wins, losing the
+        earlier one. That is strictly better than the replacing behaviour it
+        replaces, which lost every key the caller did not name whether or not
+        anyone else was writing, but it is not a lock: a caller that must not
+        race should serialise its own updates.
+
+        ``personas`` is replaced only when provided, merge or not.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
 
+        if merge:
+            stored = self.get_runtime_group_config(runtime_group_id).get("config")
+            config = _deep_merge(stored if isinstance(stored, Mapping) else {}, config)
         body: dict[str, Any] = {"config": dict(config)}
         if personas is not None:
             body["personas"] = dict(personas)

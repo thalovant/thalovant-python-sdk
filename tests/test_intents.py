@@ -70,6 +70,8 @@ class FakeHubTransport:
         definitions_in_list: bool = False,
         echo_request_id: bool = True,
         repeats: int = 2,
+        fallbacks: list[tuple[str, int]] | None = None,
+        disabled: set[tuple[str, str]] | None = None,
     ) -> None:
         self.registrations = registrations
         self.refuse = refuse
@@ -77,6 +79,13 @@ class FakeHubTransport:
         self.definitions_in_list = definitions_in_list
         self.echo_request_id = echo_request_id
         self.repeats = repeats
+        # None means the hub cannot answer ovos.skills.fallback.list at all,
+        # which is every ovos-core before #951 -- and the default here, so the
+        # rest of the suite exercises the unknown path rather than a fiction.
+        self.fallbacks = fallbacks
+        # Intents the hub reports but has switched off. They keep their
+        # phrases in the manifest and cannot answer with them.
+        self.disabled = disabled or set()
         self.connected = False
         self.emitted: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         self.handlers: dict[str, list[Callable[[Any], None]]] = {}
@@ -141,13 +150,26 @@ class FakeHubTransport:
         if event_type in self.silent:
             return
         lang = str(data.get("lang") or "")
+        if event_type == "ovos.skills.fallback.list":
+            if self.fallbacks is None:
+                return  # an ovos-core without #951 simply never answers
+            self._deliver(
+                "ovos.skills.fallback.list.response",
+                {"ok": True, "fallbacks": [
+                    {"skill_id": skill_id, "priority": priority}
+                    for skill_id, priority in self.fallbacks]},
+                context,
+            )
+            return
         if event_type == "ovos.intent.list":
             rows = []
             for (skill_id, intent_name), samples in (self.registrations or {}).get(lang, {}).items():
                 row = {
                     "skill_id": skill_id, "intent_name": intent_name, "lang": lang.upper()
                     if lang == "fr-fr" else lang,
-                    "method": "template", "enabled": True, "session_id": "default",
+                    "method": "template",
+                    "enabled": (skill_id, intent_name) not in self.disabled,
+                    "session_id": "default",
                 }
                 if self.definitions_in_list and data.get("include_definitions"):
                     row["definition"] = {
@@ -560,3 +582,104 @@ def test_a_blank_entry_is_not_a_message_type_either() -> None:
          "data": {"allowed": ["speak", "", "  ", "  mycroft.volume.get  "]}},
     ))
     assert error.allowed == ("speak", "mycroft.volume.get")
+
+
+# What answers outside the manifest -------------------------------------------
+#
+# A hub answered French correctly while its manifest reported 69 registrations,
+# every one en-US and none for fr-FR: the French was served by fallback
+# handlers, which register no intents and no phrasings and so cannot appear in
+# a manifest. A satellite reading only the manifest told its user their house
+# did not speak French, while the house was answering them in French.
+
+
+def test_the_inventory_says_which_skills_answer_outside_the_manifest() -> None:
+    hub = FakeHubTransport(fallbacks=[("skill-b", 50), ("skill-a", 10)])
+    inventory = client(hub).intents(["en-us"])
+
+    assert inventory.fallbacks_known is True
+    assert [(f.skill_id, f.priority) for f in inventory.fallbacks] == [
+        ("skill-a", 10), ("skill-b", 50),
+    ], "ordered the way the pipeline will try them"
+
+
+def test_a_hub_with_no_fallbacks_says_so_rather_than_staying_silent() -> None:
+    hub = FakeHubTransport(fallbacks=[])
+    inventory = client(hub).intents(["en-us"])
+    assert inventory.fallbacks_known is True
+    assert inventory.fallbacks == ()
+
+
+def test_a_hub_that_cannot_be_asked_is_unknown_and_not_none() -> None:
+    """The distinction the whole feature exists to preserve.
+
+    An ovos-core without #951 never answers the query. Recording that as "no
+    fallbacks" would be the same false certainty that started this: an empty
+    answer read as proof of absence.
+    """
+    inventory = client(FakeHubTransport(fallbacks=None)).intents(["en-us"])
+    assert inventory.fallbacks_known is False
+    assert inventory.fallbacks == ()
+
+
+def test_a_refused_query_is_unknown_too() -> None:
+    hub = FakeHubTransport(refuse=("ovos.skills.fallback.list",),
+                           fallbacks=[("skill-a", 10)])
+    inventory = client(hub).intents(["en-us"])
+    assert inventory.fallbacks_known is False, "denied is not the same as empty"
+    assert inventory.fallbacks == ()
+
+
+def test_may_answer_is_true_when_a_language_has_sentences() -> None:
+    inventory = client(FakeHubTransport(fallbacks=[])).intents(["en-us", "fr-fr"])
+    assert inventory.may_answer("fr-FR") is True
+
+
+def test_may_answer_is_true_when_a_fallback_might_take_it() -> None:
+    """No German sentences anywhere, and a fallback is offered every utterance."""
+    hub = FakeHubTransport(fallbacks=[("skill-a", 10)])
+    assert client(hub).intents(["en-us"]).may_answer("de-DE") is True
+
+
+def test_may_answer_is_true_when_the_hub_could_not_be_asked() -> None:
+    """Unknown must not read as "no". Saying "nothing here speaks that" on the
+    strength of a question the hub never answered is the original bug."""
+    hub = FakeHubTransport(fallbacks=None)
+    assert client(hub).intents(["en-us"]).may_answer("de-DE") is True
+
+
+def test_may_answer_is_false_only_when_the_hub_actually_said_so() -> None:
+    hub = FakeHubTransport(fallbacks=[])
+    assert client(hub).intents(["en-us"]).may_answer("de-DE") is False
+
+
+def test_fallbacks_survive_a_manifest_the_hub_refused() -> None:
+    """The names-only path needs this most: it has no phrasings to reason from."""
+    hub = FakeHubTransport(refuse=("ovos.intent.list",),
+                           fallbacks=[("skill-a", 10)])
+    inventory = client(hub).intents(["en-us"])
+    assert inventory.source == SOURCE_ENGINES
+    assert inventory.fallbacks_known is True
+    assert [f.skill_id for f in inventory.fallbacks] == ["skill-a"]
+
+
+def test_the_inventory_serialises_what_it_knows_about_fallbacks() -> None:
+    hub = FakeHubTransport(fallbacks=[("skill-a", 10)])
+    payload = client(hub).intents(["en-us"]).as_dict()
+    assert payload["fallbacks"] == [{"skill_id": "skill-a", "priority": 10}]
+    assert payload["fallbacks_known"] is True
+
+
+def test_may_answer_ignores_an_intent_that_is_switched_off() -> None:
+    """A disabled intent keeps its phrases in the manifest and cannot use them.
+
+    Counting it would make may_answer say True on the strength of something
+    the hub has switched off -- the same shape of false certainty this whole
+    API exists to remove.
+    """
+    hub = FakeHubTransport(fallbacks=[], registrations={
+        "fr-fr": {(WEATHER, "current.weather"): ["quel temps fait-il"]},
+    }, disabled={(WEATHER, "current.weather")})
+    inventory = client(hub).intents(["fr-fr"])
+    assert inventory.fallbacks_known is True and inventory.fallbacks == ()
+    assert inventory.may_answer("fr-FR") is False

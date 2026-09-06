@@ -28,6 +28,11 @@ EVENT_ADAPT_MANIFEST_GET = "intent.service.adapt.manifest.get"
 EVENT_ADAPT_MANIFEST = "intent.service.adapt.manifest"
 EVENT_PADATIOUS_MANIFEST_GET = "intent.service.padatious.manifest.get"
 EVENT_PADATIOUS_MANIFEST = "intent.service.padatious.manifest"
+# Which skills answer whatever nothing else matched. They register no intents
+# and no sentences, so they are invisible to the intent manifest by
+# construction (ovos-core #951).
+EVENT_FALLBACK_LIST = "ovos.skills.fallback.list"
+EVENT_FALLBACK_LIST_RESPONSE = "ovos.skills.fallback.list.response"
 EVENT_QUERY_TIMEOUT = "hive.query.timeout"
 FAILURE_EVENTS = (
     EVENT_INTENT_FAILURE,
