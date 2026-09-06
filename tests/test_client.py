@@ -1162,3 +1162,39 @@ def test_http_transport_refuses_a_cleartext_endpoint():
 
     with pytest.raises(ThalovantConnectionError, match="https://"):
         transport.connect()
+
+
+def test_mqtt_reconnect_starts_from_a_clean_session_key():
+    """The session key comes from the password handshake now, not a static
+    identity field, so it belongs to one connection. Carrying it into a
+    reconnect would encrypt the next hello with the previous session's key."""
+    from thalovant.transport import HiveMindMQTTTransport
+
+    identity = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "access",
+            "password": "secret",
+            "site_id": "site",
+            "default_master": "https://hub.example.com",
+            "default_port": 443,
+            "mqtt": {
+                "endpoint": "mqtts://broker.example.com:8883",
+                "username": "access",
+                "password": "broker-secret",
+                "topic_prefix": "hubs/hub-1/client-1",
+                "tls": True,
+            },
+        }
+    )
+    transport = HiveMindMQTTTransport(identity, useragent="test")
+
+    # Stand in for a completed password handshake on a previous connection.
+    transport._crypto_key = "left-over-session-key"
+    transport._password_handshake = object()
+    transport._handshake.set()
+
+    transport._begin_connection()
+
+    assert transport._crypto_key is None, "a stale session key survived into the reconnect"
+    assert transport._password_handshake is None, "a stale password handshake survived"
+    assert not transport._handshake.is_set(), "the handshake event was still set"

@@ -14,6 +14,11 @@
   SDK reaching a HiveMind-core 5.x hub, which accepts only the v3 Noise
   handshake and closes anything else with `1008`; the bus client performs it
   from the identity password.
+- The MQTT transport clears its session key, password handshake and handshake
+  event at the start of each connection attempt. The key is now derived per
+  connection from the password handshake rather than read from the identity, so
+  carrying it into a reconnect encrypted the next hello with the previous
+  session's key and the broker could not read it.
 - **Breaking.** The HTTPS transport refuses a hub endpoint that is not
   `https://`. Removing the crypto key took the separate payload cipher with it,
   so TLS is the only confidentiality left on that hop, and the access key

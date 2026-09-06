@@ -812,6 +812,13 @@ class HiveMindMQTTTransport:
 
     def _begin_connection(self) -> None:
         self._last_error = None
+        # The session key now comes from the password handshake, not from a
+        # static identity field, so it belongs to one connection. Carrying it
+        # into a reconnect would encrypt the next hello with the previous
+        # session's key and the broker could not read it.
+        self._crypto_key = None
+        self._password_handshake = None
+        self._handshake.clear()
         self._connect_started = time.monotonic()
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo(
