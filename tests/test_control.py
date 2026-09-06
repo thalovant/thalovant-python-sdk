@@ -1443,3 +1443,24 @@ def test_personas_are_still_replaced_when_provided():
     session = ConfigSession({"env": ENV})
     _plane(session).update_runtime_group_config("g", {"a": 1}, personas={"p": 1})
     assert session.sent[-1]["personas"] == {"p": 1}
+
+
+def test_the_config_top_level_is_the_mycroft_section():
+    """The shape is easy to get wrong from outside, and wrong fails silently.
+
+    The renderer pops `env` and passes everything else through as the runtime's
+    mycroft config. Keys nested under a `mycroft` wrapper land as
+    `spec.config.mycroft.mycroft`, are copied into mycroft.conf verbatim, and
+    are never read -- while the call succeeds and reads back what was sent.
+
+    The CR and the gitops manifests *do* nest one deeper, so copying that shape
+    into this call is the natural mistake. This test exists so the docstring
+    that warns about it cannot drift away from the parameter it describes.
+    """
+    session = ConfigSession({"lang": "en-us", "env": ENV})
+    _plane(session).update_runtime_group_config("g", {"secondary_langs": ["fr-fr"]})
+
+    sent = session.sent[-1]["config"]
+    assert sent["secondary_langs"] == ["fr-fr"], "at the top level, where it is read"
+    assert sent["lang"] == "en-us", "and the rest of the mycroft config survives"
+    assert "mycroft" not in sent, "no wrapper: this level already is that section"
