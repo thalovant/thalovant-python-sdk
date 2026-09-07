@@ -69,7 +69,13 @@ publish = [
 ]
 docs = [
     "mkdocs>=1.6",
-    "mkdocs-material>=9.5",
+    # Floors, not preferences. `>=9.5` admitted the DOM XSS in Material's
+    # search suggestions (fixed in 9.7.7), and pymdown-extensions is named
+    # explicitly -- rather than left to whatever Material happens to pull --
+    # because the ReDoS in its caret/tilde parsing is the higher-severity of
+    # the two and a transitive floor is not a floor.
+    "mkdocs-material>=9.7.7",
+    "pymdown-extensions>=11.0.1",
     "mkdocstrings[python]>=0.25",
 ]
 
