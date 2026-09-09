@@ -548,6 +548,13 @@ finish, preventing a late attempt from replacing or closing a new session.
 `close(timeout=...)` uses its own caller deadline (defaulting to the configured
 connection budget). If close times out, `wait_closed()` observes actual retained
 cleanup; await that before passing the identity to another client instance.
+From 0.5.11, a refused or unacknowledged HTTP disconnect raises
+`ThalovantConnectionError` and retains the session's admission and replica cookie.
+`wait_closed()` also reports that failure, and reconnect is blocked. Retry
+`close()` on the same client after the endpoint recovers; only a successful
+disconnect acknowledgment releases the admission. A close that encounters
+cleanup already owned by a direct transport call reports that cleanup is still
+in progress; it cannot claim completion for the other call.
 Intent query deadlines also cover reconnect and send. The optional fallback-skill
 probe uses at most 1.5 seconds, preserving unknown state when unavailable or
 explicitly failed, and retains ownership of any timed-out send until it retires.

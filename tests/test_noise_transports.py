@@ -110,6 +110,10 @@ def http_peer(tmp_path, monkeypatch):
     peer.admitted = False
     peer.fail_poll = False
     peer.cookies = 0
+    peer.connects = 0
+    peer.disconnects = 0
+    peer.disconnect_response = {"status": "Disconnected"}
+    peer.disconnect_status = 200
     def drain(q):
         output = []
         while not q.empty():
@@ -122,13 +126,18 @@ def http_peer(tmp_path, monkeypatch):
         def handle_request(self):
             path = urlparse(self.path).path
             cookie = None
+            status = 200
             try:
                 if path == "/connect":
+                    peer.connects += 1
                     if not peer.admitted and not peer.error:
                         drain(clear); drain(binary); peer.start()
                         peer.admitted = True
                     cookie = "hivemind_http_replica=one; Secure; HttpOnly; Path=/"
                     body = {"error": "denied"} if peer.error else {"status": "Connected"}
+                    if getattr(peer, "connect_gate", None) is not None:
+                        peer.connect_entered.set()
+                        assert peer.connect_gate.wait(5)
                 else:
                     assert self.headers.get("Cookie") == "hivemind_http_replica=one"
                     peer.cookies += 1
@@ -137,8 +146,13 @@ def http_peer(tmp_path, monkeypatch):
                         peer.fail_poll = False
                     elif path == "/get_binary_messages": body = {"b64_messages": drain(binary)}
                     elif path == "/disconnect":
-                        peer.admitted = False
-                        body = {"status": "Disconnected"}
+                        peer.disconnects += 1
+                        if getattr(peer, "disconnect_gate", None) is not None:
+                            peer.disconnect_entered.set()
+                            assert peer.disconnect_gate.wait(5)
+                        body, status = peer.disconnect_response, peer.disconnect_status
+                        if status == 200 and body == {"status": "Disconnected"}:
+                            peer.admitted = False
                     else:
                         assert path == "/send_message"
                         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
@@ -148,8 +162,8 @@ def http_peer(tmp_path, monkeypatch):
                         body = {"status": "message sent"}
             except Exception as exc:
                 body = {"error": type(exc).__name__}
-            encoded = json.dumps(body).encode()
-            self.send_response(200)
+            encoded = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(status)
             if cookie: self.send_header("Set-Cookie", cookie)
             self.send_header("Content-Length", str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
     server = ThreadingHTTPServer(("localhost", 0), Handler)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.11
+
+- Require a positive HTTP disconnect acknowledgment before releasing admission. Preserve the failed session and replica cookie for explicit close retry; close and wait_closed report failures, and reconnect stays blocked until cleanup succeeds.
+- Serialize HTTP admission publication against cancellation and close, preserving remote-session ownership when a connect response arrives late. Retain the primary connection failure while exposing cleanup errors separately; successful WSS/MQTT cleanup remains idempotent.
+- Sanitize HTTP request exceptions and refuse to copy arbitrary server error bodies into diagnostics. Add real TLS/Noise regressions for refused, empty, malformed and contradictory acknowledgments, pending admission, concurrent cleanup, sync/async failure observation, explicit retry and XX-to-KK reconnect.
+
 ## 0.5.10
 
 - Preserve a healthy pending write after a reply completes; lifecycle ownership and the original send deadline still prevent premature reuse.
