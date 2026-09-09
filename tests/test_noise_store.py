@@ -69,10 +69,14 @@ def test_malformed_pin_state_raises_domain_error_and_preserves_file(tmp_path, pi
     original = json.dumps(data)
     store.write_text(original)
     with pytest.raises(ThalovantConnectionError, match="Stored Noise server pin"):
-        if operation == "read": identity.get_pinned_noise_key("hub")
-        elif operation == "pin": identity.pin_noise_key("hub", "11" * 32)
-        elif operation == "forget": identity.forget_noise_key("hub")
-        else: identity.save()
+        if operation == "read":
+            identity.get_pinned_noise_key("hub")
+        elif operation == "pin":
+            identity.pin_noise_key("hub", "11" * 32)
+        elif operation == "forget":
+            identity.forget_noise_key("hub")
+        else:
+            identity.save()
     assert store.read_text() == original
 
 
