@@ -257,7 +257,11 @@ class ThalovantControlPlane:
                 continue
             try:
                 parsed = urlsplit(value) if isinstance(value, str) else None
-                safe = parsed is not None and parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not parsed.username and not parsed.password
+                safe = (
+                    parsed is not None and parsed.scheme in {"http", "https"}
+                    and bool(parsed.hostname) and "@" not in parsed.netloc
+                    and not any(char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value)
+                )
             except ValueError:
                 safe = False
             if not safe:
