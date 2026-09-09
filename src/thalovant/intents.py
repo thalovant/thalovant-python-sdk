@@ -381,8 +381,8 @@ def request_reply(
     denials = _Denials()
     try:
         client.connect(timeout=timeout)
-    except ThalovantConnectionError:
-        if time.monotonic() >= deadline:
+    except ThalovantConnectionError as error:
+        if isinstance(error.__cause__, ThalovantTimeoutError) or time.monotonic() >= deadline:
             raise ThalovantTimeoutError(f"Hub did not answer {query_type} within {timeout:g}s.") from None
         raise
     with client.on(EVENT_POLICY_DENIED, denials, request_id=request_id), client.on(

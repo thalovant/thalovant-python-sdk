@@ -493,9 +493,10 @@ def test_connect_enforces_hard_timeout_and_disconnects_transport():
     transport = HangingTransport()
     client = ThalovantClient(identity(), transport=transport)
 
-    with pytest.raises(ThalovantConnectionError, match="did not complete"):
+    with pytest.raises(ThalovantConnectionError, match="did not complete") as failure:
         client.connect(timeout=0.02)
 
+    assert isinstance(failure.value.__cause__, ThalovantTimeoutError)
     assert transport.started.is_set()
     assert transport.disconnect_count == 1
 

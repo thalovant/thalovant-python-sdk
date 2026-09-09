@@ -285,7 +285,9 @@ class ThalovantClient:
         def timeout_error() -> ThalovantConnectionError | ThalovantTimeoutError:
             if operation is not None:
                 return ThalovantTimeoutError(f"Hub query send did not complete within {budget:g}s.")
-            return ThalovantConnectionError(f"Hub connection did not complete within {budget:g}s.")
+            error = ThalovantConnectionError(f"Hub connection did not complete within {budget:g}s.")
+            error.__cause__ = ThalovantTimeoutError("Hub connection deadline expired.")
+            return error
 
         with self._connection_state:
             if self._closing:
