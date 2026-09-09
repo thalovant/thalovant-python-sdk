@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from hivemind_bus_client.noise import NoiseTransport, build_prologue, canonical_json, noise_protocol_name, start_noise_handshake
 
-from thalovant import ThalovantIdentity, ThalovantConnectionError
+from thalovant import ThalovantIdentity, ThalovantConnectionError, ThalovantTimeoutError
 from thalovant.transport import HiveMindHTTPTransport, HiveMindMQTTTransport, HiveMindWSSTransport
 
 PASSWORD = "synthetic-conformance-password"
@@ -182,6 +182,30 @@ def test_https_noise_cookie_encrypted_chunked_reply_and_same_object_reconnect(ht
         assert peer.patterns == ["XXpsk2", "KKpsk0"]
         assert peer.cookies > 10
     finally: transport.disconnect()
+
+
+def test_https_handshake_deadline_preserves_timeout_and_releases_admission(http_peer, tmp_path, monkeypatch):
+    peer, endpoint = http_peer
+    # Admit the connection but withhold HELLO/offer, exercising the actual HTTPS
+    # polling deadline and its disconnect cleanup without replacing the client.
+    original_start = peer.start
+    monkeypatch.setattr(peer, "start", lambda: None)
+    transport = HiveMindHTTPTransport(identity(endpoint), useragent="conformance",
+        noise_state_dir=str(tmp_path / "client"), connect_timeout=0.2,
+        handshake_timeout=0.2, handshake_poll_interval=0.01)
+    try:
+        with pytest.raises(ThalovantTimeoutError, match="handshake timed out"):
+            transport.connect()
+        assert not peer.admitted
+        assert transport._client is None and not transport._connecting
+        assert transport.connection_info().phase == "error"
+        assert not transport.healthcheck().ok
+        monkeypatch.setattr(peer, "start", original_start)
+        transport.connect_timeout = transport.handshake_timeout = 2
+        transport.connect()
+        assert transport.healthcheck().ok
+    finally:
+        transport.disconnect()
 
 
 @pytest.mark.parametrize("failure", ["legacy", "password", "json-error", "untrusted-tls"])

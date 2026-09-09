@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.6
+
+- Reject malformed Noise pin containers and values with `ThalovantConnectionError`, preserving the existing trust file.
+- Preserve `ThalovantTimeoutError` when HTTPS Noise negotiation expires, after releasing the failed connection and admission.
+
 ## 0.5.5
 
 - Implement HiveMind v3 Noise on HTTPS and MQTT using the published handshake primitives. HTTPS retains replica affinity and uses binary encrypted send/poll endpoints; MQTT carries raw Noise frames after admission. Both cipher suites and XXpsk2/KKpsk0 are supported.
