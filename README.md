@@ -584,8 +584,9 @@ switches the empty window to settling and recovers the soft miss. Neither repeat
 events nor later fragments extend these windows, and both are clipped by the
 original deadline. A hard policy/query-timeout failure freezes the result
 immediately. Empty results raise a runtime failure or timeout. Ask requires a
-matching request ID and reports a replacement session ID returned by the runtime;
-ambient or differently correlated replies cannot satisfy the request. Cancelling an
+matching request ID; ambient or differently correlated replies cannot satisfy
+the request. Both Ask and Query report the first accepted nonblank runtime
+session ID, falling back to the requested session when none is reported. Cancelling an
 async ask, query, event wait, or listener removes its handlers and retires any
 active connection/write it owns; a queued caller cannot close another caller's
 session. Transport status checks run outside the waiting caller's thread.

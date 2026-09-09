@@ -67,14 +67,14 @@ class QueryTransport:
                 context=context if context is not None else getattr(self, "context", {}),
             ))
 
-    def reply(self, event, text=None, *, channel="query", query_id="fixture"):
+    def reply(self, event, text=None, *, channel="query", query_id="fixture", context=None):
         frame = {
             "msg_type": channel,
             "metadata": {"query_id": query_id},
             "payload": {"msg_type": "bus", "payload": {
                 "type": event,
                 "data": {"utterance": text} if text else {},
-                "context": {},
+                "context": context or {},
             }},
         }
         for handler in tuple(self.handlers[channel]):
@@ -253,4 +253,86 @@ def test_query_deadline_retains_blocked_work_and_cleanup_before_reuse(stage, lat
     finally:
         transport.gate.set()
         transport.cleanup_gate.set()
+        sdk.close()
+
+
+def test_query_reports_runtime_session_from_first_accepted_reply():
+    def script(transport):
+        transport.reply('speak', 'foreign', query_id='foreign', context={'session': {'session_id': 'foreign-session'}})
+        transport.reply('speak', 'answer', channel='cascade', context={'session': {'session_id': 'runtime-session'}})
+        transport.reply('hive.query.complete', channel='cascade')
+
+    transport = QueryTransport(script)
+    sdk = client(transport)
+    try:
+        reply = sdk.query('hello', timeout=1, query_id='fixture', request_id='wanted', session_id='client-session')
+        assert reply.text == 'answer' and reply.session_id == 'runtime-session'
+        assert reply.request_id == 'wanted' and len(reply.events) == 2
+    finally:
+        sdk.close()
+
+
+@pytest.mark.parametrize('name', ['ask', 'query'])
+@pytest.mark.parametrize('later_session', [None, ' runtime-session '])
+def test_reply_session_ignores_blank_values_and_preserves_first_nonblank(name, later_session):
+    def script(transport):
+        for session_id in [' \t ', later_session]:
+            if session_id is None:
+                continue
+            context = {'request_id': 'wanted', 'session': {'session_id': session_id}}
+            if name == 'query':
+                transport.reply('speak', 'answer', context=context)
+            else:
+                transport.bus('speak', {'utterance': 'answer'}, context=context)
+        if name == 'query':
+            transport.reply('hive.query.complete')
+
+    transport = QueryTransport(script)
+    sdk = client(transport, settle=0.02)
+    try:
+        options = {'query_id': 'fixture'} if name == 'query' else {}
+        reply = getattr(sdk, name)('hello', timeout=1, request_id='wanted', session_id='requested', **options)
+        assert reply.session_id == (later_session if later_session is not None else 'requested')
+    finally:
+        sdk.close()
+
+
+@pytest.mark.parametrize("method", ["ask", "query"])
+def test_successful_reply_preserves_pending_write_until_healthy_reuse(method):
+    release = threading.Event()
+    finished = threading.Event()
+
+    class RetainedWrite(QueryTransport):
+        disconnects = 0
+
+        def disconnect(self):
+            self.disconnects += 1
+            super().disconnect()
+
+    def script(transport):
+        if method == "query":
+            transport.reply("speak", "answer")
+            transport.reply("hive.query.complete")
+        else:
+            transport.bus("speak", {"utterance": "answer"})
+        release.wait(5)
+        finished.set()
+
+    transport = RetainedWrite(script)
+    sdk = client(transport)
+    try:
+        kwargs = {"query_id": "fixture"} if method == "query" else {}
+        assert getattr(sdk, method)("hello", timeout=2, **kwargs).text == "answer"
+        assert not finished.is_set()
+        with pytest.raises(ThalovantConnectionError):
+            sdk.connect(timeout=0.05)
+        # A queued caller cannot reuse or retire the admitted write.
+        assert transport.dials == 1 and transport.disconnects == 0
+        release.set()
+        assert finished.wait(1)
+        sdk.connect(timeout=1)
+        assert transport.dials == 1 and transport.disconnects == 0
+        assert transport.connected
+    finally:
+        release.set()
         sdk.close()

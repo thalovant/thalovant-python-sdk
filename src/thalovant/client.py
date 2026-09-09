@@ -1217,6 +1217,7 @@ class ThalovantClient:
                 fail(error)
 
         threading.Thread(target=run, daemon=True).start()
+        completed = False
         try:
             while not done.is_set():
                 if cancellation.is_set() or (caller_cancellation is not None and caller_cancellation.is_set()):
@@ -1240,21 +1241,27 @@ class ThalovantClient:
                 raise ThalovantRuntimeError(_failure_reason(failure_event))
             if not fragments:
                 raise ThalovantTimeoutError("Hub finished the query but did not emit a speak reply.")
-            return ThalovantReply(
+            reply = ThalovantReply(
                 text=" ".join(fragments),
                 utterances=tuple(fragments),
                 handled=failure_event is None,
                 session_id=(
-                    next((event.session_id for event in events if event.session_id), None)
+                    next((value for value in (event.session_id for event in events) if value and value.strip()), None)
                     or _session_id_from_context(request_context)
-                ) if not direct else _session_id_from_context(request_context),
+                ),
                 request_id=request_id,
                 raw_messages=tuple(raw_messages),
                 events=tuple(events),
                 failure_event=failure_event,
             )
+            completed = True
+            return reply
         finally:
-            cancellation.set()
+            # Successful collection need not retire a healthy admitted write.
+            # _connect retains ownership and its original send deadline until
+            # the physical write completes, even after this caller returns.
+            if not completed:
+                cancellation.set()
             with state:
                 terminal = True
                 owned_handlers = tuple(registered)
