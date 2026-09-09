@@ -1179,7 +1179,15 @@ class ThalovantControlPlane:
         if parsed.username or parsed.password:
             raise ThalovantAPIError("Control-plane URLs must not include embedded credentials.")
         loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-        if (json is not None or request_headers.get("authorization")) and parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+        session_headers = getattr(self.session, "headers", {}) or {}
+        credential_headers = {"authorization", "proxy-authorization", "cookie"}
+        has_credentials = (
+            json is not None
+            or any(str(key).lower() in credential_headers and bool(value) for key, value in {**session_headers, **request_headers}.items())
+            or bool(getattr(self.session, "auth", None))
+            or bool(getattr(self.session, "cookies", None))
+        )
+        if has_credentials and parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
             raise ThalovantAPIError("Credential-bearing control-plane requests require HTTPS (except explicit loopback HTTP).")
         try:
             response = self.session.request(

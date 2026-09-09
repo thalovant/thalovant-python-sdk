@@ -96,3 +96,24 @@ def test_request_exception_traceback_does_not_expose_credentials(monkeypatch):
     assert secret not in "".join(traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__))
     assert caught.value.__cause__ is None
     assert caught.value.__suppress_context__
+
+
+@pytest.mark.parametrize("credential", ["auth", "Authorization", "Cookie", "Proxy-Authorization", "cookies"])
+def test_injected_session_credentials_require_tls_even_for_public_get(monkeypatch, credential):
+    session = requests.Session()
+    if credential == "auth":
+        session.auth = ("synthetic-user", "synthetic-password")
+    elif credential == "cookies":
+        session.cookies.set("synthetic-session", "synthetic-secret")
+    else:
+        session.headers[credential] = "synthetic-secret"
+    calls = []
+    def request(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("Credentials reached plaintext request")
+    monkeypatch.setattr(session, "request", request)
+    api = ThalovantControlPlane("http://custom.example.invalid", session=session)
+    with pytest.raises(ThalovantAPIError, match="require HTTPS"):
+        api.list_public_hubs()
+    assert calls == []
+    session.close()
