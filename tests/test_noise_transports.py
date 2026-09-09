@@ -317,3 +317,32 @@ def test_https_poll_failure_reconnect_clears_previous_admission(http_peer, tmp_p
         assert transport.healthcheck().ok
         assert peer.patterns == ["XXpsk2", "KKpsk0"]
     finally: transport.disconnect()
+
+
+@pytest.mark.parametrize("timeout_name", ["ConnectTimeout", "ReadTimeout"])
+def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, tmp_path, monkeypatch, timeout_name):
+    import requests
+
+    peer, endpoint = http_peer
+    request = requests.Session.request
+    inject = True
+
+    def timed_request(session, method, url, **options):
+        nonlocal inject
+        if inject and url.endswith("/get_messages"):
+            inject = False
+            raise getattr(requests, timeout_name)("synthetic HTTP deadline")
+        return request(session, method, url, **options)
+
+    monkeypatch.setattr(requests.Session, "request", timed_request)
+    transport = HiveMindHTTPTransport(identity(endpoint), useragent="conformance",
+        noise_state_dir=str(tmp_path / "client"), connect_timeout=2, handshake_timeout=2)
+    try:
+        with pytest.raises(ThalovantTimeoutError, match="handshake timed out"):
+            transport.connect()
+        assert not peer.admitted
+        assert transport._client is None and not transport._connecting
+        transport.connect()
+        assert transport.healthcheck().ok
+    finally:
+        transport.disconnect()

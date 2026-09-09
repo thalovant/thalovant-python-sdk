@@ -1489,3 +1489,27 @@ def test_wait_closed_preserves_actual_cleanup_failure():
         client.close(timeout=0.1)
     with pytest.raises(RuntimeError, match="synthetic cleanup failure"):
         client.wait_closed(timeout=0.1)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("method", ["connect", "close"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_invalid_explicit_lifecycle_timeout_expires_without_transport_io(timeout, method, asynchronous):
+    class NoIO(FakeTransport):
+        def connect(self):
+            raise AssertionError("Expired connect must not dial")
+
+        def disconnect(self):
+            raise AssertionError("Invalid close must not change lifecycle ownership")
+
+    transport = NoIO()
+    client_type = AsyncThalovantClient if asynchronous else ThalovantClient
+    client = client_type(identity(), transport=transport)
+    started = time.monotonic()
+    with pytest.raises(ThalovantConnectionError) as caught:
+        if asynchronous:
+            asyncio.run(getattr(client, method)(timeout=timeout))
+        else:
+            getattr(client, method)(timeout=timeout)
+    assert isinstance(caught.value.__cause__, ThalovantTimeoutError)
+    assert time.monotonic() - started < 0.25

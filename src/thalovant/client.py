@@ -279,8 +279,7 @@ class ThalovantClient:
         self, timeout: float | None = None, cancellation: threading.Event | None = None,
         operation: Callable[[], Any] | None = None,
     ) -> None:
-        budget = timeout if timeout and math.isfinite(timeout) and timeout > 0 else self._hard_connect_timeout
-        deadline = time.monotonic() + budget
+        budget = self._hard_connect_timeout if timeout is None else timeout
 
         def timeout_error() -> ThalovantConnectionError | ThalovantTimeoutError:
             if operation is not None:
@@ -288,6 +287,10 @@ class ThalovantClient:
             error = ThalovantConnectionError(f"Hub connection did not complete within {budget:g}s.")
             error.__cause__ = ThalovantTimeoutError("Hub connection deadline expired.")
             return error
+
+        if not math.isfinite(budget) or budget <= 0:
+            raise timeout_error()
+        deadline = time.monotonic() + budget
 
         with self._connection_state:
             if self._closing:
@@ -417,7 +420,11 @@ class ThalovantClient:
         A timeout retains cleanup ownership. Use ``wait_closed`` to observe
         actual completion before handing this identity to another client.
         """
-        budget = timeout if timeout and math.isfinite(timeout) and timeout > 0 else self._hard_connect_timeout
+        budget = self._hard_connect_timeout if timeout is None else timeout
+        if not math.isfinite(budget) or budget <= 0:
+            raise ThalovantConnectionError("Hub close deadline expired.") from ThalovantTimeoutError(
+                "Hub close requires a positive finite timeout."
+            )
         completed = threading.Event()
         errors: list[BaseException] = []
         with self._connection_state:
