@@ -220,6 +220,7 @@ class ThalovantClient:
         self._closed_event = threading.Event()
         self._closed_event.set()
         self._close_errors: list[BaseException] = []
+        self._automatic_cleanups = 0
         self._cancel_connect: Callable[[BaseException], None] | None = None
 
     @classmethod
@@ -301,6 +302,8 @@ class ThalovantClient:
         with self._connection_state:
             if self._closing:
                 raise ThalovantConnectionError("Hub connection is closing.")
+            if self._close_errors:
+                raise ThalovantConnectionError("Previous connection cleanup failed; retry close before reconnecting.") from None
             generation = self._connection_generation
             if operation is None and not self._connection_lock.locked() and self._connected and self._transport.is_connected():
                 return
@@ -322,6 +325,9 @@ class ThalovantClient:
             if self._closing or generation != self._connection_generation:
                 self._connection_lock.release()
                 raise ThalovantConnectionError("Hub connection was closed before it became ready.")
+            if self._close_errors:
+                self._connection_lock.release()
+                raise ThalovantConnectionError("Previous connection cleanup failed; retry close before reconnecting.") from None
             reuse_connection = self._connected and self._transport.is_connected()
             if operation is None and reuse_connection:
                 self._connection_lock.release()
@@ -335,9 +341,11 @@ class ThalovantClient:
 
             def disconnect() -> None:
                 try:
-                    self._transport.disconnect()
-                except Exception:
-                    pass
+                    retire = getattr(self._transport, "_retire_connection", self._transport.disconnect)
+                    retire()
+                except BaseException as error:
+                    with self._connection_state:
+                        self._close_errors.append(error)
 
             def cancel(error: BaseException) -> None:
                 nonlocal cleanup
@@ -347,6 +355,8 @@ class ThalovantClient:
                     errors.append(error)
                     cancelled.set()
                     self._connected = False
+                    self._automatic_cleanups += 1
+                    self._closed_event.clear()
                     cleanup = threading.Thread(target=disconnect, daemon=True)
                     cleanup.start()
                     done.set()
@@ -394,6 +404,10 @@ class ThalovantClient:
                     with self._connection_state:
                         if self._cancel_connect is cancel:
                             self._cancel_connect = None
+                        if owned_cleanup is not None:
+                            self._automatic_cleanups -= 1
+                            if not self._automatic_cleanups and not self._closing:
+                                self._closed_event.set()
                     self._connection_lock.release()
 
             threading.Thread(target=run_connect, daemon=True).start()
@@ -435,8 +449,6 @@ class ThalovantClient:
         errors: list[BaseException] = []
         with self._connection_state:
             self._connection_generation += 1
-            if not self._closing:
-                self._close_errors = []
             self._closing += 1
             self._closed_event.clear()
             self._connected = False
@@ -447,6 +459,8 @@ class ThalovantClient:
             try:
                 with self._connection_lock:
                     self._transport.disconnect()
+                    with self._connection_state:
+                        self._close_errors.clear()
             except BaseException as exc:
                 errors.append(exc)
                 with self._connection_state:
@@ -454,7 +468,7 @@ class ThalovantClient:
             finally:
                 with self._connection_state:
                     self._closing -= 1
-                    if not self._closing:
+                    if not self._closing and not self._automatic_cleanups:
                         self._closed_event.set()
                 completed.set()
 

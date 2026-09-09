@@ -90,6 +90,7 @@ class _ConnectionLifecycle:
         self._generation = 0
         self._connecting = False
         self._closing = False
+        self._failed_cleanup: tuple[Any, BaseException] | None = None
 
     def _is_current_client(self, client: Any) -> bool:
         with self._lifecycle_lock:
@@ -99,6 +100,8 @@ class _ConnectionLifecycle:
         with self._lifecycle_lock:
             if self._connecting or self._closing:
                 raise ThalovantConnectionError("A connection lifecycle operation is already in progress.")
+            if self._failed_cleanup is not None:
+                raise ThalovantConnectionError("Previous connection cleanup failed; retry disconnect before reconnecting.") from None
             self._connecting = True
             self._generation += 1
             old = self._client
@@ -107,17 +110,38 @@ class _ConnectionLifecycle:
             self._begin_connection(close_previous=False)
             return self._generation, old
 
-    def _close_client_once(self, client: Any) -> None:
+    def _close_client_once(self, client: Any, *, retry_failed: bool = False) -> None:
         with self._lifecycle_lock:
             if getattr(client, "thalovant_cleanup_started", False):
-                return
+                error = getattr(client, "thalovant_cleanup_error", None)
+                if error is None:
+                    return
+                if not retry_failed:
+                    raise error
             client.thalovant_cleanup_started = True
-        self._close_detached(client)
+        try:
+            self._close_detached(client)
+        except BaseException as error:
+            with self._lifecycle_lock:
+                client.thalovant_cleanup_error = error
+                self._failed_cleanup = (client, error)
+                self._transport_connected = False
+                self._fail_connection(error)
+            raise
+        else:
+            with self._lifecycle_lock:
+                client.thalovant_cleanup_error = None
+                if self._failed_cleanup is not None and self._failed_cleanup[0] is client:
+                    self._failed_cleanup = None
 
     def _cleanup_reserved(self, old: Any) -> None:
         try:
             if old is not None:
                 self._close_client_once(old)
+        except BaseException:
+            with self._lifecycle_lock:
+                self._connecting = False
+            raise
         finally:
             with self._lifecycle_lock:
                 self._closing = False
@@ -154,32 +178,49 @@ class _ConnectionLifecycle:
         if cleanup:
             try:
                 self._close_client_once(client)
+            except BaseException:
+                # Keep the primary connection failure; the cleanup error and
+                # exact client remain retained for observation/explicit retry.
+                pass
             finally:
                 with self._lifecycle_lock:
                     self._closing = False
         elif client is not None:
             # A client constructed after cancellation still needs local cleanup.
             # The once guard prevents repeating an earlier HTTP /disconnect.
-            self._close_client_once(client)
+            try:
+                self._close_client_once(client)
+            except BaseException:
+                pass
 
     def disconnect(self) -> None:
+        self._disconnect(retry_failed=True)
+
+    def _retire_connection(self) -> None:
+        """Automatic cancellation never silently retries a failed admission."""
+        self._disconnect(retry_failed=False)
+
+    def _disconnect(self, *, retry_failed: bool) -> None:
         with self._lifecycle_lock:
             if self._closing:
                 # An existing cleanup owns the old socket; invalidate an
                 # attempt waiting on that cleanup without running it twice.
                 self._generation += 1
                 self._connecting = False
+                if retry_failed:
+                    raise ThalovantConnectionError("Connection cleanup is already in progress.")
                 return
-            client = self._client
+            client = self._failed_cleanup[0] if self._failed_cleanup is not None else self._client
             self._client = None
             self._generation += 1
             self._connecting = False
             self._transport_connected = False
             self._closing = client is not None
-            self._mark_closed()
         try:
             if client is not None:
-                self._close_client_once(client)
+                self._close_client_once(client, retry_failed=retry_failed)
+            with self._lifecycle_lock:
+                self._mark_closed()
         finally:
             with self._lifecycle_lock:
                 self._closing = False

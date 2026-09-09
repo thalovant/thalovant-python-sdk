@@ -27,7 +27,9 @@ class HTTPNoiseClient:
         self.handshake_event = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._request_lock = threading.Lock()
+        self._request_lock = threading.RLock()
+        self._close_lock = threading.Lock()
+        self._closed = False
         self._session = requests.Session()
         # Keep affinity across explicit reconnects as well as polling requests.
         # A new adapter must return to the replica whose admission it owns.
@@ -54,7 +56,7 @@ class HTTPNoiseClient:
                 remaining = min(remaining, self._deadline - time.monotonic())
             if remaining <= 0:
                 raise ThalovantTimeoutError("HiveMind HTTP Noise handshake timed out.")
-            from requests import Timeout
+            from requests import RequestException, Timeout
 
             try:
                 response = self._session.request(
@@ -66,19 +68,31 @@ class HTTPNoiseClient:
                 # Requests exceptions can embed the authorization query. Suppress
                 # their chain so normal formatted tracebacks cannot expose it.
                 raise ThalovantTimeoutError(detail) from None
-            self.transport._raise_for_emit_response(response)
+            except RequestException:
+                raise ThalovantConnectionError("HiveMind HTTP request failed.") from None
             if 300 <= response.status_code < 400:
                 raise ThalovantConnectionError("HiveMind HTTP endpoint redirected the request.")
-            body = response.json()
+            if not 200 <= response.status_code < 300:
+                raise ThalovantConnectionError(f"HiveMind HTTP request failed with HTTP {response.status_code}.")
+            try:
+                body = response.json()
+            except ValueError:
+                raise ThalovantConnectionError("Invalid HiveMind HTTP response.") from None
             if not isinstance(body, dict):
                 raise ThalovantConnectionError("Invalid HiveMind HTTP response.")
+            if body.get("error"):
+                raise ThalovantConnectionError("HiveMind HTTP request was refused.")
             return body
 
     def connect(self) -> None:
         self._deadline = time.monotonic() + self.transport.connect_timeout + self.transport.handshake_timeout
         try:
-            self.request("/connect", method="POST")
-            self._admitted = True
+            # Cleanup must not observe a false admission flag between a
+            # successful response and publication of the admission it owns.
+            with self._request_lock:
+                self._check_current()
+                self.request("/connect", method="POST")
+                self._admitted = True
             self._check_current()
             self.connected.set()
             with self.transport._lifecycle_lock:
@@ -98,7 +112,10 @@ class HTTPNoiseClient:
             self._thread = threading.Thread(target=self._run, daemon=True, name="thalovant-http")
             self._thread.start()
         except Exception:
-            self.close()
+            # The transport lifecycle owns cleanup and retains any failed
+            # admission. Do not make a second, untracked disconnect attempt.
+            self.connected.clear()
+            self.handshake_event.clear()
             raise
 
     def _check_current(self) -> None:
@@ -165,21 +182,33 @@ class HTTPNoiseClient:
             raise
 
     def close(self) -> None:
-        self._stop.set()
-        if self._thread is not None and self._thread is not threading.current_thread():
-            self._thread.join(timeout=self.transport.send_timeout + 1)
-        was_admitted = self._admitted
-        self._admitted = False
-        self.connected.clear()
-        self.handshake_event.clear()
-        self.channel.close()
-        if was_admitted:
-            try:
-                self._deadline = time.monotonic() + min(2.0, self.transport.send_timeout)
-                self.request("/disconnect", method="POST")
-            except Exception:
-                pass
-        self._session.close()
+        with self._close_lock:
+            self._stop.set()
+            if self._thread is not None and self._thread is not threading.current_thread():
+                self._thread.join(timeout=self.transport.send_timeout + 1)
+            self.connected.clear()
+            self.handshake_event.clear()
+            # Noise writers take the channel lock before the request lock.
+            # Never hold the request lock while waiting to retire the channel.
+            self.channel.close()
+            with self._request_lock:
+                if self._admitted:
+                    try:
+                        self._deadline = time.monotonic() + min(2.0, self.transport.send_timeout)
+                        reply = self.request("/disconnect", method="POST")
+                        if reply.get("status") != "Disconnected" or reply.get("ok") is False:
+                            raise ThalovantConnectionError("Invalid disconnect acknowledgment.")
+                    except Exception:
+                        # Keep this session and its replica cookie for explicit
+                        # cleanup retry. Never log arbitrary server/error bodies.
+                        raise ThalovantConnectionError(
+                            "HiveMind HTTP disconnect was not acknowledged; admission is retained."
+                        ) from None
+                    self._admitted = False
+                self._deadline = None
+                if not self._closed:
+                    self._session.close()
+                    self._closed = True
 
     def is_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive() and not self._stop.is_set())
