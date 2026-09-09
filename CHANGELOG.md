@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5
+
+- Implement HiveMind v3 Noise on HTTPS and MQTT using the published handshake primitives. HTTPS retains replica affinity and uses binary encrypted send/poll endpoints; MQTT carries raw Noise frames after admission. Both cipher suites and XXpsk2/KKpsk0 are supported.
+- Verify HTTPS/WSS server certificates by default. Explicit `self_signed=True` on a transport remains available for intentionally configured development environments.
+- Add `noise_state_dir` to the client and all transports. Preserve existing HiveMind identity/key paths by default; write private identity state atomically and retain server pins after authentication failures.
+- Reset session keys and readiness on disconnect, reject unauthenticated application traffic, serialize chunked sends, and increase the default Noise handshake budget to 20 seconds.
+- Add real TLS HTTP and threaded MQTT encrypted request/reply, large-message concurrency, reconnect, invalid-offer, wrong-password, pin and certificate regressions.
+
 ## 0.5.3
 
 - `client.intents("en-us")` asks for one language again. A `str` satisfies the

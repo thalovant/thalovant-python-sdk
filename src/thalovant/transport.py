@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import re
+import queue
 import socket
 import threading
 import time
@@ -81,8 +82,111 @@ def _require_tls_endpoint(endpoint: str) -> None:
         )
 
 
-class HiveMindHTTPTransport:
-    """Thin adapter around `hivemind_bus_client.http_client.HiveMindHTTPClient`."""
+class _ConnectionLifecycle:
+    """Short state locks; blocking socket operations never hold this lock."""
+
+    def _init_lifecycle(self) -> None:
+        self._lifecycle_lock = threading.RLock()
+        self._generation = 0
+        self._connecting = False
+        self._closing = False
+
+    def _is_current_client(self, client: Any) -> bool:
+        with self._lifecycle_lock:
+            return self._client is client
+
+    def _reserve_connection(self) -> tuple[int, Any]:
+        with self._lifecycle_lock:
+            if self._connecting or self._closing:
+                raise ThalovantConnectionError("A connection lifecycle operation is already in progress.")
+            self._connecting = True
+            self._generation += 1
+            old = self._client
+            self._client = None
+            self._closing = old is not None
+            self._begin_connection(close_previous=False)
+            return self._generation, old
+
+    def _close_client_once(self, client: Any) -> None:
+        with self._lifecycle_lock:
+            if getattr(client, "thalovant_cleanup_started", False):
+                return
+            client.thalovant_cleanup_started = True
+        self._close_detached(client)
+
+    def _cleanup_reserved(self, old: Any) -> None:
+        try:
+            if old is not None:
+                self._close_client_once(old)
+        finally:
+            with self._lifecycle_lock:
+                self._closing = False
+
+    def _install_client(self, client: Any, generation: int) -> None:
+        with self._lifecycle_lock:
+            if generation != self._generation or not self._connecting:
+                raise ThalovantConnectionError("Connection attempt was cancelled.")
+            self._client = client
+
+    def _finish_connection(self, client: Any, generation: int) -> None:
+        with self._lifecycle_lock:
+            if generation != self._generation or self._client is not client or not self._connecting:
+                raise ThalovantConnectionError("Connection attempt was cancelled.")
+            self._connecting = False
+            self._transport_connected = True
+            self._complete_handshake()
+
+    def _fail_current_client(self, client: Any, error: BaseException) -> None:
+        with self._lifecycle_lock:
+            if self._client is client:
+                self._fail_connection(error)
+
+    def _abort_connection(self, client: Any, generation: int, error: BaseException) -> None:
+        cleanup = False
+        with self._lifecycle_lock:
+            if generation == self._generation:
+                self._client = None
+                self._connecting = False
+                self._transport_connected = False
+                self._closing = client is not None
+                self._fail_connection(error)
+                cleanup = client is not None
+        if cleanup:
+            try:
+                self._close_client_once(client)
+            finally:
+                with self._lifecycle_lock:
+                    self._closing = False
+        elif client is not None:
+            # A client constructed after cancellation still needs local cleanup.
+            # The once guard prevents repeating an earlier HTTP /disconnect.
+            self._close_client_once(client)
+
+    def disconnect(self) -> None:
+        with self._lifecycle_lock:
+            if self._closing:
+                # An existing cleanup owns the old socket; invalidate an
+                # attempt waiting on that cleanup without running it twice.
+                self._generation += 1
+                self._connecting = False
+                return
+            client = self._client
+            self._client = None
+            self._generation += 1
+            self._connecting = False
+            self._transport_connected = False
+            self._closing = client is not None
+            self._mark_closed()
+        try:
+            if client is not None:
+                self._close_client_once(client)
+        finally:
+            with self._lifecycle_lock:
+                self._closing = False
+
+
+class HiveMindHTTPTransport(_ConnectionLifecycle):
+    """HTTPS adapter with cookie-affine polling and authenticated v3 Noise."""
 
     def __init__(
         self,
@@ -90,11 +194,12 @@ class HiveMindHTTPTransport:
         *,
         useragent: str,
         connect_timeout: float = 4.0,
-        handshake_timeout: float = 6.0,
+        handshake_timeout: float = 20.0,
         handshake_poll_interval: float = 0.1,
         handshake_settle_seconds: float = 0.1,
         send_timeout: float = 8.0,
-        self_signed: bool = True,
+        self_signed: bool = False,
+        noise_state_dir: str | None = None,
         compress: bool = False,
         binarize: bool = False,
     ) -> None:
@@ -106,8 +211,10 @@ class HiveMindHTTPTransport:
         self.handshake_settle_seconds = handshake_settle_seconds
         self.send_timeout = send_timeout
         self.self_signed = self_signed
+        self.noise_state_dir = noise_state_dir
         self.compress = compress
         self.binarize = binarize
+        self._init_lifecycle()
         self._client: Any | None = None
         self._transport_connected = False
         self._deps: _HiveMindDeps | None = None
@@ -119,7 +226,7 @@ class HiveMindHTTPTransport:
     def connection_info(self) -> ThalovantConnectionInfo:
         return self._connection_info
 
-    def _begin_connection(self) -> None:
+    def _begin_connection(self, *, close_previous: bool = True) -> None:
         self._last_error = None
         self._connect_started = time.monotonic()
         self._transport_opened = 0.0
@@ -184,79 +291,25 @@ class HiveMindHTTPTransport:
     def connect(self) -> None:
         if self.is_connected():
             return
-
-        # TLS is the only confidentiality on this path. The identity crypto key
-        # that once sealed HTTP payloads separately is gone with v3, so a plain
-        # http:// hub would put every message, and the access key in the
-        # authorization query, on the wire in the clear.
         _require_tls_endpoint(self.identity.endpoint_base())
+        from ._http_runtime import HTTPNoiseClient
 
-        deps = self._load_deps()
-        self._begin_connection()
-        http_client_class = self._build_http_client_class(deps.HiveMindHTTPClient)
-        client = http_client_class(
-            key=self.identity.access_key,
-            password=self.identity.password,
-            crypto_key=None,
-            host=self.identity.default_master,
-            port=self.identity.default_port,
-            useragent=self.useragent,
-            self_signed=self.self_signed,
-            compress=self.compress,
-            binarize=self.binarize,
-        )
-        protocol = self._build_protocol(client, deps)
-        client.identity.site_id = self.identity.site_id
-        client.protocol = protocol
-        client.protocol.identity = client.identity
-        client.protocol.site_id = self.identity.site_id
-        client.protocol.bind(client.internal_bus)
-
+        generation, old = self._reserve_connection()
+        self._cleanup_reserved(old)
+        client = None
         try:
-            response = deps.requests.post(
-                f"{client.base_url}/connect",
-                params={"authorization": client.auth},
-                timeout=self.connect_timeout,
-            )
-        except deps.requests.RequestException as exc:
-            self._fail_connection(exc)
-            self._shutdown_client(client, transport_connected=False)
-            raise ThalovantConnectionError("Could not reach the HiveMind HTTP endpoint.") from exc
+            client = HTTPNoiseClient(self)
+            self._install_client(client, generation)
+            client.connect()
+            if not client.channel.ready or not client.connected.is_set():
+                raise ThalovantConnectionError("HTTP Noise session closed before readiness.")
+            self._finish_connection(client, generation)
+        except Exception as exc:
+            self._abort_connection(client, generation, exc)
+            raise ThalovantConnectionError("Could not establish the HiveMind HTTP Noise session.") from exc
 
-        if getattr(response, "ok", False) is False:
-            detail = _redact_error_text(getattr(response, "text", "")) or (
-                f"HTTP {getattr(response, 'status_code', 'error')}"
-            )
-            error = ThalovantConnectionError(f"HiveMind HTTP connect failed: {detail}")
-            self._fail_connection(error)
-            self._shutdown_client(client, transport_connected=False)
-            raise error
-
-        client.connected.set()
-        self._mark_transport_open()
-        deadline = time.monotonic() + self.handshake_timeout
-        while time.monotonic() < deadline:
-            remaining = max(0.0, deadline - time.monotonic())
-            if client.handshake_event.wait(timeout=min(self.handshake_poll_interval, remaining)):
-                time.sleep(self.handshake_settle_seconds)
-                self._complete_handshake()
-                self._client = client
-                self._transport_connected = True
-                return
-
-        error = ThalovantTimeoutError("HiveMind HTTP handshake timed out.")
-        self._fail_connection(error)
+    def _close_detached(self, client: Any) -> None:
         self._shutdown_client(client, transport_connected=True)
-        raise error
-
-    def disconnect(self) -> None:
-        client = self._client
-        if client is None:
-            return
-        self._shutdown_client(client, transport_connected=self._transport_connected)
-        self._client = None
-        self._transport_connected = False
-        self._mark_closed()
 
     def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._require_client().on_mycroft(event_name, handler)
@@ -296,23 +349,9 @@ class HiveMindHTTPTransport:
         return self._send_hive_message_object(deps.HiveMessage(**message), encrypt=encrypt)
 
     def _send_hive_message_object(self, hive_message: Any, *, encrypt: bool) -> Any:
-        deps = self._load_deps()
-        client = self._require_live_client()
-        payload = deps.serialize_message(hive_message)
-
-        try:
-            response = deps.requests.post(
-                f"{client.base_url}/send_message",
-                data={"message": payload},
-                params={"authorization": client.auth},
-                timeout=self.send_timeout,
-            )
-        except deps.requests.RequestException as exc:
-            self._last_error = exc
-            raise ThalovantConnectionError("Could not send the HiveMind HTTP message.") from exc
-
-        self._raise_for_emit_response(response)
-        return response
+        # The legacy flag remains source-compatible; v3 application traffic is
+        # always encrypted and cannot bypass the authenticated channel.
+        return self._require_live_client().emit(hive_message)
 
     def healthcheck(self) -> ThalovantHealth:
         client = self._client
@@ -402,29 +441,6 @@ class HiveMindHTTPTransport:
         )
         return self._deps
 
-    def _build_http_client_class(self, base_class: Any) -> Any:
-        transport = self
-
-        class _ObservedHiveMindHTTPClient(base_class):  # type: ignore[misc, valid-type]
-            thalovant_last_error: BaseException | None = None
-
-            @property
-            def base_url(inner_self: Any) -> str:
-                return transport.identity.endpoint_base()
-
-            def run(inner_self: Any) -> None:
-                try:
-                    super().run()
-                except Exception as exc:
-                    inner_self.thalovant_last_error = exc
-                    transport._last_error = exc
-                    try:
-                        inner_self.connected.clear()
-                    except Exception:
-                        pass
-
-        return _ObservedHiveMindHTTPClient
-
     def _build_wss_client_class(self, base_class: Any, web_socket_app: Any) -> Any:
         transport = self
 
@@ -432,9 +448,29 @@ class HiveMindHTTPTransport:
             thalovant_last_error: BaseException | None = None
             thalovant_closed: bool = False
 
+            def on_message(inner_self: Any, *args: Any) -> None:
+                if not transport._is_current_client(inner_self) or inner_self.thalovant_closed:
+                    return
+                raw = args[-1]
+                if inner_self.noise_transport is not None:
+                    allowed = isinstance(raw, bytes)
+                else:
+                    try:
+                        allowed = isinstance(raw, str) and json.loads(raw).get("msg_type") in {"hello", "shake", "handshake"}
+                    except (ValueError, AttributeError):
+                        allowed = False
+                if not allowed:
+                    error = ThalovantConnectionError("WSS traffic violated the authenticated Noise session boundary.")
+                    inner_self.thalovant_last_error = error
+                    transport._fail_current_client(inner_self, error)
+                    inner_self.handshake_event.clear()
+                    inner_self.close_connection()
+                    return
+                super().on_message(*args)
+
             def on_error(inner_self: Any, *args: Any) -> None:
                 # The transport closed us on purpose: do not sleep-and-reconnect.
-                if inner_self.thalovant_closed:
+                if inner_self.thalovant_closed or not transport._is_current_client(inner_self):
                     try:
                         inner_self.connected_event.clear()
                         inner_self.handshake_event.clear()
@@ -466,7 +502,7 @@ class HiveMindHTTPTransport:
                     super().run_forever()
                 except Exception as exc:
                     inner_self.thalovant_last_error = exc
-                    transport._last_error = exc
+                    transport._fail_current_client(inner_self, exc)
                     try:
                         inner_self.handshake_event.clear()
                     except Exception:
@@ -483,13 +519,18 @@ class HiveMindHTTPTransport:
                     1.0, transport.handshake_timeout
                 )
                 while time.monotonic() < deadline:
+                    if inner_self.thalovant_closed or not transport._is_current_client(inner_self):
+                        raise ThalovantConnectionError("WSS connection attempt was cancelled.")
                     remaining = max(0.0, deadline - time.monotonic())
                     wait_for = min(transport.handshake_poll_interval, remaining)
                     if inner_self.connected_event.is_set():
-                        transport._mark_transport_open(socket=True)
+                        with transport._lifecycle_lock:
+                            if transport._client is inner_self:
+                                transport._mark_transport_open(socket=True)
                     if inner_self.handshake_event.wait(timeout=wait_for):
                         time.sleep(transport.handshake_settle_seconds)
-                        transport._complete_handshake()
+                        if not transport._is_current_client(inner_self) or not inner_self.connected_event.is_set():
+                            raise ThalovantConnectionError("WSS closed during Noise negotiation.")
                         return
                     should_start_handshake = (
                         inner_self.connected_event.is_set()
@@ -500,7 +541,7 @@ class HiveMindHTTPTransport:
                             inner_self.protocol.start_handshake()
                         except Exception as exc:
                             inner_self.thalovant_last_error = exc
-                            transport._last_error = exc
+                            transport._fail_current_client(inner_self, exc)
                             raise
                     elif not inner_self.connected_event.is_set():
                         inner_self.connected_event.wait(timeout=wait_for)
@@ -564,7 +605,18 @@ class HiveMindHTTPTransport:
         accepts only the v3 Noise handshake, which the bus client performs
         itself from the identity password.
         """
-        return deps.HiveMindSlaveProtocol(
+        class StrictNoiseProtocol(deps.HiveMindSlaveProtocol):
+            def _drop_stale_pin_after_kk_failure(self) -> None:
+                # Failed authentication cannot authorize changing a trusted key.
+                return
+
+            def _legacy_start_handshake(self, server_payload: dict[str, Any]) -> None:
+                # An offer may not have arrived during the client's proactive
+                # timer. Wait for it; a real incompatible offer fails closed.
+                if server_payload:
+                    self._abort_noise("The SDK requires a HiveMind v3 Noise offer.")
+
+        return StrictNoiseProtocol(
             client,
             shared_bus=client.share_bus,
             site_id=self.identity.site_id or "unknown",
@@ -572,26 +624,7 @@ class HiveMindHTTPTransport:
         )
 
     def _shutdown_client(self, client: Any, *, transport_connected: bool) -> None:
-        deps = self._load_deps()
-        if transport_connected:
-            try:
-                deps.requests.post(
-                    f"{client.base_url}/disconnect",
-                    params={"authorization": client.auth},
-                    timeout=self.connect_timeout,
-                )
-            except deps.requests.RequestException:
-                pass
-        try:
-            client.connected.clear()
-            client.handshake_event.clear()
-        except Exception:
-            pass
-        try:
-            client.connected.set()
-            client.shutdown()
-        except Exception:
-            pass
+        client.close()
 
 
 class HiveMindWSSTransport(HiveMindHTTPTransport):
@@ -600,61 +633,42 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
     def connect(self) -> None:
         if self.is_connected():
             return
-
         endpoint = self.identity.endpoint_for("wss")
         if not endpoint:
             raise ThalovantConnectionError("The identity does not include a WSS endpoint.")
         parsed = urlparse(endpoint)
         if parsed.scheme not in {"ws", "wss"} or not parsed.netloc:
             raise ThalovantConnectionError("WSS endpoint must start with ws:// or wss://.")
-
-        deps = self._load_deps()
-        self._begin_connection()
-        wss_client_class = self._build_wss_client_class(
-            deps.HiveMessageBusClient,
-            deps.WebSocketApp,
-        )
-        client = wss_client_class(
-            key=self.identity.access_key,
-            password=self.identity.password,
-            crypto_key=None,
-            host=f"{parsed.scheme}://{_endpoint_host(parsed)}",
-            port=parsed.port or (443 if parsed.scheme == "wss" else 80),
-            useragent=self.useragent,
-            self_signed=self.self_signed,
-            compress=self.compress,
-            binarize=self.binarize,
-        )
-        protocol = self._build_protocol(client, deps)
-
+        generation, old = self._reserve_connection()
+        self._cleanup_reserved(old)
+        client = None
         try:
-            client.connect(
-                bus=client.internal_bus,
-                protocol=protocol,
-                site_id=self.identity.site_id,
+            deps = self._load_deps()
+            wss_client_class = self._build_wss_client_class(deps.HiveMessageBusClient, deps.WebSocketApp)
+            from ._noise_runtime import noise_identity, prepare_noise_key
+            persistent_identity = noise_identity(self.noise_state_dir)
+            prepare_noise_key(persistent_identity)
+            client = wss_client_class(
+                key=self.identity.access_key, password=self.identity.password, crypto_key=None,
+                host=f"{parsed.scheme}://{_endpoint_host(parsed)}",
+                port=parsed.port or (443 if parsed.scheme == "wss" else 80),
+                useragent=self.useragent, self_signed=self.self_signed,
+                compress=self.compress, binarize=self.binarize, identity=persistent_identity,
             )
+            protocol = self._build_protocol(client, deps)
+            self._install_client(client, generation)
+            client.connect(bus=client.internal_bus, protocol=protocol, site_id=self.identity.site_id)
+            if not client.connected_event.is_set() or not client.handshake_event.is_set():
+                raise ThalovantConnectionError("WSS Noise session closed before readiness.")
+            self._finish_connection(client, generation)
         except Exception as exc:
-            self._fail_connection(exc)
-            self._shutdown_wss_client(client)
+            self._abort_connection(client, generation, exc)
             if isinstance(exc, ThalovantTimeoutError):
                 raise
             raise ThalovantConnectionError("HiveMind WSS connect failed.") from exc
 
-        if client.connected_event.is_set():
-            self._mark_transport_open(socket=True)
-        if client.handshake_event.is_set():
-            self._complete_handshake()
-        self._client = client
-        self._transport_connected = True
-
-    def disconnect(self) -> None:
-        client = self._client
-        if client is None:
-            return
+    def _close_detached(self, client: Any) -> None:
         self._shutdown_wss_client(client)
-        self._client = None
-        self._transport_connected = False
-        self._mark_closed()
 
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._require_client().remove(event_name, handler)
@@ -665,7 +679,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
         try:
             return client.emit(deps.HiveMessage(**message))
         except Exception as exc:
-            self._last_error = exc
+            self._fail_current_client(client, exc)
             raise ThalovantConnectionError("Could not send the HiveMind WSS message.") from exc
 
     def emit_event(
@@ -689,7 +703,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
         try:
             return client.emit_mycroft(message)
         except Exception as exc:
-            self._last_error = exc
+            self._fail_current_client(client, exc)
             raise ThalovantConnectionError("Could not send the HiveMind WSS message.") from exc
 
     def healthcheck(self) -> ThalovantHealth:
@@ -703,7 +717,7 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
                 handshake_complete = bool(client.handshake_event.is_set())
                 transport_alive = connected
             except Exception as exc:
-                self._last_error = exc
+                self._fail_current_client(client, exc)
         error = self.last_error()
         return ThalovantHealth(
             connected=connected,
@@ -770,7 +784,7 @@ class MqttTopicSet(NamedTuple):
     status: str
 
 
-class HiveMindMQTTTransport:
+class HiveMindMQTTTransport(_ConnectionLifecycle):
     """MQTT broker-mediated HiveMind transport following hivemind-mqtt-protocol."""
 
     def __init__(
@@ -779,8 +793,9 @@ class HiveMindMQTTTransport:
         *,
         useragent: str,
         connect_timeout: float = 4.0,
-        handshake_timeout: float = 6.0,
+        handshake_timeout: float = 20.0,
         send_timeout: float = 8.0,
+        noise_state_dir: str | None = None,
         **_: Any,
     ) -> None:
         self.identity = identity
@@ -790,6 +805,7 @@ class HiveMindMQTTTransport:
         self.send_timeout = send_timeout
         self.session_id = f"thalovant-python-mqtt-{uuid.uuid4().hex}"
         self.topics = mqtt_topics_for_identity(identity)
+        self._init_lifecycle()
         self._client: Any | None = None
         self._connected = threading.Event()
         self._subscribed = threading.Event()
@@ -797,12 +813,10 @@ class HiveMindMQTTTransport:
         self._last_error: BaseException | None = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
         self._hive_handlers: dict[str, list[Callable[[Any], None]]] = {}
-        # No key until the password handshake derives one. The identity
-        # crypto key that used to seed this is gone with v3.
-        self._crypto_key: str | None = None
-        self._cipher = "AES-GCM"
-        self._json_encoding = "JSON-HEX"
-        self._password_handshake: Any | None = None
+        self.noise_state_dir = noise_state_dir
+        self._noise: Any = None
+        self._inbound: queue.Queue[bytes | None] = queue.Queue(maxsize=256)
+        self._worker: threading.Thread | None = None
         self._connect_started = 0.0
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo()
@@ -810,14 +824,13 @@ class HiveMindMQTTTransport:
     def connection_info(self) -> ThalovantConnectionInfo:
         return self._connection_info
 
-    def _begin_connection(self) -> None:
+    def _begin_connection(self, *, close_previous: bool = True) -> None:
         self._last_error = None
-        # The session key now comes from the password handshake, not from a
-        # static identity field, so it belongs to one connection. Carrying it
-        # into a reconnect would encrypt the next hello with the previous
-        # session's key and the broker could not read it.
-        self._crypto_key = None
-        self._password_handshake = None
+        if close_previous and self._noise is not None:
+            self._noise.close()
+        self._noise = None
+        self._connected.clear()
+        self._subscribed.clear()
         self._handshake.clear()
         self._connect_started = time.monotonic()
         self._transport_opened = 0.0
@@ -878,73 +891,124 @@ class HiveMindMQTTTransport:
     def connect(self) -> None:
         if self.is_connected():
             return
-        self._begin_connection()
         if self.identity.mqtt is None:
             raise ThalovantConnectionError("The identity does not include MQTT broker credentials.")
-        mqtt = self._load_mqtt_module()
         parsed = urlparse(self.identity.mqtt.endpoint)
         if parsed.scheme not in {"mqtt", "mqtts", "tcp", "ssl"} or not parsed.hostname:
             raise ThalovantConnectionError("MQTT endpoint must start with mqtt://, mqtts://, tcp://, or ssl://.")
         tls_enabled = _mqtt_tls_enabled(self.identity.mqtt, parsed.scheme)
-        client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2,
-            client_id=f"thalovant-{_safe_mqtt_client_id(self.identity.access_key)}",
-        )
-        client.username_pw_set(self.identity.mqtt.username, self.identity.mqtt.password)
-        if tls_enabled:
+        if not tls_enabled:
+            raise ThalovantConnectionError("HiveMind MQTT requires a broker connection with TLS.")
+        generation, old = self._reserve_connection()
+        self._cleanup_reserved(old)
+        client = None
+        try:
+            mqtt = self._load_mqtt_module()
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                 client_id=f"thalovant-{uuid.uuid4().hex}", reconnect_on_failure=False)
+            client.username_pw_set(self.identity.mqtt.username, self.identity.mqtt.password)
             client.tls_set()
-        client.will_set(self.topics.status, "offline", qos=1, retain=True)
-        client.on_connect = self._on_connect
-        client.on_subscribe = self._on_subscribe
-        client.on_disconnect = self._on_disconnect
-        client.on_message = self._on_message
-        self._client = client
-        self._last_error = None
-        client.connect(parsed.hostname, parsed.port or _mqtt_default_port(tls_enabled), keepalive=60)
-        client.loop_start()
-        if not self._connected.wait(timeout=self.connect_timeout):
-            error = ThalovantTimeoutError("HiveMind MQTT broker connection timed out.")
-            self.disconnect()
-            self._fail_connection(error)
-            raise error
-        self._subscribed.clear()
-        client.subscribe(self.topics.outbound, qos=self.identity.mqtt.qos)
-        if not self._subscribed.wait(timeout=self.connect_timeout):
-            error = self.last_error()
-            self.disconnect()
-            detail = f": {_redact_error_text(error)}" if error else ""
-            timeout = ThalovantTimeoutError(f"HiveMind MQTT subscription timed out{detail}.")
-            self._fail_connection(timeout)
-            raise timeout
-        client.publish(self.topics.status, "online", qos=1, retain=True)
-        self._send_hive_message(self._hello_message())
-        self._mark_transport_open()
-        if not self._handshake.wait(timeout=self.handshake_timeout):
-            error = self.last_error()
-            self.disconnect()
-            detail = f": {_redact_error_text(error)}" if error else ""
-            timeout = ThalovantTimeoutError(f"HiveMind MQTT handshake timed out{detail}.")
-            self._fail_connection(timeout)
-            raise timeout
-        self._complete_handshake()
+            client.will_set(self.topics.status, "offline", qos=1, retain=True)
+            client.on_connect = self._on_connect
+            client.on_subscribe = self._on_subscribe
+            client.on_disconnect = self._on_disconnect
+            client.on_message = self._on_message
+            from ._noise_runtime import NoiseChannel
+            channel = NoiseChannel(self.identity, state_dir=self.noise_state_dir,
+                pin_id=self.identity.endpoint_base(), hello=self._hello_message(),
+                write=lambda payload: self._publish(payload, client=client))
+            incoming: queue.Queue[bytes | None] = queue.Queue(maxsize=256)
+            worker = threading.Thread(target=self._receive_loop, args=(client, channel, incoming),
+                                      daemon=True, name="thalovant-mqtt")
+            # Keep connection-owned resources on that client. Cleanup must never
+            # read a newer attempt's channel, queue or worker from self.
+            client.thalovant_channel = channel
+            client.thalovant_inbound = incoming
+            client.thalovant_worker = worker
+            client.thalovant_disconnected = False
+            self._install_client(client, generation)
+            with self._lifecycle_lock:
+                if self._client is not client:
+                    raise ThalovantConnectionError("MQTT connection attempt was cancelled.")
+                self._noise, self._inbound, self._worker = channel, incoming, worker
+            worker.start()
+            client.connect(parsed.hostname, parsed.port or _mqtt_default_port(tls_enabled), keepalive=60)
+            with self._lifecycle_lock:
+                cancelled = self._client is not client or client.thalovant_disconnected
+                if not cancelled:
+                    # loop_start is nonblocking; reserve its ownership before
+                    # disconnect can stop the network worker.
+                    client.loop_start()
+            if cancelled:
+                # A blocking dial may finish after cancellation's first close.
+                # Close that late socket without touching the new generation.
+                client.disconnect()
+                raise ThalovantConnectionError("MQTT dial completed after cancellation.")
+            self._wait_mqtt_event(client, self._connected, self.connect_timeout, "broker connection")
+            self._subscribed.clear()
+            client.subscribe(self.topics.outbound, qos=self.identity.mqtt.qos)
+            self._wait_mqtt_event(client, self._subscribed, self.connect_timeout, "subscription")
+            self._publish(json.dumps(self._hello_message()), client=client)
+            with self._lifecycle_lock:
+                if self._client is client:
+                    self._mark_transport_open()
+            self._wait_mqtt_event(client, self._handshake, self.handshake_timeout, "Noise handshake")
+            with self._lifecycle_lock:
+                if self._client is not client:
+                    raise ThalovantConnectionError("MQTT connection attempt was cancelled.")
+                client.publish(self.topics.status, "online", qos=1, retain=True)
+            self._finish_connection(client, generation)
+        except Exception as exc:
+            self._abort_connection(client, generation, exc)
+            raise
+
+    def _wait_mqtt_event(self, client: Any, event: threading.Event, timeout: float, phase: str) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lifecycle_lock:
+                if self._client is not client or getattr(client, "thalovant_disconnected", False):
+                    raise ThalovantConnectionError("MQTT connection attempt was cancelled or disconnected.")
+                if self._last_error is not None:
+                    raise ThalovantConnectionError(f"HiveMind MQTT {phase} failed.") from self._last_error
+                if event.is_set():
+                    return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ThalovantTimeoutError(f"HiveMind MQTT {phase} timed out.")
+            event.wait(timeout=min(remaining, 0.05))
+
+    def _close_detached(self, client: Any) -> None:
+        client.thalovant_disconnected = True
+        incoming = getattr(client, "thalovant_inbound", None)
+        if incoming is not None:
+            try:
+                incoming.put_nowait(None)
+            except queue.Full:
+                pass
+        try:
+            client.publish(self.topics.status, "offline", qos=1, retain=True)
+        except Exception:
+            pass
+        try:
+            client.disconnect()
+            client.loop_stop()
+        except Exception:
+            pass
+        worker = getattr(client, "thalovant_worker", None)
+        if worker is not None and worker is not threading.current_thread() and worker.ident is not None:
+            worker.join(timeout=self.send_timeout + 1)
+        channel = getattr(client, "thalovant_channel", None)
+        if channel is not None:
+            channel.close()
 
     def disconnect(self) -> None:
-        client = self._client
-        self._client = None
-        if client is not None:
-            try:
-                client.publish(self.topics.status, "offline", qos=1, retain=True)
-            except Exception:
-                pass
-            try:
-                client.loop_stop()
-                client.disconnect()
-            except Exception:
-                pass
-        self._connected.clear()
-        self._subscribed.clear()
-        self._handshake.clear()
-        self._mark_closed()
+        super().disconnect()
+        with self._lifecycle_lock:
+            if self._client is None:
+                self._noise = None
+                self._connected.clear()
+                self._subscribed.clear()
+                self._handshake.clear()
 
     def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self._handlers.setdefault(event_name, []).append(handler)
@@ -1012,51 +1076,98 @@ class HiveMindMQTTTransport:
     def last_error(self) -> BaseException | None:
         return self._last_error
 
-    def _on_connect(self, _client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
-        if _reason_code_value(reason_code) != 0:
-            self._last_error = ThalovantConnectionError(f"HiveMind MQTT connect failed: {reason_code}")
-            return
-        self._connected.set()
+    def _on_connect(self, client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
+        with self._lifecycle_lock:
+            if self._client is not client:
+                return
+            if _reason_code_value(reason_code) != 0:
+                self._fail_connection(ThalovantConnectionError(f"HiveMind MQTT connect failed: {reason_code}"))
+                return
+            self._connected.set()
 
-    def _on_subscribe(
-        self,
-        _client: Any,
-        _userdata: Any,
-        _mid: Any,
-        reason_codes: Any,
-        _properties: Any = None,
-    ) -> None:
-        codes = reason_codes if isinstance(reason_codes, (list, tuple)) else [reason_codes]
-        failures = [code for code in codes if _reason_code_value(code) >= 128]
-        if failures:
-            self._last_error = ThalovantConnectionError(
-                f"HiveMind MQTT subscribe failed: {failures[0]}"
-            )
-            return
-        self._subscribed.set()
+    def _on_subscribe(self, client: Any, _userdata: Any, _mid: Any, reason_codes: Any, _properties: Any = None) -> None:
+        with self._lifecycle_lock:
+            if self._client is not client:
+                return
+            codes = reason_codes if isinstance(reason_codes, (list, tuple)) else [reason_codes]
+            failures = [code for code in codes if _reason_code_value(code) >= 128]
+            if failures:
+                self._fail_connection(ThalovantConnectionError(f"HiveMind MQTT subscribe failed: {failures[0]}"))
+                return
+            self._subscribed.set()
 
-    def _on_disconnect(self, _client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
-        if _reason_code_value(reason_code) != 0:
-            self._last_error = ThalovantConnectionError(f"HiveMind MQTT disconnected: {reason_code}")
-        self._connected.clear()
-        self._subscribed.clear()
-
-    def _on_message(self, _client: Any, _userdata: Any, message: Any) -> None:
+    def _on_disconnect(self, client: Any, _userdata: Any, _flags: Any, reason_code: Any, _properties: Any = None) -> None:
+        # Paho must remain free to process PUBACKs. Never acquire Noise's lock
+        # here: a sender can hold it while waiting for this network thread.
+        with self._lifecycle_lock:
+            if self._client is not client:
+                return
+            client.thalovant_disconnected = True
+            self._connected.clear(); self._subscribed.clear(); self._handshake.clear()
+            if _reason_code_value(reason_code) != 0:
+                self._fail_connection(ThalovantConnectionError(f"HiveMind MQTT disconnected: {reason_code}"))
+            else:
+                self._mark_closed()
+            incoming = self._inbound
         try:
-            self._handle_raw_message(message.payload)
-        except Exception as exc:
-            self._fail_connection(exc)
-            self._connected.clear()
+            incoming.put_nowait(None)
+        except queue.Full:
+            pass
 
-    def _handle_raw_message(self, raw: bytes | str) -> None:
-        message = self._decode_hive_message(raw)
+    def _on_message(self, client: Any, _userdata: Any, message: Any) -> None:
+        with self._lifecycle_lock:
+            if client is not self._client or message.topic != self.topics.outbound:
+                return
+            incoming = self._inbound
+        try:
+            incoming.put_nowait(bytes(message.payload))
+        except queue.Full:
+            self._fail_current_client(client, ThalovantConnectionError("HiveMind MQTT receive queue exceeded its bound."))
+            client.thalovant_disconnected = True
+            with self._lifecycle_lock:
+                if self._client is client:
+                    self._connected.clear(); self._handshake.clear()
+            client.disconnect()
+
+    def _receive_loop(self, client: Any, channel: Any, incoming: Any) -> None:
+        try:
+            while self._is_current_client(client) and not getattr(client, "thalovant_disconnected", False):
+                try:
+                    raw = incoming.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if raw is None or not self._is_current_client(client) or getattr(client, "thalovant_disconnected", False):
+                    return
+                try:
+                    self._handle_raw_message(raw, client=client, channel=channel)
+                except Exception as exc:
+                    self._fail_current_client(client, exc)
+                    with self._lifecycle_lock:
+                        if self._client is client:
+                            self._connected.clear(); self._handshake.clear()
+                    client.thalovant_disconnected = True
+                    client.disconnect()
+                    return
+        finally:
+            channel.close()
+
+    def _handle_raw_message(self, raw: bytes | str, *, client: Any = None, channel: Any = None) -> None:
+        channel = channel if channel is not None else self._noise
+        if channel is None:
+            raise ThalovantConnectionError("MQTT Noise negotiation has not started.")
+        message = channel.receive(raw)
+        with self._lifecycle_lock:
+            if client is not None and (self._client is not client or self._noise is not channel):
+                return
+            if channel.ready:
+                self._handshake.set()
+        if message is None:
+            return
         msg_type = _message_type_value(message.msg_type)
         payload = message.payload if isinstance(message.payload, dict) else {}
         if msg_type == "hello":
             return
-        if msg_type in {"handshake", "shake"}:
-            self._handle_handshake(payload)
-        elif msg_type == "bus":
+        if msg_type == "bus":
             bus_message = message.payload
             if hasattr(bus_message, "msg_type"):
                 event_name = str(bus_message.msg_type)
@@ -1077,52 +1188,29 @@ class HiveMindMQTTTransport:
             for handler in tuple(self._hive_handlers.get(msg_type, ())):
                 handler(message)
 
-    def _handle_handshake(self, payload: dict[str, Any]) -> None:
-        self._select_mqtt_crypto(payload)
-        if "envelope" in payload:
-            if self._password_handshake is None:
-                raise ThalovantConnectionError("HiveMind MQTT password handshake was not started.")
-            self._password_handshake.receive_and_verify(payload["envelope"])
-            self._crypto_key = self._password_handshake.secret
-            self._send_hive_message(self._hello_message())
-            self._handshake.set()
-            return
-        if payload.get("password") and self.identity.password:
-            from poorman_handshake import PasswordHandShake
-
-            self._password_handshake = PasswordHandShake(self.identity.password)
-            self._send_hive_message(
-                {
-                    "msg_type": "shake",
-                    "payload": {
-                        "binarize": False,
-                        "encodings": ["JSON-HEX"],
-                        "ciphers": ["AES-GCM"],
-                        "envelope": self._password_handshake.generate_handshake(),
-                    },
-                    "metadata": {},
-                    "route": [],
-                    "node": None,
-                    "target_site_id": None,
-                    "target_pubkey": None,
-                    "source_peer": None,
-                }
-            )
-            return
-        raise ThalovantConnectionError("Unsupported HiveMind MQTT handshake request.")
-
     def _send_hive_message(self, message: dict[str, Any]) -> Any:
-        client = self._client
-        if client is None or not client.is_connected():
-            raise ThalovantConnectionError("HiveMind MQTT transport is not connected.")
-        payload = self._encode_hive_message(message)
-        result = client.publish(
-            self.topics.inbound,
-            payload,
-            qos=self.identity.mqtt.qos if self.identity.mqtt else 1,
-            retain=False,
-        )
+        with self._lifecycle_lock:
+            client, channel = self._client, self._noise
+            if not self.is_connected() or channel is None:
+                raise ThalovantConnectionError("HiveMind MQTT transport is not connected.")
+        try:
+            return channel.send(message)
+        except Exception as exc:
+            self._fail_current_client(client, exc)
+            with self._lifecycle_lock:
+                if self._client is client:
+                    self._connected.clear(); self._handshake.clear()
+            raise
+
+    def _publish(self, payload: str | bytes, *, client: Any = None) -> Any:
+        client = self._client if client is None else client
+        if client is None or not self._is_current_client(client) or not client.is_connected():
+            raise ThalovantConnectionError("HiveMind MQTT broker is not connected.")
+        result = client.publish(self.topics.inbound, payload,
+            qos=self.identity.mqtt.qos if self.identity.mqtt else 1, retain=False)
         result.wait_for_publish(timeout=self.send_timeout)
+        if not self._is_current_client(client) or not result.is_published():
+            raise ThalovantTimeoutError("HiveMind MQTT publish timed out or its connection closed.")
         return result
 
     def _hello_message(self) -> dict[str, Any]:
@@ -1140,72 +1228,6 @@ class HiveMindMQTTTransport:
             "target_pubkey": None,
             "source_peer": None,
         }
-
-    def _encode_hive_message(self, message: dict[str, Any]) -> bytes:
-        from hivemind_bus_client.client import get_bitstring
-        from hivemind_bus_client.encryption import encrypt_bin
-        from hivemind_bus_client.message import HiveMessage
-
-        hive_message = HiveMessage(**message)
-        bitstring = get_bitstring(
-            hive_type=hive_message.msg_type,
-            payload=hive_message.payload,
-            compressed=False,
-            hivemeta=hive_message.metadata,
-            binary_type=hive_message.bin_type,
-        ).bytes
-        if self._crypto_key:
-            return encrypt_bin(self._crypto_key, bitstring, cipher=self._cipher)
-        return bitstring
-
-    def _decode_hive_message(self, raw: bytes | str) -> Any:
-        from hivemind_bus_client.client import decode_bitstring
-        from hivemind_bus_client.encryption import decrypt_bin, decrypt_from_json
-        from hivemind_bus_client.message import HiveMessage
-
-        text = raw if isinstance(raw, str) else None
-        if isinstance(raw, bytes):
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                text = None
-
-        if text:
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict) and "ciphertext" in parsed:
-                if not self._crypto_key:
-                    raise ThalovantConnectionError("HiveMind MQTT encrypted payload requires a crypto key.")
-                decrypted = decrypt_from_json(
-                    self._crypto_key,
-                    text,
-                    cipher=self._cipher,
-                    encoding=self._json_encoding,
-                )
-                return HiveMessage(**json.loads(decrypted))
-            if isinstance(parsed, dict) and "msg_type" in parsed:
-                return HiveMessage(**parsed)
-
-        payload = raw.encode("utf-8") if isinstance(raw, str) else raw
-        if self._crypto_key:
-            payload = decrypt_bin(self._crypto_key, payload, cipher=self._cipher)
-        return decode_bitstring(payload)
-
-    def _select_mqtt_crypto(self, payload: dict[str, Any]) -> None:
-        cipher = _enum_value(payload.get("cipher"))
-        if cipher:
-            self._cipher = cipher
-        ciphers = [_enum_value(cipher) for cipher in payload.get("ciphers", [])]
-        if "AES-GCM" in ciphers:
-            self._cipher = "AES-GCM"
-        encoding = _enum_value(payload.get("encoding"))
-        if encoding:
-            self._json_encoding = encoding
-        encodings = [_enum_value(encoding) for encoding in payload.get("encodings", [])]
-        if "JSON-HEX" in encodings:
-            self._json_encoding = "JSON-HEX"
 
     @staticmethod
     def _load_mqtt_module() -> Any:

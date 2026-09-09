@@ -388,6 +388,7 @@ def test_wss_closed_flag_stops_the_reconnect_loop():
     transport = HiveMindWSSTransport(identity_with_wss(), useragent="ua")
     observed_cls = transport._build_wss_client_class(FakeBase, fake_web_socket_app)
     client = observed_cls()
+    transport._client = client
 
     # Open: create_client builds a socket app; on_error delegates to base reconnect.
     client.create_client()
@@ -1164,7 +1165,7 @@ def test_http_transport_refuses_a_cleartext_endpoint():
         transport.connect()
 
 
-def test_mqtt_reconnect_starts_from_a_clean_session_key():
+def test_mqtt_reconnect_starts_from_a_clean_noise_session():
     """The session key comes from the password handshake now, not a static
     identity field, so it belongs to one connection. Carrying it into a
     reconnect would encrypt the next hello with the previous session's key."""
@@ -1188,13 +1189,17 @@ def test_mqtt_reconnect_starts_from_a_clean_session_key():
     )
     transport = HiveMindMQTTTransport(identity, useragent="test")
 
-    # Stand in for a completed password handshake on a previous connection.
-    transport._crypto_key = "left-over-session-key"
-    transport._password_handshake = object()
+    # Stand in for a completed Noise channel on a previous connection.
+    class Channel:
+        closed = False
+        def close(self):
+            self.closed = True
+    previous = Channel()
+    transport._noise = previous
     transport._handshake.set()
 
     transport._begin_connection()
 
-    assert transport._crypto_key is None, "a stale session key survived into the reconnect"
-    assert transport._password_handshake is None, "a stale password handshake survived"
+    assert transport._noise is None, "a stale Noise session survived into the reconnect"
+    assert previous.closed
     assert not transport._handshake.is_set(), "the handshake event was still set"
