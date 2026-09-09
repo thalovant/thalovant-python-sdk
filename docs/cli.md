@@ -89,6 +89,29 @@ thalovant --identity _identity.json listen speak --timeout 30 --max-events 3
 
 Prints matching events until `timeout` expires or `max-events` is reached.
 
+### `skills`
+
+```bash
+export THALOVANT_API_TOKEN=tvpat_...   # or --token; THALOVANT_API_URL / --api-url override the API
+thalovant skills list --hub <hub-id>
+thalovant --json skills list --hub <hub-id>
+thalovant skills add --hub <hub-id> skill-weather --version latest --wait
+thalovant skills update --hub <hub-id> skill-weather --version 1.2.0 --wait --timeout 60
+thalovant skills remove --hub <hub-id> skill-weather
+```
+
+Manages the skills one hub carries through the Thalovant API rather than
+over a hub connection, so no identity file is involved: `list` needs a token
+with `hubs:inspect`, the other three need `hubs:write` and a paid plan. The
+hub is addressed by id, not slug, and hub-restricted tokens are honoured.
+`list` prints one row per skill (`skill`, installed version, `state`, the
+latest version when an update is available, and the runtime's last error);
+`--json` prints the whole `HubSkillList` envelope. `add`, `update`, and `remove` print the
+accepted operation and return at once; `--wait` polls it until the change
+converges (`installed` or `removed`; a failed change exits non-zero with the
+error), for at most `--timeout` seconds (default 120). Changes apply live on
+the hub within about fifteen seconds. `--json` prints the typed result.
+
 ### `emit`
 
 ```bash

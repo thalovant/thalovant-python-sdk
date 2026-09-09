@@ -327,6 +327,67 @@ for entry in view["data"]:
         print("needs marketplace access:", entry["skill_id"], entry["access_message"])
 ```
 
+## Skills On One Hub
+
+A hub can also carry skills of its own, next to whatever its runtime group
+provides, and it can start with none at all. The four hub-skill calls address
+**one hub by id** (the authenticated hub routes do not take slugs) and every
+change applies live on that hub, typically within about fifteen seconds and
+without restarting it.
+
+```python
+listing = api.list_hub_skills(hub["id"])
+print(listing.source, listing.observed_at)
+for skill in listing.data:
+    print(skill.skill, skill.installed_version, skill.state, skill.update_available)
+
+# Accepted at once: HTTP 202 with an operation_id, state "installing".
+accepted = api.install_hub_skill(hub["id"], "skill-weather")
+print(accepted.operation_id, accepted.state, accepted.previous_version)
+
+# Or poll the operation until it converges (default timeout 120 s).
+done = api.install_hub_skill(hub["id"], "skill-weather", version="1.2.0", wait=True)
+print(done.state)  # "installed"
+
+api.update_hub_skill(hub["id"], "skill-weather", version="latest", wait=True)
+api.remove_hub_skill(hub["id"], "skill-weather", wait=True)  # state "removed"
+```
+
+`list_hub_skills` returns a typed `HubSkillList`: the envelope says where the
+reading came from (`hub_id`, `runtime_group_id`, `observed_at`, `source`, the
+runtime's phase and message) and `data` holds one `HubSkill` row per skill
+(`skill`, `title`, `version`, `installed_version`, `observed_version`,
+`latest_version`, `update_available`, `active`, `state`, the runtime's last
+error, and more). A row's `state` is `pending`, `installed`, `failed`,
+`removing`, `drifted`, `quarantined`, or `unmanaged`; a change in progress
+shows as `pending`.
+
+The writes return a typed `HubSkillOperation` (`operation_id`, `hub_id`,
+`runtime_group_id`, `skill`, `version`, `previous_version`, `state`).
+Installing a skill the hub already carries at another version performs an
+update. With `wait=True` a `failed` or `timed_out` operation raises
+`ThalovantAPIError` carrying the operation's error message, and running past
+`timeout` raises `ThalovantTimeoutError`. The API answers HTTP 409
+`skill_version_already_installed` for the same version, HTTP 404
+`hub_without_runtime_group` when the hub has no runtime group yet (a plain
+404 for an unknown hub or a skill that is not installed), and HTTP 422 for an
+unresolvable `"latest"` or an invalid version; the problem `code` is appended
+to the error message, for example
+`HTTP 409: Skill version already installed. (skill_version_already_installed)`.
+Listing needs `hubs:inspect` (`hubs:read` implies it); the writes need
+`hubs:write` and a paid plan. Hub-restricted tokens are honoured.
+
+The same four commands are on the CLI, authenticated with
+`THALOVANT_API_TOKEN` (or `--token`) against `THALOVANT_API_URL` (or
+`--api-url`), with `--json` for machine-readable output:
+
+```bash
+thalovant skills list --hub <hub-id>
+thalovant skills add --hub <hub-id> skill-weather --version latest --wait
+thalovant skills update --hub <hub-id> skill-weather --version 1.2.0
+thalovant skills remove --hub <hub-id> skill-weather
+```
+
 ## Workspace Analytics
 
 Authenticated accounts can read the same overview used by the dashboard:
@@ -787,6 +848,10 @@ handshake, and transport health.
 - `control.delete_runtime_group(runtime_group_id)`
 - `control.install_runtime_group_skill(runtime_group_id, skill_id, ...)`
 - `control.uninstall_runtime_group_skill(runtime_group_id, skill_id)`
+- `control.list_hub_skills(hub_id)`
+- `control.install_hub_skill(hub_id, skill, version="latest", wait=False, timeout=120.0)`
+- `control.update_hub_skill(hub_id, skill, version=..., wait=False, timeout=120.0)`
+- `control.remove_hub_skill(hub_id, skill, wait=False, timeout=120.0)`
 - `control.get_operation(operation_id)`
 - `control.get_analytics_overview(...)`
 - `control.list_memory_items(...)`

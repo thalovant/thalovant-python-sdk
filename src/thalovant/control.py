@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+import re
 import secrets
 import time
-from typing import Any, Callable, Iterable, Literal, Mapping, cast
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from typing import Any, Callable, Iterable, Iterator, Literal, Mapping, cast
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 import webbrowser
 
@@ -86,6 +87,214 @@ class OperationResource:
                 for key, value in dict(payload.get("links") or {}).items()
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Hub-scoped skills.
+#
+# The API contract for these routes is still being finalized. Every path,
+# field name, and state value the SDK depends on lives in this block so that a
+# change on the server side is a change in one place here.
+# ---------------------------------------------------------------------------
+
+#: Seconds between two operation reads while waiting for a hub skill change.
+DEFAULT_HUB_SKILL_POLL_INTERVAL = 2.0
+#: Default ceiling, in seconds, for ``wait=True`` on the hub skill commands.
+DEFAULT_HUB_SKILL_WAIT_TIMEOUT = 120.0
+
+#: Operation statuses after which the API will not move an operation again.
+_TERMINAL_OPERATION_STATUSES = frozenset({"ready", "failed", "timed_out"})
+
+
+def _hub_skills_path(hub_id: str) -> str:
+    return f"/v1/hubs/{quote(hub_id, safe='')}/skills"
+
+
+def _hub_skill_path(hub_id: str, skill: str) -> str:
+    return f"{_hub_skills_path(hub_id)}/{quote(skill, safe='')}"
+
+
+#: State of one skill as the hub reports it. A change in progress shows as
+#: ``pending``; ``drifted`` means the running version differs from the
+#: requested one, ``quarantined`` that the runtime disabled the skill after
+#: repeated failures, and ``unmanaged`` that it runs on the hub but is not
+#: managed through this route.
+HubSkillState = Literal[
+    "pending",
+    "installed",
+    "failed",
+    "removing",
+    "drifted",
+    "quarantined",
+    "unmanaged",
+]
+
+HubSkillOperationState = Literal[
+    "installing",
+    "updating",
+    "removing",
+    "installed",
+    "removed",
+    "failed",
+]
+
+
+@dataclass(frozen=True)
+class HubSkill:
+    """One row of ``GET /v1/hubs/{hub_id}/skills``. Absent strings are ``None``."""
+
+    skill: str
+    state: HubSkillState
+    title: str | None = None
+    marketplace_skill_id: str | None = None
+    package_name: str | None = None
+    source_type: str | None = None
+    install_source: str | None = None
+    #: The requested version (``"latest"`` or an exact ``x.y.z``).
+    version: str | None = None
+    version_pin: str | None = None
+    installed_version: str | None = None
+    observed_version: str | None = None
+    previous_version: str | None = None
+    latest_version: str | None = None
+    available_version: str | None = None
+    update_available: bool = False
+    changelog: str | None = None
+    active: bool = True
+    operator_phase: str | None = None
+    operator_message: str | None = None
+    operator_last_error: str | None = None
+    last_transition_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> HubSkill:
+        """Parse one row of the hub skill listing."""
+
+        return cls(
+            skill=_required_str(payload, "skill"),
+            state=cast(HubSkillState, _required_str(payload, "state")),
+            title=_optional_str(payload.get("title")),
+            marketplace_skill_id=_optional_str(payload.get("marketplace_skill_id")),
+            package_name=_optional_str(payload.get("package_name")),
+            source_type=_optional_str(payload.get("source_type")),
+            install_source=_optional_str(payload.get("install_source")),
+            version=_optional_str(payload.get("version")),
+            version_pin=_optional_str(payload.get("version_pin")),
+            installed_version=_optional_str(payload.get("installed_version")),
+            observed_version=_optional_str(payload.get("observed_version")),
+            previous_version=_optional_str(payload.get("previous_version")),
+            latest_version=_optional_str(payload.get("latest_version")),
+            available_version=_optional_str(payload.get("available_version")),
+            update_available=payload.get("update_available") is True,
+            changelog=_optional_str(payload.get("changelog")),
+            active=payload.get("active") is not False,
+            operator_phase=_optional_str(payload.get("operator_phase")),
+            operator_message=_optional_str(payload.get("operator_message")),
+            operator_last_error=_optional_str(payload.get("operator_last_error")),
+            last_transition_at=_optional_str(payload.get("last_transition_at")),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class HubSkillList:
+    """The ``GET /v1/hubs/{hub_id}/skills`` envelope: one hub's skills and where the reading came from.
+
+    Iterating or taking ``len()`` of the listing goes over ``data``.
+    """
+
+    hub_id: str
+    data: list[HubSkill]
+    runtime_group_id: str | None = None
+    observed_at: str | None = None
+    source: str | None = None
+    operator_phase: str | None = None
+    operator_message: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> HubSkillList:
+        """Parse the listing envelope; the rows live under ``data``."""
+
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            raise ThalovantAPIError("Thalovant API returned an unexpected hub skill listing shape.")
+        return cls(
+            hub_id=_required_str(payload, "hub_id"),
+            data=[HubSkill.from_dict(row) for row in rows if isinstance(row, Mapping)],
+            runtime_group_id=_optional_str(payload.get("runtime_group_id")),
+            observed_at=_optional_str(payload.get("observed_at")),
+            source=_optional_str(payload.get("source")),
+            operator_phase=_optional_str(payload.get("operator_phase")),
+            operator_message=_optional_str(payload.get("operator_message")),
+        )
+
+    def __iter__(self) -> Iterator[HubSkill]:
+        return iter(self.data)
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "hub_id": self.hub_id,
+            "runtime_group_id": self.runtime_group_id,
+            "observed_at": self.observed_at,
+            "source": self.source,
+            "operator_phase": self.operator_phase,
+            "operator_message": self.operator_message,
+            "data": [skill.as_dict() for skill in self.data],
+        }
+
+
+@dataclass(frozen=True)
+class HubSkillOperation:
+    """An accepted hub skill command, plus where it converged when waited for.
+
+    The install, update, and remove routes answer HTTP 202 with an
+    ``operation_id``; ``state`` is what the API said at acceptance
+    (``installing``, ``updating``, ``removing``). With ``wait=True`` the SDK
+    polls that operation and returns ``installed`` or ``removed`` instead,
+    with the last :class:`OperationResource` it read in ``operation``.
+    """
+
+    operation_id: str
+    skill: str
+    #: The requested version; ``None`` for a removal.
+    version: str | None
+    state: HubSkillOperationState
+    hub_id: str | None = None
+    runtime_group_id: str | None = None
+    #: The version the hub carried before this change, when it carried one.
+    previous_version: str | None = None
+    operation: OperationResource | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> HubSkillOperation:
+        """Parse the HTTP 202 body of a hub skill command."""
+
+        return cls(
+            operation_id=_required_str(payload, "operation_id"),
+            skill=_required_str(payload, "skill"),
+            version=_optional_str(payload.get("version")),
+            state=cast(HubSkillOperationState, _required_str(payload, "state")),
+            hub_id=_optional_str(payload.get("hub_id")),
+            runtime_group_id=_optional_str(payload.get("runtime_group_id")),
+            previous_version=_optional_str(payload.get("previous_version")),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "hub_id": self.hub_id,
+            "runtime_group_id": self.runtime_group_id,
+            "skill": self.skill,
+            "version": self.version,
+            "previous_version": self.previous_version,
+            "state": self.state,
+            "operation": asdict(self.operation) if self.operation else None,
+        }
 
 
 @dataclass(frozen=True)
@@ -1035,6 +1244,167 @@ class ThalovantControlPlane:
 
         self._request("DELETE", f"/v1/runtime-groups/{runtime_group_id}/skills/{skill_id}")
 
+    def list_hub_skills(self, hub_id: str) -> HubSkillList:
+        """List the skills one hub carries, with their install state.
+
+        Where :meth:`list_runtime_group_inventory` describes a whole runtime
+        group, this describes **one hub**. The :class:`HubSkillList` envelope
+        says where the reading came from (``source``, ``observed_at``, the
+        runtime's phase and message); each :class:`HubSkill` row in ``data``
+        carries the requested ``version``, the ``installed_version`` and
+        ``observed_version``, the catalog's ``latest_version`` with
+        ``update_available``, and the ``state`` (``pending``, ``installed``,
+        ``failed``, ``removing``, ``drifted``, ``quarantined``, ``unmanaged``)
+        with the runtime's last error for a failed change. A hub can carry no
+        skills at all; that is an empty ``data``, not an error.
+
+        ``hub_id`` is the hub's id. The authenticated hub routes do not accept
+        slugs. Hub-restricted tokens are honoured.
+
+        Requires a token with the ``hubs:inspect`` scope (``hubs:read`` implies
+        it).
+        """
+
+        return HubSkillList.from_dict(self._request("GET", _hub_skills_path(hub_id)))
+
+    def install_hub_skill(
+        self,
+        hub_id: str,
+        skill: str,
+        *,
+        version: str = "latest",
+        wait: bool = False,
+        timeout: float = DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
+    ) -> HubSkillOperation:
+        """Install a skill on one hub.
+
+        The API accepts the change with HTTP 202 and applies it live on the
+        hub, typically within about fifteen seconds and without restarting it.
+        ``version`` is ``"latest"`` or an exact ``x.y.z``.
+
+        By default this returns as soon as the change is accepted, with
+        ``state="installing"`` and the ``operation_id`` to poll through
+        :meth:`get_operation`. With ``wait=True`` it polls that operation for
+        you, every :data:`DEFAULT_HUB_SKILL_POLL_INTERVAL` seconds, and returns
+        ``state="installed"`` once the operation is ``ready``; a ``failed`` or
+        ``timed_out`` operation raises :class:`ThalovantAPIError` carrying the
+        operation's error message, and ``timeout`` seconds without convergence
+        raise :class:`ThalovantTimeoutError`.
+
+        Installing a skill the hub already carries at another version performs
+        an update. The API answers HTTP 409 ``skill_version_already_installed``
+        for the same version, HTTP 404 ``hub_without_runtime_group`` when the
+        hub has no runtime group yet, and HTTP 422 for an unresolvable
+        ``"latest"`` or an invalid version; the problem ``code`` is appended to
+        the :class:`ThalovantAPIError` message.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope; see
+        :class:`ThalovantControlPlane` for why a free-plan API token sees HTTP
+        403 here rather than 402. Hub-restricted tokens are honoured.
+        """
+
+        accepted = HubSkillOperation.from_dict(
+            self._request(
+                "POST",
+                _hub_skills_path(hub_id),
+                json={"skill": skill, "version": version},
+            )
+        )
+        if not wait:
+            return accepted
+        return self._wait_for_hub_skill_operation(accepted, converged="installed", timeout=timeout)
+
+    def update_hub_skill(
+        self,
+        hub_id: str,
+        skill: str,
+        *,
+        version: str,
+        wait: bool = False,
+        timeout: float = DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
+    ) -> HubSkillOperation:
+        """Move one hub's skill to another version.
+
+        ``version`` is required: ``"latest"`` or an exact ``x.y.z``. The API
+        accepts with HTTP 202 and ``state="updating"``; ``wait`` and
+        ``timeout`` behave exactly as in :meth:`install_hub_skill`, converging
+        on ``state="installed"``.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        accepted = HubSkillOperation.from_dict(
+            self._request("PATCH", _hub_skill_path(hub_id, skill), json={"version": version})
+        )
+        if not wait:
+            return accepted
+        return self._wait_for_hub_skill_operation(accepted, converged="installed", timeout=timeout)
+
+    def remove_hub_skill(
+        self,
+        hub_id: str,
+        skill: str,
+        *,
+        wait: bool = False,
+        timeout: float = DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
+    ) -> HubSkillOperation:
+        """Remove a skill from one hub.
+
+        The API accepts with HTTP 202 and ``state="removing"``; ``wait`` and
+        ``timeout`` behave exactly as in :meth:`install_hub_skill`, converging
+        on ``state="removed"``. The hub keeps running throughout.
+
+        Requires a paid plan and a token with the ``hubs:write`` scope.
+        """
+
+        accepted = HubSkillOperation.from_dict(
+            self._request("DELETE", _hub_skill_path(hub_id, skill))
+        )
+        if not wait:
+            return accepted
+        return self._wait_for_hub_skill_operation(accepted, converged="removed", timeout=timeout)
+
+    def _wait_for_hub_skill_operation(
+        self,
+        accepted: HubSkillOperation,
+        *,
+        converged: HubSkillOperationState,
+        timeout: float,
+        interval: float = DEFAULT_HUB_SKILL_POLL_INTERVAL,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> HubSkillOperation:
+        """Poll an accepted hub skill command until its operation is terminal.
+
+        ``ready`` converges to ``converged``; ``failed`` and ``timed_out``
+        raise :class:`ThalovantAPIError`; anything else keeps polling until
+        ``timeout`` seconds have elapsed, then :class:`ThalovantTimeoutError`.
+        ``sleep`` and ``clock`` are injectable so tests can drive the loop
+        without real waiting.
+        """
+
+        deadline = clock() + timeout
+        while True:
+            operation = self.get_operation(accepted.operation_id)
+            if operation.status == "ready":
+                return replace(accepted, state=converged, operation=operation)
+            if operation.status in _TERMINAL_OPERATION_STATUSES:
+                detail = (
+                    operation.error_message
+                    or operation.error_code
+                    or f"operation {operation.id} ended with status {operation.status}"
+                )
+                raise ThalovantAPIError(
+                    f"Hub skill change for {accepted.skill} failed: {detail}"
+                )
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise ThalovantTimeoutError(
+                    f"Timed out after {timeout:g}s waiting for the hub skill change "
+                    f"({accepted.skill}, operation {accepted.operation_id}) to converge."
+                )
+            sleep(min(interval, remaining))
+
     def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""
 
@@ -1403,6 +1773,7 @@ def _strip_path(endpoint: str) -> str:
 
 
 _ERROR_DETAIL_MAX_CHARS = 200
+_PROBLEM_CODE = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
 
 
 def _error_detail(response: requests.Response) -> str:
@@ -1425,9 +1796,19 @@ def _error_detail(response: requests.Response) -> str:
             if isinstance(value, str) and value.strip():
                 detail = value
                 break
+    # RFC 7807 problem bodies carry a machine-readable ``code`` at the root
+    # (for example ``skill_version_already_installed``); keep it, once, so a
+    # caller can branch on it without parsing the prose.
+    code = body.get("code") if isinstance(body, dict) else None
+    if not isinstance(code, str) or not _PROBLEM_CODE.fullmatch(code):
+        code = None
     if detail is None:
-        return f"Thalovant API request failed with HTTP {response.status_code}."
+        if code is None:
+            return f"Thalovant API request failed with HTTP {response.status_code}."
+        return f"Thalovant API request failed with HTTP {response.status_code}: ({code})"
     detail = " ".join(detail.split())
     if len(detail) > _ERROR_DETAIL_MAX_CHARS:
         detail = detail[:_ERROR_DETAIL_MAX_CHARS] + "..."
+    if code is not None and code != detail:
+        detail = f"{detail} ({code})"
     return f"Thalovant API request failed with HTTP {response.status_code}: {detail}"
