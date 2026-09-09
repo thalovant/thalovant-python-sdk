@@ -61,9 +61,11 @@ class HTTPNoiseClient:
                     method, f"{self.base_url}{path}", params={"authorization": self.auth}, data=data,
                     timeout=remaining, verify=not self.transport.self_signed, allow_redirects=False,
                 )
-            except Timeout as exc:
+            except Timeout:
                 detail = "HiveMind HTTP Noise handshake timed out." if self._deadline is not None else "HiveMind HTTP request timed out."
-                raise ThalovantTimeoutError(detail) from exc
+                # Requests exceptions can embed the authorization query. Suppress
+                # their chain so normal formatted tracebacks cannot expose it.
+                raise ThalovantTimeoutError(detail) from None
             self.transport._raise_for_emit_response(response)
             if 300 <= response.status_code < 400:
                 raise ThalovantConnectionError("HiveMind HTTP endpoint redirected the request.")

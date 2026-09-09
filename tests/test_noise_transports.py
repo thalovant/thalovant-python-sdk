@@ -322,24 +322,30 @@ def test_https_poll_failure_reconnect_clears_previous_admission(http_peer, tmp_p
 @pytest.mark.parametrize("timeout_name", ["ConnectTimeout", "ReadTimeout"])
 def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, tmp_path, monkeypatch, timeout_name):
     import requests
+    import traceback
 
     peer, endpoint = http_peer
     request = requests.Session.request
     inject = True
+    sensitive_query = "authorization=synthetic-access-key-do-not-log"
 
     def timed_request(session, method, url, **options):
         nonlocal inject
         if inject and url.endswith("/get_messages"):
             inject = False
-            raise getattr(requests, timeout_name)("synthetic HTTP deadline")
+            raise getattr(requests, timeout_name)(f"synthetic HTTP deadline at {url}?{sensitive_query}")
         return request(session, method, url, **options)
 
     monkeypatch.setattr(requests.Session, "request", timed_request)
     transport = HiveMindHTTPTransport(identity(endpoint), useragent="conformance",
         noise_state_dir=str(tmp_path / "client"), connect_timeout=2, handshake_timeout=2)
     try:
-        with pytest.raises(ThalovantTimeoutError, match="handshake timed out"):
+        with pytest.raises(ThalovantTimeoutError, match="handshake timed out") as caught:
             transport.connect()
+        rendered = "".join(traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__))
+        assert sensitive_query not in rendered
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__ is True
         assert not peer.admitted
         assert transport._client is None and not transport._connecting
         transport.connect()
