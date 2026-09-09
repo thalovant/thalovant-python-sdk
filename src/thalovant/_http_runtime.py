@@ -80,7 +80,10 @@ class HTTPNoiseClient:
                 raise ThalovantConnectionError("Invalid HiveMind HTTP response.") from None
             if not isinstance(body, dict):
                 raise ThalovantConnectionError("Invalid HiveMind HTTP response.")
-            if body.get("error"):
+            # The upstream /disconnect handler uses this exact response when
+            # an earlier successful cleanup acknowledgment was lost.
+            already_disconnected = path == "/disconnect" and body == {"error": "Already Disconnected"}
+            if body.get("error") and not already_disconnected:
                 raise ThalovantConnectionError("HiveMind HTTP request was refused.")
             return body
 
@@ -196,7 +199,9 @@ class HTTPNoiseClient:
                     try:
                         self._deadline = time.monotonic() + min(2.0, self.transport.send_timeout)
                         reply = self.request("/disconnect", method="POST")
-                        if reply.get("status") != "Disconnected" or reply.get("ok") is False:
+                        if reply != {"error": "Already Disconnected"} and (
+                            reply.get("status") != "Disconnected" or reply.get("ok") is False
+                        ):
                             raise ThalovantConnectionError("Invalid disconnect acknowledgment.")
                     except Exception:
                         # Keep this session and its replica cookie for explicit

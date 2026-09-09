@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.12
+
+- Accept the upstream HTTP disconnect endpoint's exact `{"error": "Already Disconnected"}` acknowledgment so an explicit close retry can finish after successful remote cleanup lost its response. Other errors, contradictory replies, and non-success HTTP statuses still retain admission.
+- Add a real TLS/Noise lost-response retry regression, successful idempotent close and XX-to-KK reconnect checks, and endpoint-specific rejection tests.
+
 ## 0.5.11
 
 - Require a positive HTTP disconnect acknowledgment before releasing admission. Preserve the failed session and replica cookie for explicit close retry; close and wait_closed report failures, and reconnect stays blocked until cleanup succeeds.

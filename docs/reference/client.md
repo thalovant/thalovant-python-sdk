@@ -14,7 +14,10 @@ uses a caller deadline; `wait_closed()` observes retained cleanup after timeout.
 As of 0.5.11, failed HTTP cleanup retains the original session and affinity cookie.
 `close()` and `wait_closed()` report the failure, and reconnect is blocked until
 an explicit `close()` retry on the same client obtains a positive disconnect
-acknowledgment. Automatic retirement preserves a primary connection error without
+acknowledgment. From 0.5.12, the upstream `/disconnect` reply
+`{"error": "Already Disconnected"}` also acknowledges cleanup after a lost
+successful response. Other errors still retain the admission.
+Automatic retirement preserves a primary connection error without
 silently retrying a failed admission. If a direct transport call already owns
 cleanup, another explicit close reports that cleanup is in progress.
 

@@ -17,6 +17,9 @@ from test_noise_transports import http_peer, identity
     ({}, 200),
     ({"status": "Connected"}, 200),
     ({"status": "Disconnected", "ok": False}, 200),
+    ({"error": "Already Disconnected", "ok": False}, 200),
+    ({"error": "Already Disconnected", "status": "Connected"}, 200),
+    ({"error": "Already Disconnected"}, 503),
     (b"invalid JSON", 200),
     ({"status": "Disconnected"}, 503),
 ])
@@ -81,6 +84,64 @@ def test_close_waits_for_connect_admission_publication_before_cleanup(http_peer,
         finally:
             peer.connect_gate.set()
     transport.disconnect()
+
+
+def test_disconnect_retry_recovers_after_success_acknowledgment_was_lost(http_peer, tmp_path, monkeypatch):
+    # Exact no-session reply from upstream DisconnectHandler.post:
+    # https://github.com/JarbasHiveMind/hivemind-http-protocol/blob/033ab8c559efb45d1515f50fe86a8e4ff4506db9/hivemind_http_protocol/__init__.py#L715
+    peer, endpoint = http_peer
+    transport = HiveMindHTTPTransport(identity(endpoint), useragent="cleanup", noise_state_dir=str(tmp_path / "client"),
+                                      handshake_poll_interval=0.01)
+    client = ThalovantClient(identity(endpoint), transport=transport)
+    client.connect()
+    old = transport._client
+    original = old._session.request
+    lost = False
+
+    def lose_first_success(*args, **kwargs):
+        nonlocal lost
+        response = original(*args, **kwargs)
+        if "/disconnect" in args[1] and not lost:
+            lost = True
+            assert response.json() == {"status": "Disconnected"}
+            raise requests.ConnectionError("synthetic lost response")
+        return response
+
+    monkeypatch.setattr(old._session, "request", lose_first_success)
+    try:
+        with pytest.raises(ThalovantConnectionError, match="disconnect"):
+            client.close()
+        assert not peer.admitted and old._admitted
+        with pytest.raises(ThalovantConnectionError, match="cleanup"):
+            client.connect()
+        peer.disconnect_response = {"error": "Already Disconnected"}
+        client.close()
+        client.wait_closed(timeout=1)
+        assert not old._admitted
+        assert peer.connects == 1 and peer.disconnects == 2
+        client.close()
+        assert peer.disconnects == 2
+        client.connect()
+        assert peer.patterns == ["XXpsk2", "KKpsk0"]
+    finally:
+        peer.disconnect_response = {"status": "Disconnected"}
+        client.close()
+
+
+@pytest.mark.parametrize("path", ["/connect", "/send_message", "/get_messages"])
+def test_already_disconnected_is_not_success_for_other_http_operations(tmp_path, monkeypatch, path):
+    from types import SimpleNamespace
+    from thalovant._http_runtime import HTTPNoiseClient
+    transport = HiveMindHTTPTransport(identity("https://localhost:1"), useragent="cleanup",
+                                      noise_state_dir=str(tmp_path / "client"))
+    adapter = HTTPNoiseClient(transport)
+    response = SimpleNamespace(status_code=200, json=lambda: {"error": "Already Disconnected"})
+    monkeypatch.setattr(adapter._session, "request", lambda *args, **kwargs: response)
+    try:
+        with pytest.raises(ThalovantConnectionError, match="refused"):
+            adapter.request(path, method="POST")
+    finally:
+        adapter.close()
 
 
 def test_connect_closed_before_http_admission_never_publishes_a_late_request(http_peer, tmp_path, monkeypatch):
