@@ -1174,17 +1174,29 @@ class ThalovantControlPlane:
                 raise ThalovantAPIError("Missing Thalovant API access token.")
             request_headers["authorization"] = f"Bearer {self.access_token}"
 
+        url = urljoin(self.api_url, path.lstrip("/"))
+        parsed = urlsplit(url)
+        if parsed.username or parsed.password:
+            raise ThalovantAPIError("Control-plane URLs must not include embedded credentials.")
+        loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        if (json is not None or request_headers.get("authorization")) and parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+            raise ThalovantAPIError("Credential-bearing control-plane requests require HTTPS (except explicit loopback HTTP).")
         try:
-            return self.session.request(
+            response = self.session.request(
                 method,
-                urljoin(self.api_url, path.lstrip("/")),
+                url,
                 json=json,
                 params=params,
                 headers=request_headers,
                 timeout=self.timeout,
+                allow_redirects=False,
             )
-        except requests.RequestException as exc:
-            raise ThalovantAPIError("Could not reach the Thalovant API.") from exc
+        except requests.RequestException:
+            # Requests error chains may contain URL credentials or query data.
+            raise ThalovantAPIError("Could not reach the Thalovant API.") from None
+        if 300 <= response.status_code < 400:
+            raise ThalovantAPIError("Thalovant API redirected the request; redirects are disabled.")
+        return response
 
 
 def _new_secret() -> str:

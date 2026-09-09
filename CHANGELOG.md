@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.9
+
+- Reject control-plane redirects before parsing a response or forwarding password-login bodies. Require HTTPS for credentials except explicit loopback HTTP used in local development; reject credentials embedded in API URLs.
+- Suppress credential-bearing Requests exception chains and verify redirect rejection with real HTTP servers for bearer and password requests.
+
 ## 0.5.8
 
 - Treat only `None` as the default connect/close budget; invalid explicit timeouts expire immediately before lifecycle changes. Disable persisted checkout credentials in CI.
