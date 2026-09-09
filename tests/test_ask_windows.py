@@ -200,3 +200,52 @@ def test_uncorrelated_ask_events_cannot_satisfy_or_fail_request(context):
             sdk.ask('hello', timeout=0.03, request_id='wanted')
     finally:
         sdk.close()
+
+
+def test_explicit_async_ask_cancellation_after_speech_cannot_become_success():
+    import asyncio
+    from thalovant import AsyncThalovantClient
+
+    async def exercise():
+        gate = threading.Event()
+        started = threading.Event()
+        observed = threading.Event()
+        outcomes = []
+
+        def script(transport):
+            transport.bus('speak', {'utterance': 'partial'})
+            started.set()
+            gate.wait(5)
+
+        transport = QueryTransport(script)
+        sdk = AsyncThalovantClient(client(transport).identity, transport=transport, reply_settle_seconds=5)
+        original = sdk._client._ask
+
+        def record(*args, **kwargs):
+            try:
+                result = original(*args, **kwargs)
+                outcomes.append(result)
+                return result
+            except BaseException as error:
+                outcomes.append(error)
+                raise
+            finally:
+                observed.set()
+
+        sdk._client._ask = record
+        try:
+            request = asyncio.create_task(sdk.ask('hello', timeout=1))
+            assert await asyncio.to_thread(started.wait, 1)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            assert await asyncio.to_thread(observed.wait, 1)
+            assert len(outcomes) == 1 and isinstance(outcomes[0], ThalovantConnectionError)
+            with pytest.raises(ThalovantConnectionError):
+                await sdk.connect(timeout=0.02)
+            assert transport.sent == 1 and transport.dials == 1
+        finally:
+            gate.set()
+            await sdk.close()
+
+    asyncio.run(exercise())

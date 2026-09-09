@@ -1076,7 +1076,9 @@ class ThalovantClient:
             with state:
                 if terminal:
                     return
-                if not direct and time.monotonic() >= collection_deadline():
+                if caller_cancellation is not None and caller_cancellation.is_set():
+                    error = ThalovantConnectionError("Hub request was cancelled.")
+                elif not direct and time.monotonic() >= collection_deadline():
                     finish_at_deadline()
                     return
                 terminal = True
@@ -1155,41 +1157,40 @@ class ThalovantClient:
                 if expired:
                     unsubscribe(kind, handler)
                     return
+            payload = _utterance_payload(prompt, lang)
+            frame = None
+            if direct:
+                inner = {
+                    "msg_type": "bus",
+                    "payload": {
+                        "type": EVENT_RECOGNIZER_LOOP_UTTERANCE,
+                        "data": payload,
+                        "context": request_context,
+                    },
+                    "metadata": {}, "route": [], "node": None,
+                    "target_site_id": None, "target_pubkey": None, "source_peer": None,
+                }
+                frame = {
+                    "msg_type": "query", "payload": inner,
+                    "metadata": {"query_id": query_id}, "route": [], "node": None,
+                    "target_site_id": None, "target_pubkey": None, "source_peer": None,
+                }
             with state:
-                if terminal or cancellation.is_set():
+                if terminal or cancellation.is_set() or (
+                    caller_cancellation is not None and caller_cancellation.is_set()
+                ):
                     return
-            if not direct:
+                if time.monotonic() >= collection_deadline():
+                    finish_at_deadline()
+                    return
+                # Admission is atomic with the final deadline/cancellation
+                # check. An admitted write may finish late, but is never replayed.
                 if published is not None:
                     published.set()
-                self._transport.emit_event(EVENT_RECOGNIZER_LOOP_UTTERANCE,
-                    _utterance_payload(prompt, lang), request_context)
-                return
-            inner = {
-                "msg_type": "bus",
-                "payload": {
-                    "type": EVENT_RECOGNIZER_LOOP_UTTERANCE,
-                    "data": _utterance_payload(prompt, lang),
-                    "context": request_context,
-                },
-                "metadata": {},
-                "route": [],
-                "node": None,
-                "target_site_id": None,
-                "target_pubkey": None,
-                "source_peer": None,
-            }
-            if published is not None:
-                published.set()
-            send_hive_message({
-                "msg_type": "query",
-                "payload": inner,
-                "metadata": {"query_id": query_id},
-                "route": [],
-                "node": None,
-                "target_site_id": None,
-                "target_pubkey": None,
-                "source_peer": None,
-            }, encrypt=True)
+            if direct:
+                send_hive_message(frame, encrypt=True)
+            else:
+                self._transport.emit_event(EVENT_RECOGNIZER_LOOP_UTTERANCE, payload, request_context)
 
         def run() -> None:
             try:
@@ -1233,12 +1234,8 @@ class ThalovantClient:
                 if errors:
                     raise errors[0]
                 failure_event = failure_event or soft_failure_event
-            if direct and self.reply_settle_seconds > 0 and failure_event is None:
-                settle_end = min(deadline, time.monotonic() + self.reply_settle_seconds)
-                while time.monotonic() < settle_end:
-                    if caller_cancellation is not None and caller_cancellation.is_set():
-                        raise ThalovantConnectionError("Hub request was cancelled.")
-                    cancellation.wait(min(_SETTLE_POLL, max(0.0, settle_end - time.monotonic())))
+            if caller_cancellation is not None and caller_cancellation.is_set():
+                raise ThalovantConnectionError("Hub request was cancelled.")
             if failure_event is not None and not fragments:
                 raise ThalovantRuntimeError(_failure_reason(failure_event))
             if not fragments:

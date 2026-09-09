@@ -2,7 +2,7 @@
 
 ## 0.5.10
 
-- Apply one deadline to direct query connection, authenticated readiness, send, reply collection, and optional settling. Expired raw I/O retains lifecycle ownership until cleanup finishes; delayed connections cannot register handlers or send after timeout.
+- Apply one deadline to direct query connection, authenticated readiness, send, and reply collection; completed queries return immediately. Expired raw I/O retains lifecycle ownership until cleanup finishes; delayed connections cannot register handlers or send after timeout.
 - Treat intent misses as provisional until query completion, allowing later fallback speech to recover. Freeze replies on completion or hard policy/query-timeout failures, preserve failed partial replies, and ignore subsequent events or write errors.
 - Exercise both routed cascade and direct query replies, query correlation, blocked connection/write cleanup, invalid budgets, and deadline-capped settling with synthetic transport regressions.
 - Apply the caller deadline to ask connection/send/reconnect/settling and event wait/listen connection/registration. Async ask/query/wait/listen cancellation removes handlers and retires owned work without closing another queued caller's session.

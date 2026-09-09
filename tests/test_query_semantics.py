@@ -172,14 +172,14 @@ def test_terminal_reply_precedes_later_send_failure(terminal):
         sdk.close()
 
 
-def test_query_settle_is_capped_by_original_deadline():
+def test_query_terminal_completion_does_not_add_settle_delay():
     transport = QueryTransport(lambda transport: (
         transport.reply("speak", "answer"), transport.reply("hive.query.complete"),
     ))
     sdk = client(transport, settle=10)
     started = time.monotonic()
     try:
-        assert sdk.query("hello", timeout=0.03, query_id="fixture").text == "answer"
+        assert sdk.query("hello", timeout=1, query_id="fixture").text == "answer"
         assert time.monotonic() - started < 0.3
     finally:
         sdk.close()

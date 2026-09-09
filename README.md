@@ -566,14 +566,15 @@ print(reply.text)
 ```
 
 Since 0.5.10, `query(timeout=...)` includes connection, authenticated readiness,
-send, reply collection, and optional settling in one deadline. Direct `query`
+send, and reply collection in one deadline. Direct `query`
 and routed `cascade` replies share the same query ID filter. Intent misses are
 provisional until `hive.query.complete`; later speech clears a provisional
 failure. Completion and hard policy/query-timeout failures stop collection, so
 later events cannot change the result. A hard failure after speech preserves
 the partial text with `handled=False`. An unanswered query still times out.
 Blocked I/O retains session ownership until cleanup finishes, and an expired
-connection attempt cannot send a query later.
+connection attempt cannot send a query later. Completion returns immediately
+without the Ask settlement delay.
 
 `ask()` also includes connect, send, preparation retries, and settling in its
 caller deadline. The first nonempty speech starts a fixed settle window
