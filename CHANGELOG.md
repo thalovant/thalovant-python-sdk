@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.10
+
+- Apply one deadline to direct query connection, authenticated readiness, send, reply collection, and optional settling. Expired raw I/O retains lifecycle ownership until cleanup finishes; delayed connections cannot register handlers or send after timeout.
+- Treat intent misses as provisional until query completion, allowing later fallback speech to recover. Freeze replies on completion or hard policy/query-timeout failures, preserve failed partial replies, and ignore subsequent events or write errors.
+- Exercise both routed cascade and direct query replies, query correlation, blocked connection/write cleanup, invalid budgets, and deadline-capped settling with synthetic transport regressions.
+- Apply the caller deadline to ask connection/send/reconnect/settling and event wait/listen connection/registration. Async ask/query/wait/listen cancellation removes handlers and retires owned work without closing another queued caller's session.
+- Bound sync/async listener buffers with `max_buffered_events=256` by default; overflow raises `ThalovantRuntimeError` and retires the subscription. Keep transport predicate polling off the waiting caller thread.
+
 ## 0.5.9
 
 - Reject control-plane redirects before parsing a response or forwarding password-login bodies. Require HTTPS for credentials except explicit loopback HTTP used in local development; reject credentials embedded in API URLs.

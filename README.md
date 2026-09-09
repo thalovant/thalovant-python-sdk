@@ -565,6 +565,29 @@ reply = client.query("What time is it in Toronto?")
 print(reply.text)
 ```
 
+Since 0.5.10, `query(timeout=...)` includes connection, authenticated readiness,
+send, reply collection, and optional settling in one deadline. Direct `query`
+and routed `cascade` replies share the same query ID filter. Intent misses are
+provisional until `hive.query.complete`; later speech clears a provisional
+failure. Completion and hard policy/query-timeout failures stop collection, so
+later events cannot change the result. A hard failure after speech preserves
+the partial text with `handled=False`. An unanswered query still times out.
+Blocked I/O retains session ownership until cleanup finishes, and an expired
+connection attempt cannot send a query later.
+
+`ask()` also includes connect, send, reconnect attempts, and settling in its
+caller deadline. Its bus-level intent failures remain terminal. Cancelling an
+async ask, query, event wait, or listener removes its handlers and retires any
+active connection/write it owns; a queued caller cannot close another caller's
+session. Transport status checks run outside the waiting caller's thread.
+
+`wait_for_event(timeout=...)` and `listen(timeout=...)` include connection and
+subscription setup in the deadline. A listener without a timeout uses the normal
+connect budget and can then listen indefinitely. Both sync and async listeners
+accept `max_buffered_events=256`; it must be a positive integer. Overflow raises
+`ThalovantRuntimeError` and retires the subscription. A one-event wait keeps the
+first correlated match and ignores subsequent events.
+
 MQTT identities include a broker endpoint, username, password, TLS flag, and
 topic prefix. The broker credentials are scoped to that client and should be
 treated like a password. Public identities should use `mqtts://`; the SDK also
