@@ -252,6 +252,16 @@ class ThalovantControlPlane:
                 raise ThalovantAPIError(
                     "Thalovant API device authorization response was incomplete."
                 )
+        for value in (verification_uri, grant.get("verification_uri_complete")):
+            if value is None:
+                continue
+            try:
+                parsed = urlsplit(value) if isinstance(value, str) else None
+                safe = parsed is not None and parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not parsed.username and not parsed.password
+            except ValueError:
+                safe = False
+            if not safe:
+                raise ThalovantAPIError("Device verification URLs must use HTTP or HTTPS without embedded credentials.")
         raw_interval = grant.get("interval")
         interval = (
             float(raw_interval)
