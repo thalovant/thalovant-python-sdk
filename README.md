@@ -565,6 +565,45 @@ reply = client.query("What time is it in Toronto?")
 print(reply.text)
 ```
 
+Since 0.5.10, `query(timeout=...)` includes connection, authenticated readiness,
+send, and reply collection in one deadline. Direct `query`
+and routed `cascade` replies share the same query ID filter. Intent misses are
+provisional until `hive.query.complete`; later speech clears a provisional
+failure. Completion and hard policy/query-timeout failures stop collection, so
+later events cannot change the result. A hard failure after speech preserves
+the partial text with `handled=False`. An unanswered query still times out.
+Blocked I/O retains session ownership until cleanup finishes, and an expired
+connection attempt cannot send a query later. Completion returns immediately
+without the Ask settlement delay.
+
+`ask()` also includes connect, send, preparation retries, and settling in its
+caller deadline. The first nonempty speech starts a fixed settle window
+(`reply_settle_seconds=0.25`); a handled event or soft intent miss without speech
+starts a fixed empty-reply window (`empty_reply_wait_seconds=5.0`). Later speech
+switches the empty window to settling and recovers the soft miss. Neither repeated
+events nor later fragments extend these windows, and both are clipped by the
+original deadline. A hard policy/query-timeout failure freezes the result
+immediately. Empty results raise a runtime failure or timeout. Ask requires a
+matching request ID; ambient or differently correlated replies cannot satisfy
+the request. Both Ask and Query report the first accepted nonblank runtime
+session ID, falling back to the requested session when none is reported. Cancelling an
+async ask, query, event wait, or listener removes its handlers and retires any
+active connection/write it owns; a queued caller cannot close another caller's
+session. Transport status checks run outside the waiting caller's thread.
+
+`wait_for_event(timeout=...)` and `listen(timeout=...)` include connection and
+subscription setup in the deadline. A listener without a timeout uses the normal
+connect budget and can then listen indefinitely. Both sync and async listeners
+accept `max_buffered_events=256`; it must be a positive integer. Overflow raises
+`ThalovantRuntimeError` and retires the subscription. A one-event wait keeps the
+first correlated match and ignores subsequent events.
+
+Application requests are never automatically replayed after publication starts,
+including when a local write error leaves the remote outcome uncertain.
+`auto_reconnect` and `reconnect_attempts` apply to connection preparation before
+publication. This corrects earlier behavior that could emit the same application
+request twice after a connection error.
+
 MQTT identities include a broker endpoint, username, password, TLS flag, and
 topic prefix. The broker credentials are scoped to that client and should be
 treated like a password. Public identities should use `mqtts://`; the SDK also

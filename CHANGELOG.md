@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.10
+
+- Preserve a healthy pending write after a reply completes; lifecycle ownership and the original send deadline still prevent premature reuse.
+
+- Apply one deadline to direct query connection, authenticated readiness, send, and reply collection; completed queries return immediately. Expired raw I/O retains lifecycle ownership until cleanup finishes; delayed connections cannot register handlers or send after timeout.
+- Treat intent misses as provisional until query completion, allowing later fallback speech to recover. Freeze replies on completion or hard policy/query-timeout failures, preserve failed partial replies, and ignore subsequent events or write errors.
+- Exercise both routed cascade and direct query replies, query correlation, blocked connection/write cleanup, invalid budgets, and deadline-capped settling with synthetic transport regressions.
+- Apply the caller deadline to ask connection/send/reconnect/settling and event wait/listen connection/registration. Async ask/query/wait/listen cancellation removes handlers and retires owned work without closing another queued caller's session.
+- Bound sync/async listener buffers with `max_buffered_events=256` by default; overflow raises `ThalovantRuntimeError` and retires the subscription. Keep transport predicate polling off the waiting caller thread.
+- Align Ask's delayed fallback behavior: first speech starts a fixed 250ms settle window; first handled/soft miss without speech starts a fixed 5s empty-reply window. Windows are configurable on the client and clipped to the caller deadline; no empty success or post-hard-failure recovery is allowed.
+- Retire listeners at their deadline even while the consumer is paused. Reconnect only during pre-publication preparation; never automatically replay a request after an application write starts.
+- Return the first accepted nonblank runtime session ID from both Ask and Query, falling back to the requested session.
+
 ## 0.5.9
 
 - Reject control-plane redirects before parsing a response or forwarding password-login bodies. Require HTTPS for credentials except explicit loopback HTTP used in local development; reject credentials embedded in API URLs.

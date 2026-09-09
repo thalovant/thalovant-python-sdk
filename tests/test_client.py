@@ -46,6 +46,7 @@ class FakeTransport:
         self.handlers: dict[str, list[Callable[[Any], None]]] = {}
         self.hive_handlers: dict[str, list[Callable[[Any], None]]] = {}
         self.hive_messages: list[dict[str, Any]] = []
+        self.subscription_ready = threading.Event()
 
     def connect(self) -> None:
         self.connected = True
@@ -55,6 +56,7 @@ class FakeTransport:
 
     def on_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self.handlers.setdefault(event_name, []).append(handler)
+        self.subscription_ready.set()
 
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
         self.handlers[event_name] = [
@@ -81,10 +83,10 @@ class FakeTransport:
         self.emitted.append((event_type, data, context))
         if self.answer is not None:
             for handler in self.handlers.get("speak", []):
-                handler(FakeMessage({"utterance": self.answer}))
+                handler(FakeMessage({"utterance": self.answer}, context=context))
         if self.handled:
             for handler in self.handlers.get("ovos.utterance.handled", []):
-                handler(FakeMessage({}))
+                handler(FakeMessage({}, context=context))
 
     def push(
         self,
@@ -298,7 +300,7 @@ class IntentMissTransport(FakeTransport):
         self.push(self._fail_event, {}, context)
 
 
-def test_ask_fails_fast_on_ovos_intent_unmatched():
+def test_ask_reports_unrecovered_ovos_intent_unmatched():
     transport = IntentMissTransport(fail_event="ovos.intent.unmatched")
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
 
@@ -306,7 +308,7 @@ def test_ask_fails_fast_on_ovos_intent_unmatched():
         client.ask("flibbertigibbet wumpus", timeout=0.5, context={"source": "test"})
 
 
-def test_ask_fails_fast_on_legacy_complete_intent_failure():
+def test_ask_reports_unrecovered_legacy_complete_intent_failure():
     transport = IntentMissTransport(fail_event="complete_intent_failure")
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
 
@@ -761,7 +763,7 @@ def test_wait_for_event_blocks_until_predicate_matches():
     client = ThalovantClient(identity(), transport=transport)
 
     def publish() -> None:
-        time.sleep(0.02)
+        assert transport.subscription_ready.wait(1)
         transport.push("custom.event", {"value": 1})
         transport.push("custom.event", {"value": 2})
 
@@ -782,7 +784,7 @@ def test_listen_yields_until_max_events():
     client = ThalovantClient(identity(), transport=transport)
 
     def publish() -> None:
-        time.sleep(0.02)
+        assert transport.subscription_ready.wait(1)
         transport.push("custom.event", {"value": 1})
         transport.push("custom.event", {"value": 2})
 
@@ -1027,14 +1029,16 @@ def test_doctor_reports_identity_and_transport_checks():
     ]
 
 
-def test_emit_reconnects_once_after_transport_failure():
+def test_emit_never_replays_after_transport_send_failure():
     transport = FlakyTransport()
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
 
-    client.emit("skillmanager.list", {"x": 1})
+    with pytest.raises(ThalovantConnectionError):
+        client.emit("skillmanager.list", {"x": 1})
 
-    assert transport.connect_count == 2
-    assert transport.emitted == [("skillmanager.list", {"x": 1}, {})]
+    assert transport.connect_count == 1
+    assert not transport.fail_next_emit
+    assert transport.emitted == []
 
 
 
@@ -1168,7 +1172,7 @@ def test_async_client_supports_listen():
         client = AsyncThalovantClient(identity(), transport=transport)
 
         async def publish() -> None:
-            await asyncio.sleep(0.02)
+            assert await asyncio.to_thread(transport.subscription_ready.wait, 1)
             transport.push("custom.event", {"value": 1})
             transport.push("custom.event", {"value": 2})
 
