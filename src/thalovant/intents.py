@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from .errors import (
+    ThalovantConnectionError,
     ThalovantPolicyDeniedError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
@@ -364,6 +365,7 @@ def request_reply(
     dropped. A ``hive.policy.denied`` naming the query raises at once.
     """
 
+    deadline = time.monotonic() + timeout
     request_id = _new_request_id()
     context: dict[str, Any] = {"request_id": request_id}
     if lang:
@@ -377,12 +379,17 @@ def request_reply(
             done.set()
 
     denials = _Denials()
-    client.connect()
-    with client.on(EVENT_POLICY_DENIED, denials), client.on(
+    try:
+        client.connect(timeout=timeout)
+    except ThalovantConnectionError:
+        if time.monotonic() >= deadline:
+            raise ThalovantTimeoutError(f"Hub did not answer {query_type} within {timeout:g}s.") from None
+        raise
+    with client.on(EVENT_POLICY_DENIED, denials, request_id=request_id), client.on(
         reply_type, keep, request_id=request_id
     ):
-        client.emit(query_type, data, context)
-        _wait(done, denials, timeout=timeout, denied_types=(query_type,), what=query_type)
+        client._emit_query_with_timeout(query_type, data, context, deadline - time.monotonic())
+        _wait(done, denials, timeout=max(0.0, deadline - time.monotonic()), denied_types=(query_type,), what=query_type)
     return answer[0]
 
 
@@ -494,7 +501,7 @@ def describe_many(
             if definition is not None
         ]
         key = by_request.get(event.request_id or "")
-        if key is None and definitions:
+        if key is None and not event.request_id and definitions:
             # No request id came back: the definition names what it describes.
             first = definitions[0]
             key = next(
@@ -516,7 +523,10 @@ def describe_many(
 
     denials = _Denials()
     client.connect()
-    with client.on(EVENT_POLICY_DENIED, denials), client.on(
+    with client.on(
+        EVENT_POLICY_DENIED, denials,
+        predicate=lambda event: not event.request_id or event.request_id in by_request,
+    ), client.on(
         EVENT_INTENT_DESCRIBE_RESPONSE, keep
     ):
         for key in wanted:
@@ -614,7 +624,7 @@ def list_fallbacks(
     except (ThalovantPolicyDeniedError, ThalovantTimeoutError):
         return None
     rows = event.data.get("fallbacks")
-    if not isinstance(rows, list):
+    if event.data.get("ok") is False or not isinstance(rows, list):
         return None
     found = []
     for row in rows:

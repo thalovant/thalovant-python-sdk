@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 import queue
 import threading
@@ -116,37 +117,8 @@ def _transport_for_protocol(
     raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
 
 
-#: How long `connect()` will wait for the transport to admit it is connected,
-#: and how often it looks. A settled session reports in milliseconds; this is
-#: only a ceiling for the case where it never does.
-_SETTLE_CEILING = 5.0
+# Poll admitted readiness without extending the caller's connect deadline.
 _SETTLE_POLL = 0.02
-
-
-def _connect_transport_with_timeout(transport: Transport, timeout: float) -> None:
-    done = threading.Event()
-    errors: list[BaseException] = []
-
-    def run_connect() -> None:
-        try:
-            transport.connect()
-        except BaseException as exc:
-            errors.append(exc)
-        finally:
-            done.set()
-
-    thread = threading.Thread(target=run_connect, daemon=True)
-    thread.start()
-    if not done.wait(timeout=timeout):
-        try:
-            transport.disconnect()
-        except Exception:
-            pass
-        raise ThalovantConnectionError(
-            f"Hub connection did not complete within {timeout:g}s."
-        )
-    if errors:
-        raise errors[0]
 
 
 def _message_mapping(value: Any) -> dict[str, Any]:
@@ -235,6 +207,14 @@ class ThalovantClient:
             noise_state_dir=noise_state_dir,
         )
         self._connected = False
+        self._connection_lock = threading.Lock()
+        self._connection_state = threading.RLock()
+        self._connection_generation = 0
+        self._closing = 0
+        self._closed_event = threading.Event()
+        self._closed_event.set()
+        self._close_errors: list[BaseException] = []
+        self._cancel_connect: Callable[[BaseException], None] | None = None
 
     @classmethod
     def from_identity_file(
@@ -288,36 +268,135 @@ class ThalovantClient:
         )
 
     def connect(self, timeout: float | None = None) -> None:
-        """Open the HiveMind HTTP connection if needed."""
+        """Reach authenticated readiness within one caller deadline.
 
-        if self._connected and self._transport.is_connected():
-            return
-        if self._connected:
-            self.close()
-        budget = timeout if timeout and timeout > 0 else self._hard_connect_timeout
-        _connect_transport_with_timeout(self._transport, budget)
-        self._connected = True
-        self._settle(budget)
-
-    def _settle(self, budget: float) -> None:
-        """Give the transport a moment to report the session it just built.
-
-        `connect()` can return before the underlying client has set the
-        events `is_connected()` reads, and every operation runs through
-        `_with_reconnect`, which calls `connect()` first: on that race the
-        client closed a perfectly good session and dialled a second one. A
-        hub that admits one session per identity then refuses the second, and
-        the caller sees a handshake timeout for a query that was never sent.
-
-        Bounded and quiet: if the predicate never settles, this leaves the
-        connection exactly as it found it and lets the operation report
-        whatever it reports. Waiting cannot make a working session fail.
+        Timed-out work retains the lifecycle lock until its connect and cleanup
+        finish, so a later attempt cannot replace or be closed by that session.
         """
-        deadline = time.monotonic() + max(0.0, min(budget, _SETTLE_CEILING))
-        while not self._transport.is_connected():
-            if time.monotonic() >= deadline:
+        self._connect(timeout)
+
+    def _connect(
+        self, timeout: float | None = None, cancellation: threading.Event | None = None,
+        operation: Callable[[], Any] | None = None,
+    ) -> None:
+        budget = timeout if timeout and math.isfinite(timeout) and timeout > 0 else self._hard_connect_timeout
+        deadline = time.monotonic() + budget
+
+        def timeout_error() -> ThalovantConnectionError | ThalovantTimeoutError:
+            if operation is not None:
+                return ThalovantTimeoutError(f"Hub query send did not complete within {budget:g}s.")
+            return ThalovantConnectionError(f"Hub connection did not complete within {budget:g}s.")
+
+        with self._connection_state:
+            if self._closing:
+                raise ThalovantConnectionError("Hub connection is closing.")
+            generation = self._connection_generation
+            if operation is None and self._connected and self._transport.is_connected():
                 return
-            time.sleep(_SETTLE_POLL)
+        while True:
+            if cancellation is not None and cancellation.is_set():
+                raise ThalovantConnectionError("Hub connection was cancelled.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise timeout_error()
+            if self._connection_lock.acquire(timeout=min(_SETTLE_POLL, remaining)):
+                break
+        with self._connection_state:
+            if time.monotonic() >= deadline:
+                self._connection_lock.release()
+                raise timeout_error()
+            if cancellation is not None and cancellation.is_set():
+                self._connection_lock.release()
+                raise ThalovantConnectionError("Hub connection was cancelled.")
+            if self._closing or generation != self._connection_generation:
+                self._connection_lock.release()
+                raise ThalovantConnectionError("Hub connection was closed before it became ready.")
+            reuse_connection = self._connected and self._transport.is_connected()
+            if operation is None and reuse_connection:
+                self._connection_lock.release()
+                return
+            if not reuse_connection:
+                self._connected = False
+            done = threading.Event()
+            cancelled = threading.Event()
+            errors: list[BaseException] = []
+            cleanup: threading.Thread | None = None
+
+            def disconnect() -> None:
+                try:
+                    self._transport.disconnect()
+                except Exception:
+                    pass
+
+            def cancel(error: BaseException) -> None:
+                nonlocal cleanup
+                with self._connection_state:
+                    if done.is_set():
+                        return
+                    errors.append(error)
+                    cancelled.set()
+                    self._connected = False
+                    cleanup = threading.Thread(target=disconnect, daemon=True)
+                    cleanup.start()
+                    done.set()
+
+            self._cancel_connect = cancel
+
+            def run_connect() -> None:
+                transport_completed = reuse_connection
+                try:
+                    if not reuse_connection:
+                        self._transport.connect()
+                        transport_completed = True
+                    while not cancelled.is_set():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            cancel(timeout_error())
+                            break
+                        if self._transport.is_connected():
+                            with self._connection_state:
+                                if time.monotonic() >= deadline:
+                                    cancel(timeout_error())
+                                elif not cancelled.is_set():
+                                    self._connected = True
+                            break
+                        cancelled.wait(min(_SETTLE_POLL, remaining))
+                    if not cancelled.is_set():
+                        if operation is not None:
+                            operation()
+                        with self._connection_state:
+                            if time.monotonic() >= deadline:
+                                cancel(timeout_error())
+                            elif not cancelled.is_set():
+                                done.set()
+                except BaseException as exc:
+                    cancel(exc)
+                finally:
+                    with self._connection_state:
+                        owned_cleanup = cleanup
+                    if owned_cleanup is not None:
+                        owned_cleanup.join()
+                        if transport_completed:
+                            # A custom transport may finish after its first
+                            # disconnect. Retire that late completion too.
+                            disconnect()
+                    with self._connection_state:
+                        if self._cancel_connect is cancel:
+                            self._cancel_connect = None
+                    self._connection_lock.release()
+
+            threading.Thread(target=run_connect, daemon=True).start()
+        while not done.is_set():
+            if cancellation is not None and cancellation.is_set():
+                cancel(ThalovantConnectionError("Hub connection was cancelled."))
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                cancel(timeout_error())
+                break
+            done.wait(timeout=min(_SETTLE_POLL, remaining))
+        if errors:
+            raise errors[0]
 
     def connect_with_info(self, timeout: float | None = None) -> ThalovantConnectionInfo:
         """Connect and return the transport timing snapshot."""
@@ -330,13 +409,53 @@ class ThalovantClient:
 
         return self._transport.connection_info()
 
-    def close(self) -> None:
-        """Disconnect the underlying HiveMind HTTP client."""
+    def close(self, timeout: float | None = None) -> None:
+        """Cancel pending work and close within a caller budget.
 
-        if not self._connected:
-            return
-        self._transport.disconnect()
-        self._connected = False
+        A timeout retains cleanup ownership. Use ``wait_closed`` to observe
+        actual completion before handing this identity to another client.
+        """
+        budget = timeout if timeout and math.isfinite(timeout) and timeout > 0 else self._hard_connect_timeout
+        completed = threading.Event()
+        errors: list[BaseException] = []
+        with self._connection_state:
+            self._connection_generation += 1
+            if not self._closing:
+                self._close_errors = []
+            self._closing += 1
+            self._closed_event.clear()
+            self._connected = False
+            if self._cancel_connect is not None:
+                self._cancel_connect(ThalovantConnectionError("Hub connection was closed before it became ready."))
+
+        def run_close() -> None:
+            try:
+                with self._connection_lock:
+                    self._transport.disconnect()
+            except BaseException as exc:
+                errors.append(exc)
+                with self._connection_state:
+                    self._close_errors.append(exc)
+            finally:
+                with self._connection_state:
+                    self._closing -= 1
+                    if not self._closing:
+                        self._closed_event.set()
+                completed.set()
+
+        threading.Thread(target=run_close, daemon=True).start()
+        if not completed.wait(budget):
+            raise ThalovantConnectionError(f"Hub close did not complete within {budget:g}s.")
+        if errors:
+            raise errors[0]
+
+    def wait_closed(self, timeout: float | None = None) -> None:
+        """Wait for actual pending cleanup; no timeout means wait until retired."""
+        if not self._closed_event.wait(timeout):
+            raise ThalovantConnectionError("Hub cleanup is still pending.")
+        with self._connection_state:
+            if self._close_errors:
+                raise self._close_errors[0]
 
     disconnect = close
 
@@ -498,6 +617,16 @@ class ThalovantClient:
                 self._context_with_identity_metadata(context),
             )
         )
+
+    def _emit_query_with_timeout(
+        self, event_type: str, data: dict[str, Any], context: dict[str, Any], timeout: float,
+    ) -> None:
+        """Internal read query: one connect/send deadline, without replaying it."""
+        if timeout <= 0:
+            raise ThalovantTimeoutError("Hub query deadline expired before send.")
+        self._connect(timeout, operation=lambda: self._transport.emit_event(
+            event_type, data, self._context_with_identity_metadata(context),
+        ))
 
     def send_utterance(
         self,
@@ -1066,16 +1195,25 @@ class AsyncThalovantClient:
         )
 
     async def connect(self, timeout: float | None = None) -> None:
-        await asyncio.to_thread(self._client.connect, timeout=timeout)
+        cancellation = threading.Event()
+        try:
+            await asyncio.to_thread(self._client._connect, timeout, cancellation)
+        except asyncio.CancelledError:
+            cancellation.set()
+            raise
 
     async def connect_with_info(self, timeout: float | None = None) -> ThalovantConnectionInfo:
-        return await asyncio.to_thread(self._client.connect_with_info, timeout=timeout)
+        await self.connect(timeout=timeout)
+        return await self.connection_info()
 
     async def connection_info(self) -> ThalovantConnectionInfo:
         return await asyncio.to_thread(self._client.connection_info)
 
-    async def close(self) -> None:
-        await asyncio.to_thread(self._client.close)
+    async def close(self, timeout: float | None = None) -> None:
+        await asyncio.to_thread(self._client.close, timeout)
+
+    async def wait_closed(self, timeout: float | None = None) -> None:
+        await asyncio.to_thread(self._client.wait_closed, timeout)
 
     disconnect = close
 

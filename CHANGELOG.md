@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.8
+
+- Make authenticated readiness part of one caller connection deadline. An unready session now raises `ThalovantConnectionError`; 0.5.7's extra best-effort settle allowance is removed.
+- Return promptly on connect timeout or async connect cancellation while retaining ownership of unfinished connect/cleanup work. Replacement sessions wait within their own budget, concurrent connects share one admitted session, and late completion is retired before reconnect. Close also has a caller deadline; `wait_closed()` observes the actual retained cleanup.
+- Include reconnect and send in each intent query deadline; a blocked optional fallback probe retains send/cleanup ownership until retired. Explicit failed fallback responses remain unknown.
+- Match policy denials to the querying request and reject intent descriptions carrying a different request ID, while preserving compatibility with ID-less replies.
+- Add regressions for hung cleanup, late completion, concurrent connects, cancellation, and cross-request discovery events across the existing Python 3.10–3.14 CI matrix, plus a runtime dependency audit.
+
 ## 0.5.7
 
 - `connect()` waits for the transport to admit the session it just built.

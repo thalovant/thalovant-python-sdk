@@ -537,6 +537,21 @@ for protocol in ("wss", "https", "mqtt"):
         print(protocol, client.ask(f"Reply over {protocol}.").text)
 ```
 
+From 0.5.8, `client.connect(timeout=...)` uses one deadline for waiting for a
+previous attempt, transport setup and authenticated readiness. It raises
+`ThalovantConnectionError` if the session is not ready when that budget expires.
+This replaces 0.5.7's extra, best-effort readiness allowance, which could return
+without an admitted session. Increase the caller's timeout for slow hubs.
+Timeout and async connect cancellation start cleanup without waiting beyond the
+caller's budget. A replacement waits for the retired connect and cleanup to
+finish, preventing a late attempt from replacing or closing a new session.
+`close(timeout=...)` uses its own caller deadline (defaulting to the configured
+connection budget). If close times out, `wait_closed()` observes actual retained
+cleanup; await that before passing the identity to another client instance.
+Intent query deadlines also cover reconnect and send. The optional fallback-skill
+probe uses at most 1.5 seconds, preserving unknown state when unavailable or
+explicitly failed, and retains ownership of any timed-out send until it retires.
+
 Use `client.connect_with_info()` when you need connection telemetry for
 benchmarks or health dashboards. The returned snapshot includes phase,
 socket/open time, handshake time, total connect time, and last error.
