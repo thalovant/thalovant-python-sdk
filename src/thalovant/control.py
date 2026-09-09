@@ -252,6 +252,20 @@ class ThalovantControlPlane:
                 raise ThalovantAPIError(
                     "Thalovant API device authorization response was incomplete."
                 )
+        for value in (verification_uri, grant.get("verification_uri_complete")):
+            if value is None:
+                continue
+            try:
+                parsed = urlsplit(value) if isinstance(value, str) else None
+                safe = (
+                    parsed is not None and parsed.scheme in {"http", "https"}
+                    and bool(parsed.hostname) and "@" not in parsed.netloc
+                    and not any(char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value)
+                )
+            except ValueError:
+                safe = False
+            if not safe:
+                raise ThalovantAPIError("Device verification URLs must use HTTP or HTTPS without embedded credentials.")
         raw_interval = grant.get("interval")
         interval = (
             float(raw_interval)
@@ -1174,17 +1188,40 @@ class ThalovantControlPlane:
                 raise ThalovantAPIError("Missing Thalovant API access token.")
             request_headers["authorization"] = f"Bearer {self.access_token}"
 
+        url = urljoin(self.api_url, path.lstrip("/"))
+        parsed = urlsplit(url)
+        if parsed.username or parsed.password:
+            raise ThalovantAPIError("Control-plane URLs must not include embedded credentials.")
+        loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        session_headers = getattr(self.session, "headers", {}) or {}
+        credential_headers = {"authorization", "proxy-authorization", "cookie"}
+        has_credentials = (
+            json is not None
+            or any(str(key).lower() in credential_headers and bool(value) for key, value in {**session_headers, **request_headers}.items())
+            or bool(getattr(self.session, "auth", None))
+            or bool(getattr(self.session, "cookies", None))
+        )
+        if has_credentials and parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+            raise ThalovantAPIError("Credential-bearing control-plane requests require HTTPS (except explicit loopback HTTP).")
         try:
-            return self.session.request(
+            response = self.session.request(
                 method,
-                urljoin(self.api_url, path.lstrip("/")),
+                url,
                 json=json,
                 params=params,
                 headers=request_headers,
                 timeout=self.timeout,
+                allow_redirects=False,
+                # An anonymous plaintext public request must not silently load
+                # credentials from netrc during Requests.prepare_request().
+                auth=(lambda prepared: prepared) if not has_credentials and parsed.scheme != "https" and not loopback else None,
             )
-        except requests.RequestException as exc:
-            raise ThalovantAPIError("Could not reach the Thalovant API.") from exc
+        except requests.RequestException:
+            # Requests error chains may contain URL credentials or query data.
+            raise ThalovantAPIError("Could not reach the Thalovant API.") from None
+        if 300 <= response.status_code < 400:
+            raise ThalovantAPIError("Thalovant API redirected the request; redirects are disabled.")
+        return response
 
 
 def _new_secret() -> str:

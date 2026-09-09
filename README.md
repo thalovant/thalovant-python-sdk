@@ -751,3 +751,7 @@ handshake, and transport health.
 pip install -e ".[dev]"
 pytest
 ```
+
+Control-plane requests reject redirects. Credential-bearing requests require HTTPS;
+explicit `http://localhost`, `http://127.0.0.1` and `http://[::1]` endpoints remain
+available for local development. API URLs must not contain embedded credentials.

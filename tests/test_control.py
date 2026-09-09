@@ -1285,6 +1285,26 @@ def test_control_plane_login_with_browser_custom_prompt_and_no_browser(monkeypat
     assert authorize["json"] == {}
 
 
+@pytest.mark.parametrize("field", ["verification_uri", "verification_uri_complete"])
+@pytest.mark.parametrize("target", ["file:///tmp/payload", "javascript:alert(1)", "--execute", "https://user:synthetic-secret@example.invalid", "https://[", "not a URL", "https://@example.invalid", "https://example.invalid/with space", "https://example.invalid/line\nfeed", "https://example.invalid/tab\there"])
+@pytest.mark.parametrize("open_browser", [False, True])
+def test_device_login_rejects_unsafe_verification_urls_before_callbacks(monkeypatch, field, target, open_browser):
+    class UnsafeGrant(DeviceFlowSession):
+        def request(self, method, url, **kwargs):
+            self.requests.append((method, url, kwargs))
+            assert url.endswith("/v1/auth/device/authorize"), "Unsafe grant must not reach token polling"
+            return FakeResponse(200, {**DEVICE_GRANT, field: target})
+    session = UnsafeGrant([])
+    opened = []
+    prompted = []
+    monkeypatch.setattr("thalovant.control.webbrowser.open", opened.append)
+    api = ThalovantControlPlane("https://api.example.invalid", session=session)
+    with pytest.raises(ThalovantAPIError, match="verification URLs"):
+        api.login_with_browser(open_browser=open_browser, prompt=prompted.append)
+    assert opened == prompted == []
+    assert len(session.requests) == 1
+
+
 def test_control_plane_device_poll_slow_down_grows_interval():
     session = DeviceFlowSession(
         [
