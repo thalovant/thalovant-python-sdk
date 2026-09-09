@@ -306,6 +306,8 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
             self._finish_connection(client, generation)
         except Exception as exc:
             self._abort_connection(client, generation, exc)
+            if isinstance(exc, ThalovantTimeoutError):
+                raise
             raise ThalovantConnectionError("Could not establish the HiveMind HTTP Noise session.") from exc
 
     def _close_detached(self, client: Any) -> None:

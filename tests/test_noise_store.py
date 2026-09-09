@@ -52,9 +52,32 @@ def test_corrupt_pin_store_is_not_overwritten(tmp_path):
     identity = noise_identity(str(tmp_path))
     store = Path(identity.IDENTITY_FILE.path)
     store.write_text("{")
-    with pytest.raises((ValueError, ThalovantConnectionError)):
+    with pytest.raises(ThalovantConnectionError):
         identity.pin_noise_key("hub", "11" * 32)
     assert store.read_text() == "{"
+
+
+@pytest.mark.parametrize("pins", [None, [], "invalid", 42, {"hub": "g" * 64},
+                                  {"hub": "11" * 31}, {"hub": None}])
+@pytest.mark.parametrize("operation", ["read", "pin", "forget", "save"])
+def test_malformed_pin_state_raises_domain_error_and_preserves_file(tmp_path, pins, operation):
+    identity = noise_identity(str(tmp_path))
+    identity.pin_noise_key("hub", "11" * 32)
+    store = Path(identity.IDENTITY_FILE.path)
+    data = json.loads(store.read_text())
+    data["pinned_noise_keys"] = pins
+    original = json.dumps(data)
+    store.write_text(original)
+    with pytest.raises(ThalovantConnectionError, match="Stored Noise server pin"):
+        if operation == "read":
+            identity.get_pinned_noise_key("hub")
+        elif operation == "pin":
+            identity.pin_noise_key("hub", "11" * 32)
+        elif operation == "forget":
+            identity.forget_noise_key("hub")
+        else:
+            identity.save()
+    assert store.read_text() == original
 
 
 def test_processes_observe_only_the_complete_winning_static_key(tmp_path):

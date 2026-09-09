@@ -18,6 +18,19 @@ from .errors import ThalovantConnectionError
 _store_lock = threading.RLock()
 
 
+def _validated_noise_pins(value: Any) -> dict[str, str]:
+    """Reject malformed trust state before reading or changing any peer pin."""
+    if not isinstance(value, dict):
+        raise ThalovantConnectionError("Stored Noise server pins must be an object.")
+    for pin in value.values():
+        try:
+            if not isinstance(pin, str) or len(pin) != 64 or len(bytes.fromhex(pin)) != 32:
+                raise ValueError("invalid pin length")
+        except ValueError as exc:
+            raise ThalovantConnectionError("Stored Noise server pin is invalid.") from exc
+    return value
+
+
 def noise_identity(state_dir: str | None = None) -> Any:
     from hivemind_bus_client.identity import NodeIdentity
     from json_database import JsonStorage
@@ -29,7 +42,10 @@ def noise_identity(state_dir: str | None = None) -> Any:
                 raise ThalovantConnectionError("Noise identity must not be a symlink.")
             if not path.exists():
                 return {}
-            data = json.loads(path.read_text(encoding="utf8"))
+            try:
+                data = json.loads(path.read_text(encoding="utf8"))
+            except (ValueError, UnicodeError) as exc:
+                raise ThalovantConnectionError("Stored Noise identity is invalid.") from exc
             if not isinstance(data, dict):
                 raise ThalovantConnectionError("Stored Noise identity is invalid.")
             return data
@@ -54,7 +70,7 @@ def noise_identity(state_dir: str | None = None) -> Any:
             with _store_lock, self.IDENTITY_FILE.lock:
                 current = self._read_current()
                 # Other processes may have learned additional peers meanwhile.
-                pins = current.get("pinned_noise_keys", self.pinned_noise_keys)
+                pins = _validated_noise_pins(current.get("pinned_noise_keys", self.pinned_noise_keys))
                 current.update(self.IDENTITY_FILE)
                 current["pinned_noise_keys"] = pins
                 self._write_private(current)
@@ -62,16 +78,14 @@ def noise_identity(state_dir: str | None = None) -> Any:
         def get_pinned_noise_key(self, node_id: str) -> str | None:
             with _store_lock, self.IDENTITY_FILE.lock:
                 data = self._read_current()
-                pins = data.get("pinned_noise_keys", self.pinned_noise_keys)
-                pin = pins.get(node_id)
-                if pin is not None and (not isinstance(pin, str) or len(pin) != 64 or len(bytes.fromhex(pin)) != 32):
-                    raise ThalovantConnectionError("Stored Noise server pin is invalid.")
-                return pin
+                pins = _validated_noise_pins(data.get("pinned_noise_keys", self.pinned_noise_keys))
+                return pins.get(node_id)
 
         def pin_noise_key(self, node_id: str, pubkey: str) -> None:
             with _store_lock, self.IDENTITY_FILE.lock:
                 current = self._read_current()
-                pins = current.get("pinned_noise_keys", {})
+                pins = _validated_noise_pins(current.get("pinned_noise_keys", {}))
+                _validated_noise_pins({node_id: pubkey})
                 if pins.get(node_id) not in (None, pubkey):
                     raise ThalovantConnectionError("Trusted Noise server key changed; refusing connection.")
                 pins[node_id] = pubkey
@@ -84,7 +98,7 @@ def noise_identity(state_dir: str | None = None) -> Any:
             # authentication or reconnect error handling.
             with _store_lock, self.IDENTITY_FILE.lock:
                 current = self._read_current()
-                pins = current.get("pinned_noise_keys", {})
+                pins = _validated_noise_pins(current.get("pinned_noise_keys", {}))
                 if node_id not in pins:
                     return False
                 del pins[node_id]
