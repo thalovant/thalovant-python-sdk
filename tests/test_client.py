@@ -470,8 +470,7 @@ def test_connect_waits_for_the_transport_to_admit_the_session():
 
 
 def test_connect_does_not_hang_on_a_transport_that_never_admits_it():
-    """The wait is a courtesy, not a gate: a predicate that never settles
-    leaves the connection as it is and lets the operation report the fault."""
+    """An unadmitted session fails within the same connect budget."""
 
     class NeverReady(FakeTransport):
         def connect(self) -> None:
@@ -484,17 +483,20 @@ def test_connect_does_not_hang_on_a_transport_that_never_admits_it():
     transport = NeverReady()
     client = ThalovantClient(identity(), transport=transport)
     started = time.monotonic()
-    client.connect(timeout=0.2)
-    assert time.monotonic() - started < 2.0
+    with pytest.raises(ThalovantConnectionError, match="did not complete"):
+        client.connect(timeout=0.2)
+    assert time.monotonic() - started < 0.6
+    assert not client._connected
 
 
 def test_connect_enforces_hard_timeout_and_disconnects_transport():
     transport = HangingTransport()
     client = ThalovantClient(identity(), transport=transport)
 
-    with pytest.raises(ThalovantConnectionError, match="did not complete"):
+    with pytest.raises(ThalovantConnectionError, match="did not complete") as failure:
         client.connect(timeout=0.02)
 
+    assert isinstance(failure.value.__cause__, ThalovantTimeoutError)
     assert transport.started.is_set()
     assert transport.disconnect_count == 1
 
@@ -1259,3 +1261,255 @@ def test_mqtt_reconnect_starts_from_a_clean_noise_session():
     assert transport._noise is None, "a stale Noise session survived into the reconnect"
     assert previous.closed
     assert not transport._handshake.is_set(), "the handshake event was still set"
+
+
+def test_connect_deadline_includes_setup_and_readiness():
+    class SlowUnready(FakeTransport):
+        def connect(self):
+            time.sleep(0.2)
+
+    transport = SlowUnready()
+    client = ThalovantClient(identity(), transport=transport)
+    started = time.monotonic()
+    with pytest.raises(ThalovantConnectionError):
+        client.connect(timeout=0.3)
+    assert time.monotonic() - started < 0.45, "setup must consume the readiness budget"
+    assert not client._connected
+    client.close()
+
+
+def test_hung_cleanup_does_not_extend_connect_deadline_or_overlap_replacement():
+    class Held(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.connect_gate = threading.Event()
+            self.cleanup_gate = threading.Event()
+            self.cleanup_started = threading.Event()
+            self.dials = 0
+            self.closes = 0
+
+        def connect(self):
+            self.dials += 1
+            if self.dials == 1:
+                self.connect_gate.wait(5)
+            self.connected = True
+
+        def disconnect(self):
+            self.closes += 1
+            self.cleanup_started.set()
+            if self.closes == 1:
+                self.cleanup_gate.wait(5)
+            self.connected = False
+
+    transport = Held()
+    client = ThalovantClient(identity(), transport=transport)
+    try:
+        started = time.monotonic()
+        with pytest.raises(ThalovantConnectionError):
+            client.connect(timeout=0.02)
+        assert time.monotonic() - started < 0.3
+        assert transport.cleanup_started.wait(0.2)
+        with pytest.raises(ThalovantConnectionError):
+            client.connect(timeout=0.02)
+        assert transport.dials == 1
+        transport.connect_gate.set()
+        with pytest.raises(ThalovantConnectionError):
+            client.connect(timeout=0.02)
+        assert transport.dials == 1, "held cleanup retains session ownership"
+        transport.cleanup_gate.set()
+        client.connect(timeout=1)
+        assert transport.dials == 2
+        assert client._connected and transport.connected
+    finally:
+        transport.connect_gate.set()
+        transport.cleanup_gate.set()
+        client.close()
+
+
+def test_late_connect_completion_after_cleanup_is_retired_before_replacement():
+    class Late(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.gate = threading.Event()
+            self.closed = threading.Event()
+            self.dials = 0
+            self.ready_before_replacement = None
+
+        def connect(self):
+            self.dials += 1
+            if self.dials == 1:
+                self.gate.wait(5)
+            else:
+                self.ready_before_replacement = self.connected
+            self.connected = True
+
+        def disconnect(self):
+            self.connected = False
+            self.closed.set()
+
+    transport = Late()
+    client = ThalovantClient(identity(), transport=transport)
+    try:
+        with pytest.raises(ThalovantConnectionError):
+            client.connect(timeout=0.02)
+        assert transport.closed.wait(0.2)
+        transport.gate.set()
+        client.connect(timeout=1)
+        assert transport.ready_before_replacement is False
+    finally:
+        transport.gate.set()
+        client.close()
+
+
+def test_concurrent_connects_share_the_admitted_session():
+    class Slow(FakeTransport):
+        dials = 0
+
+        def connect(self):
+            self.dials += 1
+            time.sleep(0.02)
+            self.connected = True
+
+    transport = Slow()
+    client = ThalovantClient(identity(), transport=transport)
+    errors = []
+
+    def connect():
+        try:
+            client.connect(timeout=1)
+        except BaseException as exc:
+            errors.append(exc)
+
+    callers = [threading.Thread(target=connect) for _ in range(3)]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(2)
+    assert all(not caller.is_alive() for caller in callers)
+    assert not errors
+    assert transport.dials == 1
+    client.close()
+
+
+def test_async_connect_cancellation_retires_owned_work_before_replacement():
+    class Held(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.gate = threading.Event()
+            self.cleaned = threading.Event()
+            self.dials = 0
+
+        def connect(self):
+            self.dials += 1
+            self.started.set()
+            if self.dials == 1:
+                self.gate.wait(5)
+            self.connected = True
+
+        def disconnect(self):
+            self.connected = False
+            self.cleaned.set()
+
+    async def exercise():
+        transport = Held()
+        client = AsyncThalovantClient(identity(), transport=transport)
+        try:
+            connecting = asyncio.create_task(client.connect(timeout=2))
+            assert await asyncio.to_thread(transport.started.wait, 1)
+            connecting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await connecting
+            assert await asyncio.to_thread(transport.cleaned.wait, 1)
+            with pytest.raises(ThalovantConnectionError):
+                await client.connect(timeout=0.02)
+            assert transport.dials == 1
+            transport.gate.set()
+            await client.connect(timeout=1)
+            assert transport.dials == 2
+            assert transport.connected
+        finally:
+            transport.gate.set()
+            await client.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("transport_type", [HiveMindHTTPTransport, HiveMindWSSTransport])
+def test_unsubscribe_after_timeout_detached_session_preserves_original_error(transport_type):
+    transport = transport_type(identity(), useragent="test")
+    transport.remove_mycroft("speak", lambda message: None)
+
+
+def test_close_deadline_retains_cleanup_and_prevents_replacement():
+    class Held(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.gate = threading.Event()
+            self.dials = 0
+
+        def connect(self):
+            self.dials += 1
+            if self.dials == 1:
+                self.gate.wait(5)
+            self.connected = True
+
+    transport = Held()
+    client = ThalovantClient(identity(), transport=transport)
+    try:
+        with pytest.raises(ThalovantConnectionError):
+            client.connect(timeout=0.02)
+        started = time.monotonic()
+        with pytest.raises(ThalovantConnectionError, match="close did not complete"):
+            client.close(timeout=0.02)
+        assert time.monotonic() - started < 0.25
+        with pytest.raises(ThalovantConnectionError, match="pending"):
+            client.wait_closed(timeout=0.02)
+        with pytest.raises(ThalovantConnectionError):
+            client.connect(timeout=0.02)
+        assert transport.dials == 1
+        transport.gate.set()
+        client.wait_closed(timeout=1)
+        assert not transport.connected
+        client.connect(timeout=1)
+        assert transport.dials == 2
+        assert transport.connected
+    finally:
+        transport.gate.set()
+        client.close()
+
+
+def test_wait_closed_preserves_actual_cleanup_failure():
+    class Failed(FakeTransport):
+        def disconnect(self):
+            raise RuntimeError("synthetic cleanup failure")
+
+    client = ThalovantClient(identity(), transport=Failed())
+    with pytest.raises(RuntimeError, match="synthetic cleanup failure"):
+        client.close(timeout=0.1)
+    with pytest.raises(RuntimeError, match="synthetic cleanup failure"):
+        client.wait_closed(timeout=0.1)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("method", ["connect", "close"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_invalid_explicit_lifecycle_timeout_expires_without_transport_io(timeout, method, asynchronous):
+    class NoIO(FakeTransport):
+        def connect(self):
+            raise AssertionError("Expired connect must not dial")
+
+        def disconnect(self):
+            raise AssertionError("Invalid close must not change lifecycle ownership")
+
+    transport = NoIO()
+    client_type = AsyncThalovantClient if asynchronous else ThalovantClient
+    client = client_type(identity(), transport=transport)
+    started = time.monotonic()
+    with pytest.raises(ThalovantConnectionError) as caught:
+        if asynchronous:
+            asyncio.run(getattr(client, method)(timeout=timeout))
+        else:
+            getattr(client, method)(timeout=timeout)
+    assert isinstance(caught.value.__cause__, ThalovantTimeoutError)
+    assert time.monotonic() - started < 0.25

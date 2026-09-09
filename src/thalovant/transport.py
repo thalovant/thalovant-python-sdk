@@ -317,7 +317,12 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
         self._require_client().on_mycroft(event_name, handler)
 
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
-        self._require_client().remove_mycroft(event_name, handler)
+        # Timeout cleanup may already have detached this session. Unsubscribing
+        # then must not mask the original timeout with a connection error.
+        with self._lifecycle_lock:
+            client = self._client
+        if client is not None:
+            client.remove_mycroft(event_name, handler)
 
     def emit_event(
         self,
@@ -673,7 +678,10 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
         self._shutdown_wss_client(client)
 
     def remove_mycroft(self, event_name: str, handler: Callable[[Any], None]) -> None:
-        self._require_client().remove(event_name, handler)
+        with self._lifecycle_lock:
+            client = self._client
+        if client is not None:
+            client.remove(event_name, handler)
 
     def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any:
         deps = self._load_deps()

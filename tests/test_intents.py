@@ -9,6 +9,8 @@ connection may not publish, and every reply delivered twice.
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -19,11 +21,12 @@ from thalovant import (
     HubIntentInventory,
     ThalovantClient,
     ThalovantIdentity,
+    ThalovantConnectionError,
     ThalovantPolicyDeniedError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
 )
-from thalovant.intents import SOURCE_ENGINES, SOURCE_MANIFEST, same_language
+from thalovant.intents import SOURCE_ENGINES, SOURCE_MANIFEST, same_language, list_fallbacks
 from thalovant.models import ThalovantConnectionInfo, ThalovantHealth
 
 WEATHER = "thalovant-skill-weather.thalovant"
@@ -778,3 +781,112 @@ def test_unsupported_fallback_discovery_does_not_cost_the_whole_timeout() -> Non
 
     assert not inventory.fallbacks_known, "the hub could not say, which is not ()"
     assert elapsed < FALLBACK_PROBE_TIMEOUT + 3.0, f"waited {elapsed:.1f}s of a 10s budget"
+
+
+def test_unrelated_correlated_policy_denial_does_not_fail_discovery():
+    class Noisy(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            self._deliver("hive.policy.denied", {"denied_type": event_type}, {"request_id": "another-request"})
+            super().emit_event(event_type, data, context)
+
+    found = client(Noisy(fallbacks=[])).intents(["en-us"], timeout=0.1)
+    assert found.source == SOURCE_MANIFEST
+    assert found.has_phrases
+    assert found.fallbacks_known
+
+
+def test_describe_never_substitutes_a_foreign_request_id_for_its_matching_definition():
+    class Noisy(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.intent.describe":
+                self._deliver("ovos.intent.describe.response", {"ok": True, "definitions": [{
+                    "method": "template", "definition": {**data, "samples": ["foreign answer"]},
+                }]}, {"request_id": "another-request"})
+            super().emit_event(event_type, data, context)
+
+    found = client(Noisy(fallbacks=[])).intents(["en-us"], timeout=0.1)
+    assert found.has_phrases
+    assert all("foreign answer" not in intent.phrases_for("en-us") for intent in found.intents)
+
+
+def test_explicitly_failed_fallback_discovery_is_unknown_even_with_empty_list():
+    class Failed(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.skills.fallback.list":
+                self._deliver("ovos.skills.fallback.list.response", {"ok": False, "fallbacks": []}, context)
+                return
+            super().emit_event(event_type, data, context)
+
+    found = client(Failed()).intents(["en-us"], timeout=0.1)
+    assert not found.fallbacks_known
+    assert found.may_answer("ja-jp")
+
+
+def test_optional_fallback_probe_bounds_reconnect_and_retains_ownership():
+    class Held(FakeHubTransport):
+        def __init__(self):
+            super().__init__(fallbacks=[])
+            self.gate = threading.Event()
+            self.dials = 0
+
+        def connect(self):
+            self.dials += 1
+            if self.dials == 2:
+                self.gate.wait(5)
+            self.connected = True
+
+    hub = Held()
+    sdk = client(hub)
+    sdk.connect(timeout=1)
+    hub.connected = False
+    try:
+        started = time.monotonic()
+        assert list_fallbacks(sdk, timeout=0.03) is None
+        assert time.monotonic() - started < 0.25
+        with pytest.raises(ThalovantConnectionError):
+            sdk.connect(timeout=0.02)
+        assert hub.dials == 2
+        hub.gate.set()
+        sdk.connect(timeout=1)
+        assert hub.dials == 3
+    finally:
+        hub.gate.set()
+        sdk.close()
+
+
+def test_optional_fallback_probe_bounds_send_and_holds_lifecycle_until_retired():
+    class Held(FakeHubTransport):
+        def __init__(self):
+            super().__init__(fallbacks=[])
+            self.gate = threading.Event()
+            self.started = threading.Event()
+            self.dials = 0
+
+        def connect(self):
+            self.dials += 1
+            self.connected = True
+
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.skills.fallback.list" and not self.gate.is_set():
+                self.started.set()
+                self.gate.wait(5)
+            super().emit_event(event_type, data, context)
+
+    hub = Held()
+    sdk = client(hub)
+    try:
+        started = time.monotonic()
+        assert list_fallbacks(sdk, timeout=0.03) is None
+        assert time.monotonic() - started < 0.25
+        assert hub.started.is_set()
+        assert all(not handlers for handlers in hub.handlers.values())
+        with pytest.raises(ThalovantConnectionError):
+            sdk.connect(timeout=0.02)
+        assert hub.dials == 1
+        hub.gate.set()
+        sdk.connect(timeout=1)
+        assert hub.dials == 2
+        assert list_fallbacks(sdk, timeout=0.1) == ()
+    finally:
+        hub.gate.set()
+        sdk.close()
