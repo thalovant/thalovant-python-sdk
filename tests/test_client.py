@@ -432,6 +432,62 @@ def test_query_uses_direct_hivemind_query_frame():
     assert transport.hive_handlers["cascade"] == []
 
 
+def test_connect_waits_for_the_transport_to_admit_the_session():
+    """A transport whose predicate lags its connect() must not leave the
+    client believing it is disconnected: every operation runs through
+    _with_reconnect, which calls connect() first, and on that race the client
+    closed the session it had just built and dialled a second one. Measured
+    against a hub that admits one session per identity: it refused the
+    second, and the caller saw a handshake timeout for a query never sent."""
+
+    class LaggingTransport(FakeTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ready_after = 3
+            self.asked = 0
+            self.dials = 0
+
+        def connect(self) -> None:
+            super().connect()
+            self.dials += 1
+            self.connected = False  # the session is up; the flag is not yet
+
+        def is_connected(self) -> bool:
+            self.asked += 1
+            if self.asked >= self.ready_after:
+                self.connected = True
+            return self.connected
+
+    transport = LaggingTransport()
+    client = ThalovantClient(identity(), transport=transport)
+    client.connect(timeout=1.0)
+
+    assert transport.is_connected()
+    # A second connect is a no-op, rather than a close and a fresh dial.
+    assert transport.dials == 1
+    client.connect(timeout=1.0)
+    assert transport.dials == 1
+
+
+def test_connect_does_not_hang_on_a_transport_that_never_admits_it():
+    """The wait is a courtesy, not a gate: a predicate that never settles
+    leaves the connection as it is and lets the operation report the fault."""
+
+    class NeverReady(FakeTransport):
+        def connect(self) -> None:
+            super().connect()
+            self.connected = False
+
+        def is_connected(self) -> bool:
+            return False
+
+    transport = NeverReady()
+    client = ThalovantClient(identity(), transport=transport)
+    started = time.monotonic()
+    client.connect(timeout=0.2)
+    assert time.monotonic() - started < 2.0
+
+
 def test_connect_enforces_hard_timeout_and_disconnects_transport():
     transport = HangingTransport()
     client = ThalovantClient(identity(), transport=transport)

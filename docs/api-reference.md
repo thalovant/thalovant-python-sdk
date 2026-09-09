@@ -46,7 +46,11 @@ one round trip per language and no describe is ever sent. A refusal of
 `ovos.intent.list` raises `ThalovantPolicyDeniedError` naming the type, or with
 `fallback=True` (the default) falls back to the engines' own manifests, which
 carry names and no language, and marks the result `source="engine-manifests"`
-with `denied=("ovos.intent.list",)`.
+with `denied=("ovos.intent.list",)`. A hub that never answers the query takes
+the same road: a connection allowed to publish it still gets nothing from a
+runtime that does not implement it, and the caller cannot tell that from a
+refusal. With `fallback=False`, silence raises `ThalovantTimeoutError`, as
+does a hub whose engines say nothing either.
 
 ## Control Plane
 
