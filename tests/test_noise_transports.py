@@ -153,7 +153,9 @@ def http_peer(tmp_path, monkeypatch):
             if cookie: self.send_header("Set-Cookie", cookie)
             self.send_header("Content-Length", str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
     server = ThreadingHTTPServer(("localhost", 0), Handler)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(cert_path, key_path)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert_path, key_path)
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     yield peer, f"https://localhost:{server.server_port}"
