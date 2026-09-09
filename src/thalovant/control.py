@@ -1198,6 +1198,9 @@ class ThalovantControlPlane:
                 headers=request_headers,
                 timeout=self.timeout,
                 allow_redirects=False,
+                # An anonymous plaintext public request must not silently load
+                # credentials from netrc during Requests.prepare_request().
+                auth=(lambda prepared: prepared) if not has_credentials and parsed.scheme != "https" and not loopback else None,
             )
         except requests.RequestException:
             # Requests error chains may contain URL credentials or query data.

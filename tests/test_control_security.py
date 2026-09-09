@@ -117,3 +117,25 @@ def test_injected_session_credentials_require_tls_even_for_public_get(monkeypatc
         api.list_public_hubs()
     assert calls == []
     session.close()
+
+
+def test_anonymous_plaintext_discovery_does_not_load_ambient_netrc_credentials(monkeypatch):
+    def netrc(*args, **kwargs):
+        raise AssertionError("Anonymous plaintext discovery must not load netrc")
+    sent = []
+    def send(session, request, **kwargs):
+        sent.append(request)
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b'{"hubs":[]}'
+        return response
+    monkeypatch.setattr(requests.sessions, "get_netrc_auth", netrc)
+    monkeypatch.setattr(requests.Session, "send", send)
+    api = ThalovantControlPlane("http://custom.example.invalid")
+    try:
+        api.list_public_hubs()
+        assert len(sent) == 1
+        assert "authorization" not in sent[0].headers
+        assert "cookie" not in sent[0].headers
+    finally:
+        api.session.close()
