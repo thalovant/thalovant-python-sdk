@@ -293,9 +293,31 @@ def test_a_hub_refusing_everything_raises_even_with_the_fallback() -> None:
     assert caught.value.denied_type == "intent.service.adapt.manifest.get"
 
 
-def test_a_silent_hub_times_out_on_the_listing() -> None:
+def test_a_silent_hub_falls_back_to_the_engine_manifests() -> None:
+    """A runtime that never answers the listing leaves the caller with exactly
+    what a refusal does: nothing. Measured against a hub whose connection was
+    allowed to publish the query and whose runtime still said nothing, where
+    the engines' manifests answered on the same session."""
+    hub = FakeHubTransport(silent=("ovos.intent.list",))
+    inventory = client(hub).intents(["en-us"], timeout=0.2)
+
+    assert inventory.source == SOURCE_ENGINES
+    assert inventory.denied == ("ovos.intent.list",)
+    assert [intent.id for intent in inventory.intents] == [
+        f"{SHADOW}:custos.incidents", f"{WEATHER}:current.weather",
+    ]
+
+
+def test_a_silent_hub_still_times_out_when_the_fallback_is_off() -> None:
     hub = FakeHubTransport(silent=("ovos.intent.list",))
     with pytest.raises(ThalovantTimeoutError, match="ovos.intent.list"):
+        client(hub).intents(["en-us"], timeout=0.2, fallback=False)
+
+
+def test_a_silent_hub_whose_engines_are_silent_too_still_times_out() -> None:
+    hub = FakeHubTransport(silent=("ovos.intent.list", "intent.service.padatious.manifest.get",
+                                   "intent.service.adapt.manifest.get"))
+    with pytest.raises(ThalovantTimeoutError):
         client(hub).intents(["en-us"], timeout=0.2)
 
 

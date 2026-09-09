@@ -653,8 +653,12 @@ def inventory(
 
     Asks the intent manifest per language and, unless the runtime attached
     definitions to the listing, describes every registration at once. When
-    the hub refuses ``ovos.intent.list`` and ``fallback`` is on, the engines'
-    manifests give the names and the result says so.
+    the hub refuses ``ovos.intent.list`` -- or simply never answers it -- and
+    ``fallback`` is on, the engines' manifests give the names and the result
+    says so. Silence is treated like refusal on purpose: a hub whose
+    connection is allowed to publish the query still leaves the caller with
+    nothing when its runtime does not implement it, and the engines'
+    manifests are exactly the answer that case has.
     """
 
     asked: tuple[str, ...] = ()
@@ -676,6 +680,17 @@ def inventory(
             raise
         names = intent_names(client, asked[0], timeout=timeout)
         found = _inventory_from_names(names, asked, denied.denied_type)
+        return _with_fallbacks(found, client, timeout)
+    except ThalovantTimeoutError:
+        # The hub never answered. A connection allowed to publish the query
+        # still gets nothing from a runtime that does not implement it, and
+        # the caller cannot tell that from a refusal -- both leave an empty
+        # listing. The engines' manifests answer either way, so take the same
+        # road and let `source` say the names came from there.
+        if not fallback:
+            raise
+        names = intent_names(client, asked[0], timeout=timeout)
+        found = _inventory_from_names(names, asked, EVENT_INTENT_LIST)
         return _with_fallbacks(found, client, timeout)
 
     wanted = []

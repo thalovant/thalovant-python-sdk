@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.7
+
+- `connect()` waits for the transport to admit the session it just built.
+  It could return before `is_connected()` was true, and every operation runs
+  through `_with_reconnect`, which calls `connect()` first: on that race the
+  client closed a working session and dialled a second one. A hub that admits
+  one session per identity refused the second, and the caller saw
+  `HiveMind WSS handshake timed out` for a query that was never sent. The
+  wait is bounded and quiet -- a predicate that never settles leaves the
+  connection alone and lets the operation report the fault.
+- `intents()` falls back to the engines' manifests when the hub never answers
+  `ovos.intent.list`, not only when it refuses it. A connection allowed to
+  publish the query still gets nothing from a runtime that does not implement
+  it, and the caller cannot tell silence from refusal: both leave an empty
+  listing, and the manifests answer either way. `source` says
+  `engine-manifests` and `denied` names the query, as it already did for a
+  refusal. `fallback=False` still raises, and so does a hub whose engines are
+  silent too.
+
 ## 0.5.6
 
 - Reject malformed Noise pin containers and values with `ThalovantConnectionError`, preserving the existing trust file.

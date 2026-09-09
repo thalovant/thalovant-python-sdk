@@ -116,6 +116,13 @@ def _transport_for_protocol(
     raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
 
 
+#: How long `connect()` will wait for the transport to admit it is connected,
+#: and how often it looks. A settled session reports in milliseconds; this is
+#: only a ceiling for the case where it never does.
+_SETTLE_CEILING = 5.0
+_SETTLE_POLL = 0.02
+
+
 def _connect_transport_with_timeout(transport: Transport, timeout: float) -> None:
     done = threading.Event()
     errors: list[BaseException] = []
@@ -287,11 +294,30 @@ class ThalovantClient:
             return
         if self._connected:
             self.close()
-        _connect_transport_with_timeout(
-            self._transport,
-            timeout if timeout and timeout > 0 else self._hard_connect_timeout,
-        )
+        budget = timeout if timeout and timeout > 0 else self._hard_connect_timeout
+        _connect_transport_with_timeout(self._transport, budget)
         self._connected = True
+        self._settle(budget)
+
+    def _settle(self, budget: float) -> None:
+        """Give the transport a moment to report the session it just built.
+
+        `connect()` can return before the underlying client has set the
+        events `is_connected()` reads, and every operation runs through
+        `_with_reconnect`, which calls `connect()` first: on that race the
+        client closed a perfectly good session and dialled a second one. A
+        hub that admits one session per identity then refuses the second, and
+        the caller sees a handshake timeout for a query that was never sent.
+
+        Bounded and quiet: if the predicate never settles, this leaves the
+        connection exactly as it found it and lets the operation report
+        whatever it reports. Waiting cannot make a working session fail.
+        """
+        deadline = time.monotonic() + max(0.0, min(budget, _SETTLE_CEILING))
+        while not self._transport.is_connected():
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(_SETTLE_POLL)
 
     def connect_with_info(self, timeout: float | None = None) -> ThalovantConnectionInfo:
         """Connect and return the transport timing snapshot."""
