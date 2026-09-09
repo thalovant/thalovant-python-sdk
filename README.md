@@ -575,8 +575,16 @@ the partial text with `handled=False`. An unanswered query still times out.
 Blocked I/O retains session ownership until cleanup finishes, and an expired
 connection attempt cannot send a query later.
 
-`ask()` also includes connect, send, reconnect attempts, and settling in its
-caller deadline. Its bus-level intent failures remain terminal. Cancelling an
+`ask()` also includes connect, send, preparation retries, and settling in its
+caller deadline. The first nonempty speech starts a fixed settle window
+(`reply_settle_seconds=0.25`); a handled event or soft intent miss without speech
+starts a fixed empty-reply window (`empty_reply_wait_seconds=5.0`). Later speech
+switches the empty window to settling and recovers the soft miss. Neither repeated
+events nor later fragments extend these windows, and both are clipped by the
+original deadline. A hard policy/query-timeout failure freezes the result
+immediately. Empty results raise a runtime failure or timeout. Ask requires a
+matching request ID and reports a replacement session ID returned by the runtime;
+ambient or differently correlated replies cannot satisfy the request. Cancelling an
 async ask, query, event wait, or listener removes its handlers and retires any
 active connection/write it owns; a queued caller cannot close another caller's
 session. Transport status checks run outside the waiting caller's thread.
@@ -587,6 +595,12 @@ connect budget and can then listen indefinitely. Both sync and async listeners
 accept `max_buffered_events=256`; it must be a positive integer. Overflow raises
 `ThalovantRuntimeError` and retires the subscription. A one-event wait keeps the
 first correlated match and ignores subsequent events.
+
+Application requests are never automatically replayed after publication starts,
+including when a local write error leaves the remote outcome uncertain.
+`auto_reconnect` and `reconnect_attempts` apply to connection preparation before
+publication. This corrects earlier behavior that could emit the same application
+request twice after a connection error.
 
 MQTT identities include a broker endpoint, username, password, TLS flag, and
 topic prefix. The broker credentials are scoped to that client and should be

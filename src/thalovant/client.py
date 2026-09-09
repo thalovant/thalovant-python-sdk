@@ -185,6 +185,7 @@ class ThalovantClient:
         handshake_timeout: float = 20.0,
         send_timeout: float = 8.0,
         reply_settle_seconds: float = 0.25,
+        empty_reply_wait_seconds: float = 5.0,
         auto_reconnect: bool = True,
         reconnect_attempts: int = 1,
         protocol: HubProtocol | None = None,
@@ -193,7 +194,12 @@ class ThalovantClient:
     ) -> None:
         self.identity = identity
         self.useragent = useragent
+        if any(not math.isfinite(value) or value < 0 for value in (
+            reply_settle_seconds, empty_reply_wait_seconds,
+        )):
+            raise ValueError("Reply settlement windows must be finite and non-negative.")
         self.reply_settle_seconds = reply_settle_seconds
+        self.empty_reply_wait_seconds = empty_reply_wait_seconds
         self._hard_connect_timeout = max(0.1, connect_timeout + handshake_timeout + 1.0)
         self.auto_reconnect = auto_reconnect
         self.reconnect_attempts = max(0, reconnect_attempts)
@@ -673,6 +679,9 @@ class ThalovantClient:
                     with state:
                         if not active:
                             return
+                    if deadline is not None and time.monotonic() >= deadline:
+                        retire()
+                        return
                     self._raise_if_transport_stopped()
             except BaseException as error:
                 with state:
@@ -681,6 +690,13 @@ class ThalovantClient:
             finally:
                 setup_done.set()
 
+        expiry = None
+        if deadline is not None:
+            # Retirement must happen even while the generator is paused at a
+            # yield or a custom transport status predicate is blocked.
+            expiry = threading.Timer(max(0.0, deadline - time.monotonic()), retire)
+            expiry.daemon = True
+            expiry.start()
         threading.Thread(target=setup, daemon=True).start()
         try:
             while max_events is None or yielded < max_events:
@@ -708,6 +724,8 @@ class ThalovantClient:
                 yield event
         finally:
             cancellation.set()
+            if expiry is not None:
+                expiry.cancel()
             retire()
 
     def emit(
@@ -860,6 +878,7 @@ class ThalovantClient:
             request_id=request_id,
         )
         last_error: BaseException | None = None
+        published = threading.Event()
         attempts = self.reconnect_attempts + 1 if self.auto_reconnect else 1
         for attempt in range(attempts):
             try:
@@ -871,9 +890,12 @@ class ThalovantClient:
                     request_id=request_id,
                     session_id=_session_id_from_context(request_context),
                     cancellation=cancellation, direct=False,
+                    published=published,
                 )
             except ThalovantConnectionError as exc:
                 last_error = exc
+                if published.is_set():
+                    raise
                 if cancellation is not None and cancellation.is_set():
                     raise
                 if attempt + 1 >= attempts:
@@ -991,6 +1013,7 @@ class ThalovantClient:
         context: dict[str, Any] | None = None, session_id: str | None = None,
         request_id: str | None = None, query_id: str | None = None,
         cancellation: threading.Event | None = None, direct: bool = True,
+        published: threading.Event | None = None,
     ) -> ThalovantReply:
         prompt = text.strip()
         if not prompt:
@@ -1017,7 +1040,8 @@ class ThalovantClient:
             raise ThalovantRuntimeError("This transport does not support HiveMind query frames.")
 
         done = threading.Event()
-        cancellation = cancellation if cancellation is not None else threading.Event()
+        caller_cancellation = cancellation
+        cancellation = threading.Event()
         state = threading.RLock()
         fragments: list[str] = []
         raw_messages: list[Any] = []
@@ -1027,6 +1051,22 @@ class ThalovantClient:
         failure_event: ThalovantEvent | None = None
         soft_failure_event: ThalovantEvent | None = None
         terminal = False
+        empty_deadline: float | None = None
+        settle_deadline: float | None = None
+
+        def collection_deadline() -> float:
+            if direct:
+                return deadline
+            phase_deadline = settle_deadline if settle_deadline is not None else empty_deadline
+            return deadline if phase_deadline is None else min(deadline, phase_deadline)
+
+        def finish_at_deadline() -> None:
+            nonlocal terminal
+            if direct:
+                fail(timeout_error())
+            else:
+                terminal = True
+                done.set()
 
         def timeout_error() -> ThalovantTimeoutError:
             return ThalovantTimeoutError(f"Hub did not finish the query within {timeout:g}s.")
@@ -1036,18 +1076,22 @@ class ThalovantClient:
             with state:
                 if terminal:
                     return
+                if not direct and time.monotonic() >= collection_deadline():
+                    finish_at_deadline()
+                    return
                 terminal = True
                 errors.append(error)
                 done.set()
 
         def handle_query_frame(message: Any) -> None:
             nonlocal failure_event, soft_failure_event, terminal
+            nonlocal empty_deadline, settle_deadline
             with state:
                 if terminal:
                     return
-                if time.monotonic() >= deadline:
-                    fail(timeout_error())
-                    cancellation.set()
+                now = time.monotonic()
+                if now >= collection_deadline():
+                    finish_at_deadline()
                     return
                 if direct:
                     if _query_id_from_hive_message(message) != query_id:
@@ -1057,22 +1101,31 @@ class ThalovantClient:
                         return
                 else:
                     event = message
-                    if not _event_matches_context(event, request_context):
+                    # The runtime may replace the conversation session. The
+                    # request ID remains required to exclude ambient replies.
+                    if event.request_id != request_id:
                         return
                 raw_messages.append(message if direct else event.raw)
                 events.append(event)
-                if event.name == ("hive.query.complete" if direct else EVENT_UTTERANCE_HANDLED):
+                if direct and event.name == "hive.query.complete":
                     terminal = True
                     done.set()
+                elif not direct and event.name == EVENT_UTTERANCE_HANDLED:
+                    if not fragments and empty_deadline is None:
+                        empty_deadline = now + self.empty_reply_wait_seconds
                 elif event.name in {EVENT_SPEAK, EVENT_OVOS_UTTERANCE_SPEAK}:
                     normalized = " ".join(event.text.strip().split())
                     if normalized:
                         if not fragments or fragments[-1] != normalized:
                             fragments.append(normalized)
                         soft_failure_event = None
-                elif direct and event.name in {EVENT_INTENT_FAILURE, EVENT_INTENT_UNMATCHED}:
+                        if not direct and settle_deadline is None:
+                            settle_deadline = now + self.reply_settle_seconds
+                elif event.name in {EVENT_INTENT_FAILURE, EVENT_INTENT_UNMATCHED}:
                     if not fragments:
                         soft_failure_event = event
+                        if not direct and empty_deadline is None:
+                            empty_deadline = now + self.empty_reply_wait_seconds
                 elif event.is_failure:
                     failure_event = event
                     terminal = True
@@ -1106,6 +1159,8 @@ class ThalovantClient:
                 if terminal or cancellation.is_set():
                     return
             if not direct:
+                if published is not None:
+                    published.set()
                 self._transport.emit_event(EVENT_RECOGNIZER_LOOP_UTTERANCE,
                     _utterance_payload(prompt, lang), request_context)
                 return
@@ -1123,6 +1178,8 @@ class ThalovantClient:
                 "target_pubkey": None,
                 "source_peer": None,
             }
+            if published is not None:
+                published.set()
             send_hive_message({
                 "msg_type": "query",
                 "payload": inner,
@@ -1136,6 +1193,9 @@ class ThalovantClient:
 
         def run() -> None:
             try:
+                if caller_cancellation is not None and caller_cancellation.is_set():
+                    cancellation.set()
+                    raise ThalovantConnectionError("Hub request was cancelled.")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise timeout_error()
@@ -1143,6 +1203,10 @@ class ThalovantClient:
                 # settle, even when the query caller has already returned.
                 self._connect(remaining, cancellation=cancellation, operation=send)
                 while not done.wait(_SETTLE_POLL) and not cancellation.is_set():
+                    with state:
+                        if time.monotonic() >= collection_deadline():
+                            finish_at_deadline()
+                            return
                     self._raise_if_transport_stopped()
             except BaseException as error:
                 if isinstance(error, ThalovantConnectionError) and isinstance(
@@ -1154,37 +1218,46 @@ class ThalovantClient:
         threading.Thread(target=run, daemon=True).start()
         try:
             while not done.is_set():
-                if cancellation.is_set():
+                if cancellation.is_set() or (caller_cancellation is not None and caller_cancellation.is_set()):
+                    cancellation.set()
                     fail(ThalovantConnectionError("Hub request was cancelled."))
                     break
-                remaining = deadline - time.monotonic()
+                with state:
+                    remaining = collection_deadline() - time.monotonic()
                 if remaining <= 0:
-                    fail(timeout_error())
-                    cancellation.set()
+                    with state:
+                        finish_at_deadline()
                     break
                 done.wait(min(_SETTLE_POLL, remaining))
             with state:
                 if errors:
                     raise errors[0]
                 failure_event = failure_event or soft_failure_event
-            if self.reply_settle_seconds > 0 and failure_event is None:
-                if cancellation.wait(min(self.reply_settle_seconds, max(0.0, deadline - time.monotonic()))):
-                    raise ThalovantConnectionError("Hub request was cancelled.")
+            if direct and self.reply_settle_seconds > 0 and failure_event is None:
+                settle_end = min(deadline, time.monotonic() + self.reply_settle_seconds)
+                while time.monotonic() < settle_end:
+                    if caller_cancellation is not None and caller_cancellation.is_set():
+                        raise ThalovantConnectionError("Hub request was cancelled.")
+                    cancellation.wait(min(_SETTLE_POLL, max(0.0, settle_end - time.monotonic())))
             if failure_event is not None and not fragments:
                 raise ThalovantRuntimeError(_failure_reason(failure_event))
-            if direct and not fragments:
+            if not fragments:
                 raise ThalovantTimeoutError("Hub finished the query but did not emit a speak reply.")
             return ThalovantReply(
                 text=" ".join(fragments),
                 utterances=tuple(fragments),
                 handled=failure_event is None,
-                session_id=_session_id_from_context(request_context),
+                session_id=(
+                    next((event.session_id for event in events if event.session_id), None)
+                    or _session_id_from_context(request_context)
+                ) if not direct else _session_id_from_context(request_context),
                 request_id=request_id,
                 raw_messages=tuple(raw_messages),
                 events=tuple(events),
                 failure_event=failure_event,
             )
         finally:
+            cancellation.set()
             with state:
                 terminal = True
                 owned_handlers = tuple(registered)
@@ -1200,9 +1273,8 @@ class ThalovantClient:
         last_error: BaseException | None = None
         attempts = self.reconnect_attempts + 1 if self.auto_reconnect else 1
         for attempt in range(attempts):
-            self.connect()
             try:
-                return operation()
+                self.connect()
             except (
                 ConnectionAbortedError,
                 RuntimeError,
@@ -1212,9 +1284,11 @@ class ThalovantClient:
                 if attempt + 1 >= attempts:
                     break
                 self.close()
-        raise ThalovantConnectionError(
-            "HiveMind transport failed after reconnect."
-        ) from last_error
+            else:
+                # Publication can succeed remotely even if its local write
+                # reports a failure. Reconnect only before invoking it.
+                return operation()
+        raise ThalovantConnectionError("HiveMind transport failed before publication.") from last_error
 
     def _raise_if_transport_stopped(self) -> None:
         if self._transport.is_connected():

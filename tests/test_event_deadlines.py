@@ -273,10 +273,10 @@ def test_blocking_transport_predicate_cannot_extend_request_deadline(name):
         sdk.close()
 
 
-def test_ask_caps_send_and_settle_and_freezes_terminal_events():
+def test_ask_hard_failure_freezes_partial_reply_and_ignores_later_write_error():
     def respond(transport):
         transport.bus('speak', {'utterance': 'answer'})
-        transport.bus('ovos.utterance.handled')
+        transport.bus('hive.policy.denied')
         transport.bus('speak', {'utterance': 'late'})
         raise RuntimeError('late write failure')
 
@@ -286,8 +286,8 @@ def test_ask_caps_send_and_settle_and_freezes_terminal_events():
         started = time.monotonic()
         reply = sdk.ask('hello', timeout=0.03)
         assert time.monotonic() - started < 0.3
-        assert reply.text == 'answer' and reply.handled
-        assert [event.name for event in reply.events] == ['speak', 'ovos.utterance.handled']
+        assert reply.text == 'answer' and not reply.handled
+        assert [event.name for event in reply.events] == ['speak', 'hive.policy.denied']
     finally:
         sdk.close()
 

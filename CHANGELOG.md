@@ -7,6 +7,8 @@
 - Exercise both routed cascade and direct query replies, query correlation, blocked connection/write cleanup, invalid budgets, and deadline-capped settling with synthetic transport regressions.
 - Apply the caller deadline to ask connection/send/reconnect/settling and event wait/listen connection/registration. Async ask/query/wait/listen cancellation removes handlers and retires owned work without closing another queued caller's session.
 - Bound sync/async listener buffers with `max_buffered_events=256` by default; overflow raises `ThalovantRuntimeError` and retires the subscription. Keep transport predicate polling off the waiting caller thread.
+- Align Ask's delayed fallback behavior: first speech starts a fixed 250ms settle window; first handled/soft miss without speech starts a fixed 5s empty-reply window. Windows are configurable on the client and clipped to the caller deadline; no empty success or post-hard-failure recovery is allowed.
+- Retire listeners at their deadline even while the consumer is paused. Reconnect only during pre-publication preparation; never automatically replay a request after an application write starts.
 
 ## 0.5.9
 

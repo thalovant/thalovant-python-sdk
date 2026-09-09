@@ -57,11 +57,15 @@ class QueryTransport:
 
     def emit_event(self, name, data, context):
         self.sent += 1
+        self.context = context
         self.script(self)
 
     def bus(self, name, data=None, context=None):
         for handler in tuple(self.bus_handlers.get(name, [])):
-            handler(SimpleNamespace(msg_type=name, data=data or {}, context=context or {}))
+            handler(SimpleNamespace(
+                msg_type=name, data=data or {},
+                context=context if context is not None else getattr(self, "context", {}),
+            ))
 
     def reply(self, event, text=None, *, channel="query", query_id="fixture"):
         frame = {
