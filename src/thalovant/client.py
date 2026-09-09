@@ -89,12 +89,14 @@ def _transport_for_protocol(
     connect_timeout: float,
     handshake_timeout: float,
     send_timeout: float,
+    noise_state_dir: str | None = None,
 ) -> Transport:
     kwargs = {
         "useragent": useragent,
         "connect_timeout": connect_timeout,
         "handshake_timeout": handshake_timeout,
         "send_timeout": send_timeout,
+        "noise_state_dir": noise_state_dir,
     }
     if protocol == "https":
         return HiveMindHTTPTransport(identity, **kwargs)
@@ -201,13 +203,14 @@ class ThalovantClient:
         *,
         useragent: str = DEFAULT_USERAGENT,
         connect_timeout: float = 4.0,
-        handshake_timeout: float = 6.0,
+        handshake_timeout: float = 20.0,
         send_timeout: float = 8.0,
         reply_settle_seconds: float = 0.25,
         auto_reconnect: bool = True,
         reconnect_attempts: int = 1,
         protocol: HubProtocol | None = None,
         transport: Transport | None = None,
+        noise_state_dir: str | None = None,
     ) -> None:
         self.identity = identity
         self.useragent = useragent
@@ -222,6 +225,7 @@ class ThalovantClient:
             connect_timeout=connect_timeout,
             handshake_timeout=handshake_timeout,
             send_timeout=send_timeout,
+            noise_state_dir=noise_state_dir,
         )
         self._connected = False
 
