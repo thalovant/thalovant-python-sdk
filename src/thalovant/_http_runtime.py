@@ -90,6 +90,7 @@ class HTTPNoiseClient:
             # Cleanup must not observe a false admission flag between a
             # successful response and publication of the admission it owns.
             with self._request_lock:
+                self._check_current()
                 self.request("/connect", method="POST")
                 self._admitted = True
             self._check_current()

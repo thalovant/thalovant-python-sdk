@@ -83,6 +83,31 @@ def test_close_waits_for_connect_admission_publication_before_cleanup(http_peer,
     transport.disconnect()
 
 
+def test_connect_closed_before_http_admission_never_publishes_a_late_request(http_peer, tmp_path, monkeypatch):
+    from thalovant import _http_runtime
+    peer, endpoint = http_peer
+    entered, release = threading.Event(), threading.Event()
+    original = _http_runtime.HTTPNoiseClient
+    class PausedBeforeAdmission(original):
+        def connect(self):
+            entered.set()
+            assert release.wait(5)
+            super().connect()
+    monkeypatch.setattr(_http_runtime, "HTTPNoiseClient", PausedBeforeAdmission)
+    transport = HiveMindHTTPTransport(identity(endpoint), useragent="cleanup", noise_state_dir=str(tmp_path / "client"))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        connecting = pool.submit(transport.connect)
+        try:
+            assert entered.wait(2)
+            transport.disconnect()
+            release.set()
+            with pytest.raises(ThalovantConnectionError):
+                connecting.result(timeout=2)
+            assert peer.connects == 0 and not peer.admitted
+        finally:
+            release.set()
+
+
 def test_http_request_connection_error_cannot_expose_authorization(http_peer, tmp_path, monkeypatch):
     peer, endpoint = http_peer
     transport = HiveMindHTTPTransport(identity(endpoint), useragent="cleanup", noise_state_dir=str(tmp_path / "client"),
