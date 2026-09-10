@@ -169,10 +169,10 @@ A hub's `spec` is schema-validated and **must carry a non-empty `version`
 string**; omitting it fails with HTTP 422 `Schema validation failed` rather
 than defaulting.
 
-Creating a hub is idempotent. `create_hub` sends a generated `Idempotency-Key`
-header, so a retried call after a timeout returns the hub that was already
-created instead of making a second one. Pass your own `idempotency_key=` to
-control the key.
+To retry hub creation safely, generate and retain an `idempotency_key` before
+the first call and pass that same key on every retry. Omitting it generates a
+new `Idempotency-Key` for each invocation, so calling again after a timeout
+can create a second hub. Reusing the original key returns the original hub.
 
 Updating and deleting a hub use optimistic locking. Pass the `etag` from the
 hub resource you read; the SDK sends it as `If-Match`, and the API rejects a
@@ -181,7 +181,6 @@ stale or missing value with HTTP 412 without changing anything:
 ```python
 hub = api.get_hub(hub["id"])
 hub = api.update_hub(hub["id"], {"active": False}, etag=hub["etag"])
-api.delete_hub(hub["id"], etag=hub["etag"])
 ```
 
 The `get_hub` first is mandatory, and it is the *body* you need: the validator
@@ -200,7 +199,10 @@ Deleting a hub also deletes its clients and ACLs. Runtime groups have no
 `If-Match` requirement, but the API refuses to delete the workspace default
 group or a group that still has hubs attached (HTTP 409).
 
-Runtime configuration is merged, not replaced:
+The Python helper reads and merges the stored runtime configuration before
+replacing it. The API provides no revision or conditional-write token for this
+route: serialize updates across callers to avoid overwriting a concurrent
+change. Pass `merge=False` only when replacing the complete configuration:
 
 ```python
 api.update_runtime_group_config(group["id"], {"lang": "en-us"})
@@ -226,6 +228,13 @@ the hub belongs to no runtime group, or that group has no desired and no
 observed skills. A hub with a configured group returns a stale HTTP 200 far
 more often than a 409. The route is rate limited per caller and hub; HTTP 429
 carries a `Retry-After` header.
+
+Delete the example hub only after the capability reads are complete:
+
+```python
+hub = api.get_hub(hub["id"])
+api.delete_hub(hub["id"], etag=hub["etag"])
+```
 
 ## Discover Skills
 
@@ -618,6 +627,12 @@ MQTT identities include a broker endpoint, username, password, TLS flag, and
 topic prefix. The broker credentials are scoped to that client and should be
 treated like a password. Public identities should use `mqtts://`; the SDK also
 honors an explicit `tls: true` flag from the identity.
+
+Use a fresh request ID for each logical Ask and a fresh query ID for each
+logical Query. One client rejects overlapping collectors with the same ID
+before dispatch. Ask request IDs and scoped Query IDs are separate namespaces.
+Cancellation or completion releases the reservation after listeners retire;
+a new logical operation should still use a new ID to exclude late replies.
 
 ## Conversations
 

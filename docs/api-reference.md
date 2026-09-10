@@ -155,8 +155,9 @@ spellings, which are converted before the request is sent.
   and `owner_id` are optional. `spec` is schema-validated and **requires a
   non-empty `version` string** — omitting it fails with HTTP 422
   `Schema validation failed`, it is not defaulted. An `Idempotency-Key` header
-  is always sent (generated when not supplied), so a retried create returns
-  the original hub.
+  is always sent. Retain and reuse the same `idempotency_key` on the first
+  call and every retry to retrieve the original hub. Omitting the key
+  generates a new one per call and can create duplicate hubs after a timeout.
 - `update_hub(hub_id, payload, etag=...)` — `PATCH /v1/hubs/{hub_id}`. The
   route enforces optimistic locking, so `etag` is required and sent as
   `If-Match`; a stale or missing value fails with HTTP 412 `ETag mismatch` and
@@ -215,8 +216,10 @@ spellings, which are converted before the request is sent.
 - `get_runtime_group_config(runtime_group_id)` (needs only `hubs:read`) and
   `update_runtime_group_config(runtime_group_id, config, personas=None)` —
   `GET`/`PATCH /v1/runtime-groups/{id}/config`. The update **merges** `config`
-  into the stored configuration rather than replacing it, and marks the group
-  pending for the runtime operator. `personas` is replaced only when passed.
+  into a snapshot read by the Python helper before the API replaces the stored
+  configuration. This read/merge/write is not atomic: serialize writers because
+  the route provides no revision or conditional-write token. `merge=False`
+  replaces the full configuration. `personas` is replaced only when passed.
 - `release_runtime_group(runtime_group_id, ...)` —
   `POST /v1/runtime-groups/{id}/release`, with the same options as
   `release_hub`.

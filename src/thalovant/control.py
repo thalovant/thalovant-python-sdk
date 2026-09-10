@@ -1230,15 +1230,22 @@ def _new_secret() -> str:
 
 _CLIENT_SECRET_KEYS = frozenset(
     {
-        "initial_identify",
-        "initial_identify_token",
-        "apiKey",
-        "api_key",
-        "accessKey",
-        "access_key",
+        "initialidentify",
+        "initialidentifytoken",
+        "apikey",
+        "accesskey",
         "password",
-        "cryptoKey",
-        "crypto_key",
+        "cryptokey",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "authorization",
+        "clientsecret",
+        "privatekey",
+        "secret",
+        "apisecret",
+        "secretkey",
+        "credentials",
     }
 )
 
@@ -1256,7 +1263,7 @@ def _scrub_client_secrets(value: Any) -> Any:
         return {
             key: _scrub_client_secrets(item)
             for key, item in value.items()
-            if key not in _CLIENT_SECRET_KEYS
+            if not isinstance(key, str) or key.lower().replace("_", "").replace("-", "") not in _CLIENT_SECRET_KEYS
         }
     if isinstance(value, (list, tuple)):
         return [_scrub_client_secrets(item) for item in value]

@@ -455,6 +455,7 @@ def test_control_plane_bootstrap_uses_api_returned_mqtt_credentials():
 
     api.login("ada@example.com", "secret")
     result = api.create_client_identity("hub-mqtt", name="kiosk")
+    assert result.identity.mqtt is not None
 
     assert result.identity.mqtt is not None
     assert result.identity.mqtt.endpoint == "mqtts://broker.thalovant.io:8883"
@@ -526,9 +527,9 @@ def test_bootstrap_redaction_does_not_touch_the_wire_request():
 
     result.as_dict()  # exercising the redaction must not corrupt anything
 
-    wire_body = [
+    wire_body = next(
         kwargs for _, url, kwargs in session.requests if url.endswith("/v1/clients")
-    ][0]["json"]
+    )["json"]
     assert wire_body["spec"]["apiKey"] == secrets["access_key"]
     assert wire_body["spec"]["password"] == secrets["password"]
     assert result.client["initial_identify"]["access_key"] == secrets["access_key"]
@@ -1089,7 +1090,7 @@ def test_control_plane_surfaces_the_paid_plan_gate_as_an_api_error():
     session = ProvisioningSession(error=(402, {"detail": "API access requires a paid plan."}))
     api = provisioning_api(session)
 
-    with pytest.raises(ThalovantAPIError, match="HTTP 402: API access requires a paid plan."):
+    with pytest.raises(ThalovantAPIError, match=r"HTTP 402: API access requires a paid plan\."):
         api.create_hub({"name": "joke-garden", "spec": {}})
     with pytest.raises(ThalovantAPIError, match="HTTP 402"):
         api.create_runtime_group({"name": "kiosks"})
@@ -1484,3 +1485,18 @@ def test_the_config_top_level_is_the_mycroft_section():
     assert sent["secondary_langs"] == ["fr-fr"], "at the top level, where it is read"
     assert sent["lang"] == "en-us", "and the rest of the mycroft config survives"
     assert "mycroft" not in sent, "no wrapper: this level already is that section"
+
+
+@pytest.mark.parametrize("key", ["apikey", "Crypto_Key", "INITIAL-IDENTIFY-TOKEN", "access_token", "refreshToken", "api-secret", "secret_key", "credentials"])
+def test_bootstrap_default_view_normalizes_secret_key_names_and_keeps_references(key):
+    """Display-only filtering must not mutate persistence or reference objects."""
+    _, result, _ = _bootstrap_mqtt_result()
+    secret = "test-only-review-redaction-value"
+    reference = {"name": "client-secret", "key": "apiKey"}
+    result.client["extra"] = {"records": [{key: secret, "apiKeyRef": reference, "label": "keep"}]}
+
+    redacted = result.as_dict()
+    assert secret not in json.dumps(redacted)
+    assert redacted["client"]["extra"]["records"][0] == {"apiKeyRef": reference, "label": "keep"}
+    assert result.as_dict(include_secrets=True)["client"]["extra"]["records"][0][key] == secret
+    assert result.client["extra"]["records"][0][key] == secret

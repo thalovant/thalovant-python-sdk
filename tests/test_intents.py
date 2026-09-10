@@ -532,6 +532,28 @@ def test_a_hub_silent_from_the_first_window_still_fails_fast() -> None:
     assert len(describes) == 32, "it gives up after one window, not after all 69"
 
 
+@pytest.mark.parametrize("first_reply", [{"ok": False, "error": "unknown intent"}, {"ok": True, "definitions": []}])
+def test_empty_describe_answers_do_not_hide_a_later_silent_window(first_reply) -> None:
+    """An answered request is not a usable definition for partial recovery."""
+    from thalovant.intents import describe_many
+
+    class EmptyThenSilent(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            self.emitted.append((event_type, dict(data), dict(context)))
+            if data.get("intent_name") == "first":
+                self._deliver("ovos.intent.describe.response", first_reply, context)
+
+    hub = EmptyThenSilent()
+    c = client(hub)
+    try:
+        with pytest.raises(ThalovantTimeoutError):
+            describe_many(c, [(WEATHER, "first", "en-us"), (WEATHER, "second", "en-us")], timeout=0.1, batch=1)
+        assert len(hub.emitted) == 2
+        assert all(not handlers for handlers in hub.handlers.values())
+    finally:
+        c.close()
+
+
 def test_a_refusal_in_a_later_window_is_not_swallowed_as_a_partial_answer() -> None:
     """Only a timeout means "this window had nothing". A hub that starts
     refusing part-way is a policy problem and must reach the caller."""

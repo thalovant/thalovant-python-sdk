@@ -267,3 +267,34 @@ def test_mqtt_dial_finishing_after_cancel_cannot_start_a_network_worker(monkeypa
     assert instances[0].starts == 0
     assert instances[0].disconnects == 2  # initial close, then late returned dial
     assert transport._client is None and transport.connection_info().phase == "closed"
+
+
+@pytest.mark.parametrize("callback", ["connect", "subscribe"])
+def test_mqtt_callback_failure_diagnostics_redact_authorization_queries(callback):
+    import json
+    transport, broker = mqtt(), Broker()
+    transport._client = broker
+    secret = "test-only-mqtt-query-secret"
+
+    class Reason:
+        def __int__(self): return 128
+        def __str__(self): return f"failed /connect?authorization={secret}"
+
+    if callback == "connect":
+        transport._on_connect(broker, None, None, Reason())
+    else:
+        transport._on_subscribe(broker, None, 1, [Reason()])
+    assert secret not in json.dumps(transport.healthcheck().as_dict())
+    assert secret not in json.dumps(transport.connection_info().as_dict())
+    with pytest.raises(ThalovantConnectionError) as caught:
+        transport._wait_mqtt_event(broker, threading.Event(), 0.01, callback)
+    assert secret not in str(caught.value)
+
+
+@pytest.mark.parametrize("phase", ["subscription", "handshake"])
+def test_mqtt_wait_timeout_reports_the_phase_without_credentials(phase):
+    from thalovant import ThalovantTimeoutError
+    transport, broker = mqtt(), Broker()
+    transport._client = broker
+    with pytest.raises(ThalovantTimeoutError, match=f"MQTT {phase} timed out"):
+        transport._wait_mqtt_event(broker, threading.Event(), 0, phase)
