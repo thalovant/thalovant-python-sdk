@@ -220,9 +220,11 @@ class HubSkillList:
         rows = payload.get("data")
         if not isinstance(rows, list):
             raise ThalovantAPIError("Thalovant API returned an unexpected hub skill listing shape.")
+        if any(not isinstance(row, Mapping) for row in rows):
+            raise ThalovantAPIError("Thalovant API returned an unexpected hub skill row shape.")
         return cls(
             hub_id=_required_str(payload, "hub_id"),
-            data=[HubSkill.from_dict(row) for row in rows if isinstance(row, Mapping)],
+            data=[HubSkill.from_dict(row) for row in rows],
             runtime_group_id=_optional_str(payload.get("runtime_group_id")),
             observed_at=_optional_str(payload.get("observed_at")),
             source=_optional_str(payload.get("source")),
@@ -1385,7 +1387,21 @@ class ThalovantControlPlane:
 
         deadline = clock() + timeout
         while True:
-            operation = self.get_operation(accepted.operation_id)
+            if clock() >= deadline:
+                raise ThalovantTimeoutError(
+                    f"Timed out after {timeout:g}s waiting for the hub skill change "
+                    f"({accepted.skill}, operation {accepted.operation_id}) to converge."
+                )
+            try:
+                operation = self.get_operation(accepted.operation_id)
+            except Exception as exc:
+                error = ThalovantAPIError(
+                    f"Could not read accepted hub skill operation {accepted.operation_id}. "
+                    "Resume with get_operation using this ID."
+                )
+                if isinstance(exc, ThalovantAPIError):
+                    raise error from exc
+                raise error from None
             if operation.status == "ready":
                 return replace(accepted, state=converged, operation=operation)
             if operation.status in _TERMINAL_OPERATION_STATUSES:
@@ -1395,7 +1411,8 @@ class ThalovantControlPlane:
                     or f"operation {operation.id} ended with status {operation.status}"
                 )
                 raise ThalovantAPIError(
-                    f"Hub skill change for {accepted.skill} failed: {detail}"
+                    f"Hub skill change for {accepted.skill} failed: {detail} "
+                    f"(operation {accepted.operation_id})"
                 )
             remaining = deadline - clock()
             if remaining <= 0:

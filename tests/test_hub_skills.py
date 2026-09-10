@@ -1,8 +1,10 @@
 """Hub-scoped skill management: ``/v1/hubs/{hub_id}/skills``."""
 
 from typing import get_args
+import traceback
 
 import pytest
+import requests
 
 from thalovant import (
     HubSkill,
@@ -230,6 +232,15 @@ def test_list_hub_skills_rejects_an_envelope_without_a_data_list(body):
         api_for(session).list_hub_skills("hub-1")
 
 
+@pytest.mark.parametrize("invalid", [None, False, "not a skill", []])
+@pytest.mark.parametrize("valid_first", [False, True])
+def test_list_hub_skills_rejects_malformed_rows_instead_of_dropping_them(invalid, valid_first):
+    rows = [WEATHER_ROW, invalid] if valid_first else [invalid, WEATHER_ROW]
+    session = HubSkillSession({("GET", "/v1/hubs/hub-1/skills"): (200, {**LISTING, "data": rows})})
+    with pytest.raises(ThalovantAPIError, match="unexpected hub skill row"):
+        api_for(session).list_hub_skills("hub-1")
+
+
 def test_install_hub_skill_sends_latest_by_default_and_returns_accepted():
     session = HubSkillSession({("POST", "/v1/hubs/hub-1/skills"): (202, ACCEPTED_INSTALL)})
 
@@ -353,8 +364,9 @@ def test_wait_raises_the_operation_error_message_on_failure():
     api = api_for(session)
     instant(api)
 
-    with pytest.raises(ThalovantAPIError, match="skill-weather failed: pip install failed"):
+    with pytest.raises(ThalovantAPIError, match="skill-weather failed: pip install failed") as caught:
         api.install_hub_skill("hub-1", "skill-weather", wait=True)
+    assert "operation op-1" in str(caught.value)
 
 
 def test_wait_falls_back_to_the_error_code_and_then_the_status():
@@ -364,12 +376,14 @@ def test_wait_falls_back_to_the_error_code_and_then_the_status():
     )
     api = api_for(session)
     instant(api)
-    with pytest.raises(ThalovantAPIError, match="failed: runtime_timeout"):
+    with pytest.raises(ThalovantAPIError, match="failed: runtime_timeout") as caught:
         api.install_hub_skill("hub-1", "skill-weather", wait=True)
+    assert "operation op-1" in str(caught.value)
 
     session.operations = [operation("timed_out")]
-    with pytest.raises(ThalovantAPIError, match="ended with status timed_out"):
+    with pytest.raises(ThalovantAPIError, match="ended with status timed_out") as caught:
         api.install_hub_skill("hub-1", "skill-weather", wait=True)
+    assert "operation op-1" in str(caught.value)
 
 
 def test_wait_times_out_with_a_typed_error():
@@ -382,8 +396,56 @@ def test_wait_times_out_with_a_typed_error():
 
     with pytest.raises(ThalovantTimeoutError, match="Timed out after 5s"):
         api.install_hub_skill("hub-1", "skill-weather", wait=True, timeout=5)
-    # 0 s, 2 s, 4 s, then the 1 s remainder: four reads, never a fifth.
-    assert len(calls(session, "GET", "/v1/operations/op-1")) == 4
+    # Reads at 0 s, 2 s and 4 s; the final sleep cannot start a read at 5 s.
+    assert len(calls(session, "GET", "/v1/operations/op-1")) == 3
+
+
+def test_wait_does_not_poll_when_sleep_resumes_after_the_deadline():
+    session = HubSkillSession(
+        {("POST", "/v1/hubs/hub-1/skills"): (202, ACCEPTED_INSTALL)},
+        operations=[operation("requested"), operation("ready")],
+    )
+    api = api_for(session)
+    accepted = api.install_hub_skill("hub-1", "skill-weather")
+    now = [0.0]
+
+    def delayed_sleep(_):
+        now[0] = 10.0
+
+    with pytest.raises(ThalovantTimeoutError, match="operation op-1"):
+        api._wait_for_hub_skill_operation(
+            accepted, converged="installed", timeout=5, sleep=delayed_sleep, clock=lambda: now[0],
+        )
+    assert len(calls(session, "GET", "/v1/operations/op-1")) == 1
+
+
+@pytest.mark.parametrize("failure", ["http503", "network", "custom"])
+def test_wait_read_failure_preserves_accepted_id_without_retry_or_raw_cause(failure):
+    secret = "synthetic-poll-credential-must-not-appear"
+
+    class FailingPollSession(HubSkillSession):
+        def request(self, method, url, **kwargs):
+            if method == "GET" and url.endswith("/v1/operations/op-1"):
+                self.requests.append((method, url, kwargs))
+                if failure == "http503":
+                    return FakeResponse(503, {"detail": "Service unavailable"})
+                if failure == "network":
+                    raise requests.ConnectionError(secret)
+                raise RuntimeError(secret)
+            return super().request(method, url, **kwargs)
+
+    session = FailingPollSession({("POST", "/v1/hubs/hub-1/skills"): (202, ACCEPTED_INSTALL)})
+    with pytest.raises(ThalovantAPIError, match="operation op-1") as caught:
+        api_for(session).install_hub_skill("hub-1", "skill-weather", wait=True)
+    assert len(calls(session, "POST", "/v1/hubs/hub-1/skills")) == 1
+    assert len(calls(session, "GET", "/v1/operations/op-1")) == 1
+    if failure == "custom":
+        assert caught.value.__cause__ is None
+    else:
+        assert isinstance(caught.value.__cause__, ThalovantAPIError)
+        if failure == "http503":
+            assert "HTTP 503" in str(caught.value.__cause__)
+    assert secret not in "".join(traceback.format_exception(caught.value))
 
 
 def test_problem_codes_are_kept_in_the_error_message():

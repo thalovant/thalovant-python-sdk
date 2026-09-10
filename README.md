@@ -366,8 +366,13 @@ The writes return a typed `HubSkillOperation` (`operation_id`, `hub_id`,
 `runtime_group_id`, `skill`, `version`, `previous_version`, `state`).
 Installing a skill the hub already carries at another version performs an
 update. With `wait=True` a `failed` or `timed_out` operation raises
-`ThalovantAPIError` carrying the operation's error message, and running past
-`timeout` raises `ThalovantTimeoutError`. The API answers HTTP 409
+`ThalovantAPIError` carrying the operation's error message and accepted operation ID. The
+`timeout` bounds polling: no new operation read starts at or after the deadline,
+and an expired budget raises `ThalovantTimeoutError`. An already-running HTTP
+read keeps its configured request timeout. A failed read raises immediately
+with the accepted operation ID so you can resume using `get_operation`; it
+does not retry the read or replay the accepted write. Malformed skill-list
+rows raise `ThalovantAPIError` instead of being silently omitted. The API answers HTTP 409
 `skill_version_already_installed` for the same version, HTTP 404
 `hub_without_runtime_group` when the hub has no runtime group yet (a plain
 404 for an unknown hub or a skill that is not installed), and HTTP 422 for an

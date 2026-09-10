@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.16
+
+- Reject malformed rows in hub skill listings instead of silently reporting incomplete state.
+- Check the hub skill polling deadline before each operation request, including after a delayed sleep. No new poll starts when the wait budget has expired.
+- Preserve the accepted operation ID when an operation read fails, without retrying the read or replaying the write. Retain sanitized API errors as causes and suppress raw network or custom exception details.
+- Include the accepted operation ID in terminal failed/timed-out errors even when the operation supplies its own error detail.
+- Correct CLI `--wait` help to cover both installation and removal and describe failed operations as errors.
+
 ## 0.5.15
 
 - Add hub-scoped skill management on the control plane: `list_hub_skills`, `install_hub_skill`, `update_hub_skill`, and `remove_hub_skill` address one hub by id over `GET`/`POST /v1/hubs/{hub_id}/skills` and `PATCH`/`DELETE /v1/hubs/{hub_id}/skills/{skill}`. Listing returns a typed `HubSkillList` envelope (`hub_id`, `runtime_group_id`, `observed_at`, `source`, runtime phase and message, and `data` rows with the requested, installed, observed, and latest versions, `update_available`, `active`, and a `state` of `pending`, `installed`, `failed`, `removing`, `drifted`, `quarantined`, or `unmanaged`). The writes return a typed `HubSkillOperation` from the API's HTTP 202 (`operation_id`, `hub_id`, `runtime_group_id`, `skill`, `version`, `previous_version`, `state`); installing at another version performs an update. `wait=True` polls the operation every two seconds until it converges (`installed` or `removed`), raises `ThalovantAPIError` with the operation's error when it fails, and `ThalovantTimeoutError` after `timeout` seconds (default 120). Listing needs `hubs:inspect`; the writes need `hubs:write` and a paid plan.
