@@ -170,7 +170,8 @@ string**; omitting it fails with HTTP 422 `Schema validation failed` rather
 than defaulting.
 
 To retry hub creation safely, generate and retain an `idempotency_key` before
-the first call and pass that same key on every retry. Omitting it generates a
+the first call and pass that same key with the same payload on every retry.
+Omitting it generates a
 new `Idempotency-Key` for each invocation, so calling again after a timeout
 can create a second hub. Reusing the original key returns the original hub.
 
