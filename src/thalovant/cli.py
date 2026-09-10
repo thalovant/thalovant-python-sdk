@@ -139,7 +139,7 @@ def _add_skills_parser(subparsers: argparse._SubParsersAction) -> None:
         parser.add_argument(
             "--wait",
             action="store_true",
-            help="Poll the accepted operation until the change converges (installed/failed).",
+            help="Poll until the change converges; failed operations exit with an error.",
         )
         parser.add_argument(
             "--timeout",
