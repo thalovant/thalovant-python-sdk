@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.15
+
+- Add hub-scoped skill management on the control plane: `list_hub_skills`, `install_hub_skill`, `update_hub_skill`, and `remove_hub_skill` address one hub by id over `GET`/`POST /v1/hubs/{hub_id}/skills` and `PATCH`/`DELETE /v1/hubs/{hub_id}/skills/{skill}`. Listing returns a typed `HubSkillList` envelope (`hub_id`, `runtime_group_id`, `observed_at`, `source`, runtime phase and message, and `data` rows with the requested, installed, observed, and latest versions, `update_available`, `active`, and a `state` of `pending`, `installed`, `failed`, `removing`, `drifted`, `quarantined`, or `unmanaged`). The writes return a typed `HubSkillOperation` from the API's HTTP 202 (`operation_id`, `hub_id`, `runtime_group_id`, `skill`, `version`, `previous_version`, `state`); installing at another version performs an update. `wait=True` polls the operation every two seconds until it converges (`installed` or `removed`), raises `ThalovantAPIError` with the operation's error when it fails, and `ThalovantTimeoutError` after `timeout` seconds (default 120). Listing needs `hubs:inspect`; the writes need `hubs:write` and a paid plan.
+- Keep the RFC 7807 problem `code` of a failed control-plane request in the `ThalovantAPIError` message, appended after the detail (for example `HTTP 409: Skill version already installed. (skill_version_already_installed)`), so callers can branch on `skill_version_already_installed` or `hub_without_runtime_group` without parsing prose.
+- Add `thalovant skills list|add|update|remove --hub <id>` to the CLI, authenticated with `THALOVANT_API_TOKEN`/`--token` against `THALOVANT_API_URL`/`--api-url`, with `--version`, `--wait`, `--timeout`, and the global `--json`.
+- Export `HubSkill`, `HubSkillList`, `HubSkillState`, `HubSkillOperation`, and `HubSkillOperationState`. Route paths and result types live in one block in `thalovant.control`.
 ## 0.5.14
 
 - Compare validated Noise pins by their hexadecimal key value, accepting uppercase and lowercase spellings of the same authenticated server key. Reconfirming an existing pin preserves the identity file unchanged; a different key still fails closed.

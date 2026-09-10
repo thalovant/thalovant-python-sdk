@@ -99,6 +99,13 @@ Runtime groups and skills:
 - `install_runtime_group_skill(runtime_group_id, skill_id, marketplace_skill_id=None, source_type="catalog", source_ref=None, version_pin=None, active=True)`
 - `uninstall_runtime_group_skill(runtime_group_id, skill_id)`
 
+Skills on one hub:
+
+- `list_hub_skills(hub_id)`
+- `install_hub_skill(hub_id, skill, version="latest", wait=False, timeout=120.0)`
+- `update_hub_skill(hub_id, skill, version=..., wait=False, timeout=120.0)`
+- `remove_hub_skill(hub_id, skill, wait=False, timeout=120.0)`
+
 MFA-enabled accounts must pass a TOTP `otp_code` or a one-time `recovery_code`
 to `login(...)`; without one the API rejects the login with `mfa_required`.
 
@@ -246,6 +253,63 @@ spellings, which are converted before the request is sent.
   `list_runtime_group_marketplace` before installing.
 - `uninstall_runtime_group_skill(runtime_group_id, skill_id)` —
   `DELETE /v1/runtime-groups/{id}/skills/{skill_id}`, HTTP 204.
+
+#### Skills on one hub
+
+These four methods manage the skills **one hub** carries, independently of
+its runtime group. A hub can start with no skills at all. `hub_id` is the hub
+id; the authenticated hub routes do not accept slugs, and hub-restricted
+tokens are honoured. Every path and type they depend on lives in one block
+near the top of `thalovant/control.py`.
+
+- `list_hub_skills(hub_id)` — `GET /v1/hubs/{hub_id}/skills`, needing
+  `hubs:inspect` (`hubs:read` implies it). Returns a `HubSkillList`:
+  `hub_id`, `runtime_group_id`, `observed_at`, `source`, `operator_phase`,
+  `operator_message`, and `data`, a list of `HubSkill` rows (`skill`,
+  `title`, `marketplace_skill_id`, `package_name`, `source_type`,
+  `install_source`, `version`, `version_pin`, `installed_version`,
+  `observed_version`, `previous_version`, `latest_version`,
+  `available_version`, `update_available`, `changelog`, `active`, `state`,
+  `operator_phase`, `operator_message`, `operator_last_error`,
+  `last_transition_at`). `state` is a `HubSkillState`: `pending`,
+  `installed`, `failed`, `removing`, `drifted`, `quarantined`, or
+  `unmanaged`; a change in progress shows as `pending`. Iterating the listing
+  goes over `data`; an empty hub is an empty `data`.
+- `install_hub_skill(hub_id, skill, version="latest", wait=False, timeout=120.0)`
+  — `POST /v1/hubs/{hub_id}/skills` with `{"skill", "version"}`, HTTP 202.
+  `version` is `"latest"` or an exact `x.y.z`. Installing a skill the hub
+  already carries at another version performs an update; the same version
+  answers HTTP 409 `skill_version_already_installed`. HTTP 404
+  `hub_without_runtime_group` when the hub has no runtime group yet (a plain
+  404 for an unknown hub), HTTP 422 for an unresolvable `"latest"` or an
+  invalid version.
+- `update_hub_skill(hub_id, skill, version=..., wait=False, timeout=120.0)` —
+  `PATCH /v1/hubs/{hub_id}/skills/{skill}` with `{"version"}`, HTTP 202.
+  `version` is required.
+- `remove_hub_skill(hub_id, skill, wait=False, timeout=120.0)` —
+  `DELETE /v1/hubs/{hub_id}/skills/{skill}`, HTTP 202; a plain 404 when the
+  skill is not installed.
+
+The three writes return a `HubSkillOperation` (`operation_id`, `hub_id`,
+`runtime_group_id`, `skill`, `version`, `previous_version`, `state`,
+`operation`); `version` is `None` on a removal. Without `wait` the `state` is
+what the API accepted: `installing`, `updating`, or `removing`, and
+`operation` is `None`; poll `get_operation(result.operation_id)` yourself.
+With `wait=True` the SDK polls that operation every two seconds until it is
+terminal: `ready` converges to `installed` (install and update) or `removed`
+(remove), with the final `OperationResource` in `operation`; `failed` or
+`timed_out` raises `ThalovantAPIError` carrying the operation's
+`error_message`; running past `timeout` seconds raises
+`ThalovantTimeoutError`. The hub applies the change live, typically within
+about fifteen seconds, without a restart.
+
+Failed requests are RFC 7807 problem bodies; the root `code` is appended to
+the `ThalovantAPIError` message after the detail, for example
+`HTTP 409: Skill version already installed. (skill_version_already_installed)`.
+
+The writes need a paid plan and `hubs:write`; as everywhere on the
+provisioning routes the scope is checked first, so a free-plan API token sees
+HTTP 403, never 402.
 
 #### Skill discovery
 

@@ -5,11 +5,23 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
+import os
 import sys
 from typing import Any, Sequence
 
 from .client import ThalovantClient
+from .control import (
+    DEFAULT_CONTROL_API_URL,
+    DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
+    HubSkillOperation,
+    ThalovantControlPlane,
+)
 from .identity import ThalovantIdentity
+
+#: Environment variables the control-plane subcommands read when the matching
+#: option is not given. The names match the Node SDK and the MCP server.
+API_URL_ENV = "THALOVANT_API_URL"
+API_TOKEN_ENV = "THALOVANT_API_TOKEN"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -17,6 +29,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if getattr(args, "control_plane", False):
+            # ``skills`` talks to the Thalovant API, not to a hub: no identity
+            # file is loaded and no hub connection is opened.
+            return args.handler(_control_plane_from_args(args), args)
         client = _client_from_args(args)
         with client:
             return args.handler(client, args)
@@ -83,7 +99,86 @@ def _build_parser() -> argparse.ArgumentParser:
     utter.add_argument("--session-id")
     utter.set_defaults(handler=_cmd_utter)
 
+    _add_skills_parser(subparsers)
+
     return parser
+
+
+def _add_skills_parser(subparsers: argparse._SubParsersAction) -> None:
+    """``thalovant skills ...``: manage the skills one hub carries, through the API."""
+
+    skills = subparsers.add_parser(
+        "skills",
+        help="List, add, update, or remove the skills one hub carries (uses the Thalovant API).",
+        description=(
+            "Manage the skills of one hub through the Thalovant API. Needs an API "
+            f"token ({API_TOKEN_ENV} or --token) with hubs:inspect for list and hubs:write "
+            "for add, update, and remove. Changes apply live on the hub."
+        ),
+    )
+    skills_commands = skills.add_subparsers(dest="skills_command", required=True)
+
+    def common(parser: argparse.ArgumentParser) -> None:
+        parser.set_defaults(control_plane=True)
+        parser.add_argument(
+            "--hub", required=True, metavar="HUB_ID",
+            help="Hub id (not slug). Hub-restricted tokens are honoured.",
+        )
+        parser.add_argument(
+            "--api-url",
+            default=None,
+            help=f"Thalovant API URL. Defaults to ${API_URL_ENV} or {DEFAULT_CONTROL_API_URL}.",
+        )
+        parser.add_argument(
+            "--token",
+            default=None,
+            help=f"API token. Defaults to ${API_TOKEN_ENV}. Prefer the variable: argv is visible to other processes.",
+        )
+
+    def waitable(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Poll the accepted operation until the change converges (installed/failed).",
+        )
+        parser.add_argument(
+            "--timeout",
+            type=float,
+            default=DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
+            help=f"Seconds to wait with --wait. Default {DEFAULT_HUB_SKILL_WAIT_TIMEOUT:g}.",
+        )
+
+    listing = skills_commands.add_parser("list", help="List the hub's skills and their state.")
+    common(listing)
+    listing.set_defaults(handler=_cmd_skills_list)
+
+    add = skills_commands.add_parser("add", help="Install a skill on the hub.")
+    common(add)
+    add.add_argument("skill", help="Skill id from the catalog, e.g. skill-weather.")
+    add.add_argument("--version", default="latest", help='"latest" (default) or an exact x.y.z.')
+    waitable(add)
+    add.set_defaults(handler=_cmd_skills_add)
+
+    update = skills_commands.add_parser("update", help="Move a hub skill to another version.")
+    common(update)
+    update.add_argument("skill", help="Skill id to update.")
+    update.add_argument("--version", required=True, help='"latest" or an exact x.y.z.')
+    waitable(update)
+    update.set_defaults(handler=_cmd_skills_update)
+
+    remove = skills_commands.add_parser("remove", help="Remove a skill from the hub.")
+    common(remove)
+    remove.add_argument("skill", help="Skill id to remove.")
+    waitable(remove)
+    remove.set_defaults(handler=_cmd_skills_remove)
+
+
+def _control_plane_from_args(args: argparse.Namespace) -> ThalovantControlPlane:
+    api_url = args.api_url or os.environ.get(API_URL_ENV) or DEFAULT_CONTROL_API_URL
+    token = args.token or os.environ.get(API_TOKEN_ENV)
+    if not token:
+        raise ValueError(f"an API token is required: set {API_TOKEN_ENV} or pass --token")
+    return ThalovantControlPlane(api_url, access_token=token)
 
 
 def _client_from_args(args: argparse.Namespace) -> ThalovantClient:
@@ -196,6 +291,60 @@ def _cmd_emit(client: ThalovantClient, args: argparse.Namespace) -> int:
 def _cmd_utter(client: ThalovantClient, args: argparse.Namespace) -> int:
     client.send_utterance(args.text, lang=args.lang, session_id=args.session_id)
     print("sent")
+    return 0
+
+
+def _cmd_skills_list(api: ThalovantControlPlane, args: argparse.Namespace) -> int:
+    listing = api.list_hub_skills(args.hub)
+    if args.json:
+        print(json.dumps(listing.as_dict(), indent=2, sort_keys=True))
+        return 0
+    if not listing.data:
+        print("no skills on this hub")
+        return 0
+    for skill in listing.data:
+        shown = skill.installed_version or skill.version or "-"
+        line = f"{_plain(skill.skill)}\t{_plain(shown)}\t{_plain(skill.state)}"
+        if skill.update_available and skill.latest_version:
+            line += f"\tlatest={_plain(skill.latest_version)}"
+        if not skill.active:
+            line += "\tinactive"
+        if skill.operator_last_error:
+            line += f"\terror={_plain(skill.operator_last_error)}"
+        print(line)
+    return 0
+
+
+def _cmd_skills_add(api: ThalovantControlPlane, args: argparse.Namespace) -> int:
+    result = api.install_hub_skill(
+        args.hub, args.skill, version=args.version, wait=args.wait, timeout=args.timeout
+    )
+    return _print_skill_operation(result, args)
+
+
+def _cmd_skills_update(api: ThalovantControlPlane, args: argparse.Namespace) -> int:
+    result = api.update_hub_skill(
+        args.hub, args.skill, version=args.version, wait=args.wait, timeout=args.timeout
+    )
+    return _print_skill_operation(result, args)
+
+
+def _cmd_skills_remove(api: ThalovantControlPlane, args: argparse.Namespace) -> int:
+    result = api.remove_hub_skill(args.hub, args.skill, wait=args.wait, timeout=args.timeout)
+    return _print_skill_operation(result, args)
+
+
+def _print_skill_operation(result: HubSkillOperation, args: argparse.Namespace) -> int:
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+        return 0
+    target = _plain(result.skill)
+    if result.version:
+        target += f"@{_plain(result.version)}"
+    if result.operation is None:
+        print(f"accepted: {_plain(result.state)} {target} (operation {_plain(result.operation_id)})")
+    else:
+        print(f"{_plain(result.state)}: {target}")
     return 0
 
 
