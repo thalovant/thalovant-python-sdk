@@ -481,7 +481,7 @@ def describe_many(
                 # the whole inventory into a timeout while the same skill with
                 # fewer intents only loses its sentences. A hub silent from the
                 # start still fails at the first window, since nothing is found.
-                if not batched:
+                if not any(batched.values()):
                     raise
         return batched
     by_request: dict[str, tuple[str, str, str]] = {}
@@ -547,9 +547,9 @@ def describe_many(
                 what=EVENT_INTENT_DESCRIBE,
             )
         except ThalovantTimeoutError:
-            if not found:
+            if not any(found.values()):
                 raise
-            # A partial answer is still an answer: the intents the hub did not
+            # An actual partial definition is still an answer: the intents the hub did not
             # describe in time simply carry no sentences.
     return found
 

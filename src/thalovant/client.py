@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import math
 from pathlib import Path
 import queue
@@ -213,6 +214,8 @@ class ThalovantClient:
             noise_state_dir=noise_state_dir,
         )
         self._connected = False
+        self._reply_ids_lock = threading.Lock()
+        self._active_reply_ids: set[tuple[str, str]] = set()
         self._connection_lock = threading.Lock()
         self._connection_state = threading.RLock()
         self._connection_generation = 0
@@ -699,7 +702,10 @@ class ThalovantClient:
                     self._raise_if_transport_stopped()
             except BaseException as error:
                 with state:
-                    if active and not cancellation.is_set():
+                    # Expiry may retire the subscription before initial setup
+                    # reports its error. That failure must not become a clean
+                    # end-of-stream; caller cancellation still takes priority.
+                    if not cancellation.is_set() and (active or not setup_done.is_set()):
                         errors.append(error)
             finally:
                 setup_done.set()
@@ -876,6 +882,18 @@ class ThalovantClient:
         context: dict[str, Any] | None = None, session_id: str | None = None,
         request_id: str | None = None, cancellation: threading.Event | None = None,
     ) -> ThalovantReply:
+        request_id = request_id or _new_request_id()
+        with self._reserve_reply_id("ask", request_id):
+            return self._ask_reserved(
+                text, timeout=timeout, lang=lang, context=context,
+                session_id=session_id, request_id=request_id, cancellation=cancellation,
+            )
+
+    def _ask_reserved(
+        self, text: str, *, timeout: float = 12.0, lang: str = "en-us",
+        context: dict[str, Any] | None = None, session_id: str | None = None,
+        request_id: str | None = None, cancellation: threading.Event | None = None,
+    ) -> ThalovantReply:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ThalovantTimeoutError("Hub request deadline expired.")
         deadline = time.monotonic() + timeout
@@ -1023,6 +1041,40 @@ class ThalovantClient:
         )
 
     def _query(
+        self, text: str, *, timeout: float = 12.0, lang: str = "en-us",
+        context: dict[str, Any] | None = None, session_id: str | None = None,
+        request_id: str | None = None, query_id: str | None = None,
+        cancellation: threading.Event | None = None, direct: bool = True,
+        published: threading.Event | None = None,
+    ) -> ThalovantReply:
+        request_id = request_id or _new_request_id()
+        query_id = query_id or request_id
+        def collect() -> ThalovantReply:
+            return self._query_reserved(
+                text, timeout=timeout, lang=lang, context=context,
+                session_id=session_id, request_id=request_id, query_id=query_id,
+                cancellation=cancellation, direct=direct, published=published,
+            )
+        if not direct:
+            return collect()  # Ask owns its bus request ID across pre-publication retries.
+        with self._reserve_reply_id("query", query_id):
+            return collect()
+
+    @contextmanager
+    def _reserve_reply_id(self, namespace: str, identifier: str) -> Iterator[None]:
+        """Reject ambiguous overlapping collectors without disturbing the owner."""
+        key = (namespace, identifier)
+        with self._reply_ids_lock:
+            if key in self._active_reply_ids:
+                raise ThalovantRuntimeError("A reply collector with this correlation ID is already active.")
+            self._active_reply_ids.add(key)
+        try:
+            yield
+        finally:
+            with self._reply_ids_lock:
+                self._active_reply_ids.remove(key)
+
+    def _query_reserved(
         self, text: str, *, timeout: float = 12.0, lang: str = "en-us",
         context: dict[str, Any] | None = None, session_id: str | None = None,
         request_id: str | None = None, query_id: str | None = None,

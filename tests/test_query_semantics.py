@@ -336,3 +336,51 @@ def test_successful_reply_preserves_pending_write_until_healthy_reuse(method):
     finally:
         release.set()
         sdk.close()
+
+
+@pytest.mark.parametrize("method", ["ask", "query"])
+def test_overlapping_collectors_reject_a_duplicate_correlation_id_before_send(method):
+    from concurrent.futures import ThreadPoolExecutor
+    sent = threading.Event()
+    transport = QueryTransport(lambda peer: sent.set())
+    sdk = client(transport)
+    options = {"request_id": "duplicate-request"} if method == "ask" else {"query_id": "duplicate-query"}
+    pool = ThreadPoolExecutor(max_workers=2)
+    first = pool.submit(getattr(sdk, method), "first", timeout=2, **options)
+    try:
+        assert sent.wait(1)
+        with pytest.raises(ThalovantRuntimeError, match="already active"):
+            getattr(sdk, method)("second", timeout=0.1, **options)
+        assert transport.sent == 1
+        if method == "ask":
+            transport.bus("speak", {"utterance": "first-only"})
+        else:
+            transport.reply("speak", "first-only", query_id="duplicate-query")
+            transport.reply("hive.query.complete", query_id="duplicate-query")
+        assert first.result(1).text == "first-only"
+    finally:
+        if not first.done():
+            if method == "ask":
+                transport.bus("hive.policy.denied")
+            else:
+                transport.reply("hive.policy.denied", query_id="duplicate-query")
+        pool.shutdown(wait=True)
+        sdk.close()
+
+
+@pytest.mark.parametrize("method", ["ask", "query"])
+def test_reply_id_reservation_is_released_after_timeout_and_success(method):
+    transport = QueryTransport()
+    sdk = client(transport)
+    options = {"request_id": "reused"} if method == "ask" else {"query_id": "fixture"}
+    try:
+        with pytest.raises(ThalovantTimeoutError):
+            getattr(sdk, method)("expires", timeout=0.02, **options)
+        if method == "ask":
+            transport.script = lambda peer: peer.bus("speak", {"utterance": "next"})
+        else:
+            transport.script = lambda peer: (peer.reply("speak", "next"), peer.reply("hive.query.complete"))
+        for _ in range(2):
+            assert getattr(sdk, method)("next", timeout=1, **options).text == "next"
+    finally:
+        sdk.close()

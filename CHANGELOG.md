@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.13
+
+- Require an actual definition before ignoring partial describe timeouts within or across batches. Fully answered empty/unknown-intent responses remain successful.
+
+- Preserve an initial listener setup failure when the deadline retires its subscription first; timeout no longer races into a clean end-of-stream. Caller cancellation and normal post-setup expiry retain their behavior.
+
+- Strip normalized legacy crypto-key fields from bootstrap requests before an API error can echo them; retain reference fields and unrelated spec metadata.
+
+- Preserve describe-batch timeouts when earlier replies contain no usable definitions. Unknown individual descriptions still return an empty result.
+- Normalize secret-bearing field names in default bootstrap output, preserving explicit persistence and reference fields.
+- Reject overlapping Ask calls with the same request ID and overlapping Query calls with the same query ID on one client before either can mix replies. Reservations retire with their collectors; distinct generated IDs remain the default.
+- Correct hub-create retry guidance, example ordering, runtime-config concurrency limitations, and historical release notes found in older CodeRabbit reviews.
+
 ## 0.5.12
 
 - Accept the upstream HTTP disconnect endpoint's exact `{"error": "Already Disconnected"}` acknowledgment so an explicit close retry can finish after successful remote cleanup lost its response. Other errors, contradictory replies, and non-success HTTP statuses still retain admission.
@@ -182,12 +195,12 @@ Security hardening, plus a HiveMind MQTT data-plane topic migration. The securit
 
 ## 0.4.26
 
-- Correct the provisioning contract documentation. 0.4.25 was the reference implementation for six ports, and each port re-verified it against the API; the corrections below were confirmed against the API source before being written here. No runtime behavior changes, and no method signature changes.
+- Correct the provisioning contract documentation. 0.4.25 was the reference implementation for six ports, and each port re-verified it against the API; the corrections below were confirmed against the API source before being written here. No runtime logic or method signature changes; the user-agent version advances to 0.4.26.
 - `get_hub_runtime_capabilities` does not simply answer HTTP 409 when no client is connected. It first falls back to the hub's runtime-group snapshot (desired skills merged with the last observed inventory) and returns HTTP 200 with `source` set to `ovos-runtime-unavailable` or `ovos-runtime-timeout`, which marks the data stale; only `ovos-runtime` is a live reading. HTTP 409 is answered only when there is no snapshot at all — no runtime group, or a group with no desired and no observed skills. Callers must branch on `source` rather than treating any 200 as live. The route is also rate limited: HTTP 429 carries `Retry-After`.
 - Document the marketplace and inventory `source` vocabularies separately, since they differ. A default (non-refreshing) `list_runtime_group_marketplace` returns `runtime-group-cache`, `runtime-group-cache-empty` (unique to that route), or `ovos-runtime-operator`; `ovos-runtime-operator-pending` appears there only with `refresh_inventory=True`, and is otherwise an inventory-route value. `list_runtime_group_inventory` never returns `runtime-group-cache-empty`.
 - Note that the marketplace route's `data` is catalog-driven — the catalog unioned with the group's desired and observed skills — so it stays populated when nothing is reporting. Its `source` describes only the observation, so an empty-sounding `source` must not be read as an empty `data`.
 - `install_runtime_group_skill` returns HTTP 200, not 201; the route upserts, so a repeat install updates the entry in place.
-- `source_type` on skill install is a free-form string of 1–32 characters, not an enum of `catalog` and `git`. Only those two values are interpreted specially; any other value is lower-cased and stored as sent.
+- `source_type` on skill install is a free-form string of 1–32 characters, not an enum of `catalog` and `git`. Only those two values are interpreted specially; any other value is stripped, lower-cased, and stored in that normalized form.
 - Skill install has two distinct HTTP 402s: the plan-level API gate (`API access requires a paid plan.`) and a per-skill marketplace check (`This skill requires paid marketplace access for the tenant plan.`) on catalog entries whose `access_tier` is `paid`. A paid plan clears the first and can still fail the second.
 - Document that `name`, `namespace`, and `domain` are immutable on `PATCH /v1/hubs/{id}`: a changed value fails with HTTP 400, while a value equal to the stored one is accepted and dropped. `update_hub` deliberately does **not** reject them client-side (some ports do) — the SDK cannot know the stored values without a second read, and refusing them outright would reject patches the API accepts. Patch only the fields you mean to change.
 - Document that the `etag` for `update_hub` and `delete_hub` comes only from the `etag` **body** field of the hub resource. The API emits no `ETag` response header, so a prior `get_hub` is mandatory and there is nothing to read off the response headers.
@@ -199,7 +212,7 @@ Security hardening, plus a HiveMind MQTT data-plane topic migration. The securit
 
 - Add hub provisioning to `ThalovantControlPlane`. The hub surface was read-only, so the `hubs:write` scope the dashboard sells ("Create and update your hubs") had no SDK method that could use it. New: `create_hub`, `update_hub`, `delete_hub`, `release_hub`, `set_hub_rating`, `clear_hub_rating`, and `get_hub_runtime_capabilities`.
 - Add runtime group and skill management: `list_runtime_groups`, `get_runtime_group`, `create_runtime_group`, `update_runtime_group`, `get_runtime_group_config`, `update_runtime_group_config`, `release_runtime_group`, `delete_runtime_group`, `install_runtime_group_skill`, and `uninstall_runtime_group_skill`.
-- Honor the API's optimistic locking on the hub write routes. `update_hub` and `delete_hub` take a required `etag` keyword and send it as `If-Match`; the API rejects a stale or missing value with HTTP 412 and changes nothing. Runtime group routes do not use `If-Match`. `create_hub` sends an `Idempotency-Key` header, generated unless you pass `idempotency_key`, so a retried create cannot make a second hub.
+- Honor the API's optimistic locking on the hub write routes. `update_hub` and `delete_hub` take a required `etag` keyword and send it as `If-Match`; the API rejects a stale or missing value with HTTP 412 and changes nothing. Runtime group routes do not use `If-Match`. `create_hub` sends an `Idempotency-Key` header, generated unless you pass `idempotency_key`. Retain the key before the first call and reuse it on every retry; omitting it generates a different key per invocation and can create another hub.
 - Document the gates these routes sit behind. Everything except the rating, config-read, list/get, and runtime-capabilities methods needs a paid plan and a `hubs:write` token; the ratings need `hubs:write` only; `get_hub_runtime_capabilities` needs `hubs:inspect`; the runtime group reads need `hubs:read`. Both gates surface as the usual `ThalovantAPIError` (HTTP 402 `API access requires a paid plan.`, HTTP 403 `Insufficient scopes`).
 - Add skill discovery, which closes the gap left by shipping `install_runtime_group_skill` with no way to learn what is installable. New: `list_marketplace_skills` (`GET /v1/marketplace/skills`), `list_runtime_group_marketplace` (`GET /v1/runtime-groups/{id}/marketplace`), and `list_runtime_group_inventory` (`GET /v1/runtime-groups/{id}/inventory`).
 - The discovery reads are deliberately not paid-gated, matching the API: the catalog needs only `hubs:read` and the two group-scoped reads only `hubs:inspect`, so a free-plan token can browse the marketplace and inspect a runtime group before upgrading. Only the install itself needs a paid plan.

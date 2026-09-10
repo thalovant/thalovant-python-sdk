@@ -372,3 +372,38 @@ def test_ask_deadline_retires_held_send_before_reconnect():
     finally:
         gate.set()
         sdk.close()
+
+
+def test_listener_keeps_initial_setup_failure_when_expiry_retires_first(monkeypatch):
+    """Force timer retirement before the setup worker reports its failure."""
+    import thalovant.client as client_module
+
+    transport = QueryTransport()
+    sdk = client(transport)
+
+    class ExpireFirst:
+        def __init__(self, interval, callback):
+            self.callback = callback
+
+        def start(self):
+            self.callback()
+
+        def cancel(self):
+            pass
+
+    class InlineSetup:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    def fail_setup(*args, **kwargs):
+        raise ThalovantTimeoutError("initial setup failed after retirement")
+
+    monkeypatch.setattr(sdk, "_connect", fail_setup)
+    monkeypatch.setattr(client_module.threading, "Timer", ExpireFirst)
+    monkeypatch.setattr(client_module.threading, "Thread", InlineSetup)
+    with pytest.raises(ThalovantTimeoutError, match="initial setup failed after retirement"):
+        next(sdk.listen("event", timeout=0.02))
+    assert not any(transport.bus_handlers.values())

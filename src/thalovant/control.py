@@ -508,9 +508,10 @@ class ThalovantControlPlane:
         non-empty ``version`` string**; a spec without one fails with HTTP 422
         ``Schema validation failed`` rather than being defaulted.
 
-        The request is idempotent: a generated ``Idempotency-Key`` is sent
-        unless you pass your own, so a retried create returns the first hub
-        instead of making a second one.
+        Retain an explicit ``idempotency_key`` before the first call and reuse
+        it with the same payload after an uncertain outcome. An omitted key is
+        freshly generated on each invocation, so retrying without the original
+        key can create a second hub.
 
         Requires a paid plan and a token with the ``hubs:write`` scope; see
         :class:`ThalovantControlPlane` for why the scope gate is the one a
@@ -1069,9 +1070,10 @@ class ThalovantControlPlane:
         # ``spec`` is caller-supplied and passed straight into the request body,
         # and the error redaction covers only the secrets minted here -- so a
         # legacy crypto key left in could be echoed back inside an API error.
-        # v3 issues no crypto key, so drop both spellings.
-        client_spec.pop("cryptoKey", None)
-        client_spec.pop("crypto_key", None)
+        # v3 issues no crypto key, so drop normalized legacy spellings.
+        for key in tuple(client_spec):
+            if isinstance(key, str) and _normalize_secret_key(key) == "cryptokey":
+                client_spec.pop(key)
         client_spec.setdefault("version", "1")
         client_spec.update(
             {
@@ -1230,17 +1232,28 @@ def _new_secret() -> str:
 
 _CLIENT_SECRET_KEYS = frozenset(
     {
-        "initial_identify",
-        "initial_identify_token",
-        "apiKey",
-        "api_key",
-        "accessKey",
-        "access_key",
+        "initialidentify",
+        "initialidentifytoken",
+        "apikey",
+        "accesskey",
         "password",
-        "cryptoKey",
-        "crypto_key",
+        "cryptokey",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "authorization",
+        "clientsecret",
+        "privatekey",
+        "secret",
+        "apisecret",
+        "secretkey",
+        "credentials",
     }
 )
+
+
+def _normalize_secret_key(key: str) -> str:
+    return key.lower().replace("_", "").replace("-", "")
 
 
 def _scrub_client_secrets(value: Any) -> Any:
@@ -1256,7 +1269,7 @@ def _scrub_client_secrets(value: Any) -> Any:
         return {
             key: _scrub_client_secrets(item)
             for key, item in value.items()
-            if key not in _CLIENT_SECRET_KEYS
+            if not isinstance(key, str) or _normalize_secret_key(key) not in _CLIENT_SECRET_KEYS
         }
     if isinstance(value, (list, tuple)):
         return [_scrub_client_secrets(item) for item in value]
