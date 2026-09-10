@@ -533,7 +533,8 @@ def test_a_hub_silent_from_the_first_window_still_fails_fast() -> None:
 
 
 @pytest.mark.parametrize("first_reply", [{"ok": False, "error": "unknown intent"}, {"ok": True, "definitions": []}])
-def test_empty_describe_answers_do_not_hide_a_later_silent_window(first_reply) -> None:
+@pytest.mark.parametrize("batch", [0, 1])
+def test_empty_describe_answers_do_not_hide_a_later_silent_window(first_reply, batch) -> None:
     """An answered request is not a usable definition for partial recovery."""
     from thalovant.intents import describe_many
 
@@ -547,7 +548,7 @@ def test_empty_describe_answers_do_not_hide_a_later_silent_window(first_reply) -
     c = client(hub)
     try:
         with pytest.raises(ThalovantTimeoutError):
-            describe_many(c, [(WEATHER, "first", "en-us"), (WEATHER, "second", "en-us")], timeout=0.1, batch=1)
+            describe_many(c, [(WEATHER, "first", "en-us"), (WEATHER, "second", "en-us")], timeout=0.1, batch=batch)
         assert len(hub.emitted) == 2
         assert all(not handlers for handlers in hub.handlers.values())
     finally:
@@ -911,4 +912,23 @@ def test_optional_fallback_probe_bounds_send_and_holds_lifecycle_until_retired()
         assert list_fallbacks(sdk, timeout=0.1) == ()
     finally:
         hub.gate.set()
+        sdk.close()
+
+
+@pytest.mark.parametrize("reply", [{"ok": False, "error": "unknown intent"}, {"ok": True, "definitions": []}])
+@pytest.mark.parametrize("batch", [0, 1])
+def test_fully_answered_empty_describes_remain_successful(reply, batch):
+    from thalovant.intents import describe_many
+
+    class EmptyReplies(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            self._deliver("ovos.intent.describe.response", reply, context)
+
+    hub = EmptyReplies()
+    sdk = client(hub)
+    wanted = [(WEATHER, "first", "en-us"), (WEATHER, "second", "en-us")]
+    try:
+        assert describe_many(sdk, wanted, timeout=0.1, batch=batch) == dict.fromkeys(wanted, [])
+        assert all(not handlers for handlers in hub.handlers.values())
+    finally:
         sdk.close()

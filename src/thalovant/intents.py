@@ -547,9 +547,9 @@ def describe_many(
                 what=EVENT_INTENT_DESCRIBE,
             )
         except ThalovantTimeoutError:
-            if not found:
+            if not any(found.values()):
                 raise
-            # A partial answer is still an answer: the intents the hub did not
+            # An actual partial definition is still an answer: the intents the hub did not
             # describe in time simply carry no sentences.
     return found
 

@@ -2,6 +2,8 @@
 
 ## 0.5.13
 
+- Require an actual definition before ignoring partial describe timeouts within or across batches. Fully answered empty/unknown-intent responses remain successful.
+
 - Preserve an initial listener setup failure when the deadline retires its subscription first; timeout no longer races into a clean end-of-stream. Caller cancellation and normal post-setup expiry retain their behavior.
 
 - Strip normalized legacy crypto-key fields from bootstrap requests before an API error can echo them; retain reference fields and unrelated spec metadata.
