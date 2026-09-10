@@ -2,6 +2,8 @@
 
 ## 0.5.13
 
+- Preserve an initial listener setup failure when the deadline retires its subscription first; timeout no longer races into a clean end-of-stream. Caller cancellation and normal post-setup expiry retain their behavior.
+
 - Strip normalized legacy crypto-key fields from bootstrap requests before an API error can echo them; retain reference fields and unrelated spec metadata.
 
 - Preserve describe-batch timeouts when earlier replies contain no usable definitions. Unknown individual descriptions still return an empty result.

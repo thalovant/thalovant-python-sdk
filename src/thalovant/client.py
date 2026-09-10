@@ -702,7 +702,10 @@ class ThalovantClient:
                     self._raise_if_transport_stopped()
             except BaseException as error:
                 with state:
-                    if active and not cancellation.is_set():
+                    # Expiry may retire the subscription before initial setup
+                    # reports its error. That failure must not become a clean
+                    # end-of-stream; caller cancellation still takes priority.
+                    if not cancellation.is_set() and (active or not setup_done.is_set()):
                         errors.append(error)
             finally:
                 setup_done.set()
