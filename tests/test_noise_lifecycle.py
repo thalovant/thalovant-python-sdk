@@ -296,5 +296,6 @@ def test_mqtt_wait_timeout_reports_the_phase_without_credentials(phase):
     from thalovant import ThalovantTimeoutError
     transport, broker = mqtt(), Broker()
     transport._client = broker
-    with pytest.raises(ThalovantTimeoutError, match=f"MQTT {phase} timed out"):
+    with pytest.raises(ThalovantTimeoutError, match=f"MQTT {phase} timed out") as caught:
         transport._wait_mqtt_event(broker, threading.Event(), 0, phase)
+    assert "lifecycle-fixture" not in str(caught.value)

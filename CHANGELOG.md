@@ -2,6 +2,8 @@
 
 ## 0.5.13
 
+- Strip normalized legacy crypto-key fields from bootstrap requests before an API error can echo them; retain reference fields and unrelated spec metadata.
+
 - Preserve describe-batch timeouts when earlier replies contain no usable definitions. Unknown individual descriptions still return an empty result.
 - Normalize secret-bearing field names in default bootstrap output, preserving explicit persistence and reference fields.
 - Reject overlapping Ask calls with the same request ID and overlapping Query calls with the same query ID on one client before either can mix replies. Reservations retire with their collectors; distinct generated IDs remain the default.

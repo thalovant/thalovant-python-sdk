@@ -1500,3 +1500,25 @@ def test_bootstrap_default_view_normalizes_secret_key_names_and_keeps_references
     assert redacted["client"]["extra"]["records"][0] == {"apiKeyRef": reference, "label": "keep"}
     assert result.as_dict(include_secrets=True)["client"]["extra"]["records"][0][key] == secret
     assert result.client["extra"]["records"][0][key] == secret
+
+
+@pytest.mark.parametrize("legacy_key", ["Crypto-Key", "CRYPTO_KEY", "cryptokey"])
+def test_bootstrap_removes_normalized_legacy_keys_before_error_echo(legacy_key):
+    secret = "legacy-crypto-review-sentinel"
+
+    class EchoSpecSession:
+        sent = None
+
+        def request(self, method, url, **kwargs):
+            self.sent = kwargs["json"]["spec"]
+            return FakeResponse(422, {"detail": json.dumps(self.sent)})
+
+    session = EchoSpecSession()
+    api = ThalovantControlPlane("https://api.example.test", access_token="test-only-token", session=session)
+    with pytest.raises(ThalovantAPIError) as caught:
+        api.create_client_identity({"id": "hub"}, name="fixture", spec={legacy_key: secret, "cryptoKeyRef": "reference", "label": "keep"})
+    assert secret not in str(caught.value)
+    assert session.sent is not None
+    assert legacy_key not in session.sent
+    assert session.sent["cryptoKeyRef"] == "reference"
+    assert session.sent["label"] == "keep"

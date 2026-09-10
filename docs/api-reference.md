@@ -93,7 +93,7 @@ Runtime groups and skills:
 - `create_runtime_group(payload)`
 - `update_runtime_group(runtime_group_id, payload)`
 - `get_runtime_group_config(runtime_group_id)`
-- `update_runtime_group_config(runtime_group_id, config, personas=None)`
+- `update_runtime_group_config(runtime_group_id, config, *, personas=None, merge=True)`
 - `release_runtime_group(runtime_group_id, channel=None, mode=None, version=None, images=None, reason=None)`
 - `delete_runtime_group(runtime_group_id)`
 - `install_runtime_group_skill(runtime_group_id, skill_id, marketplace_skill_id=None, source_type="catalog", source_ref=None, version_pin=None, active=True)`
@@ -214,7 +214,7 @@ spellings, which are converted before the request is sent.
   `PATCH /v1/runtime-groups/{id}`, taking `name`, `description`, and a `spec`
   patch of `replicas` and container `resources`. No `If-Match` is used.
 - `get_runtime_group_config(runtime_group_id)` (needs only `hubs:read`) and
-  `update_runtime_group_config(runtime_group_id, config, personas=None)` —
+  `update_runtime_group_config(runtime_group_id, config, *, personas=None, merge=True)` —
   `GET`/`PATCH /v1/runtime-groups/{id}/config`. The update **merges** `config`
   into a snapshot read by the Python helper before the API replaces the stored
   configuration. This read/merge/write is not atomic: serialize writers because

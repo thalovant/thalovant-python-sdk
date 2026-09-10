@@ -360,8 +360,10 @@ def test_overlapping_collectors_reject_a_duplicate_correlation_id_before_send(me
         assert first.result(1).text == "first-only"
     finally:
         if not first.done():
-            if method == "ask": transport.bus("hive.policy.denied")
-            else: transport.reply("hive.policy.denied", query_id="duplicate-query")
+            if method == "ask":
+                transport.bus("hive.policy.denied")
+            else:
+                transport.reply("hive.policy.denied", query_id="duplicate-query")
         pool.shutdown(wait=True)
         sdk.close()
 
