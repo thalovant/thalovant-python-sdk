@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.14
+
+- Compare validated Noise pins by their hexadecimal key value, accepting uppercase and lowercase spellings of the same authenticated server key. Reconfirming an existing pin preserves the identity file unchanged; a different key still fails closed.
+- Add real TLS/Noise regressions for uppercase pinned KK reconnect, encrypted replies, and rejection of an authenticated replacement key without changing saved trust.
+
 ## 0.5.13
 
 - Require an actual definition before ignoring partial describe timeouts within or across batches. Fully answered empty/unknown-intent responses remain successful.
