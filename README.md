@@ -510,6 +510,8 @@ Changing state directories creates a different client identity unless you
 migrate the existing key and pins. Authentication failure never deletes a
 trusted server pin automatically. An intentional server-key replacement
 requires verifying the new identity before removing the saved pin.
+Uppercase and lowercase hexadecimal spellings of the same server key are
+equivalent; reconfirming that key preserves the saved identity file unchanged.
 Malformed stored pins raise `ThalovantConnectionError`; restore the verified
 state instead of deleting it to retry. From 0.5.6, an expired HTTPS Noise
 handshake raises `ThalovantTimeoutError` after cleaning up the failed connection.

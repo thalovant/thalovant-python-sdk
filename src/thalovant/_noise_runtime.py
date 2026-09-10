@@ -86,8 +86,11 @@ def noise_identity(state_dir: str | None = None) -> Any:
                 current = self._read_current()
                 pins = _validated_noise_pins(current.get("pinned_noise_keys", {}))
                 _validated_noise_pins({node_id: pubkey})
-                if pins.get(node_id) not in (None, pubkey):
-                    raise ThalovantConnectionError("Trusted Noise server key changed; refusing connection.")
+                pinned = pins.get(node_id)
+                if pinned is not None:
+                    if pinned.lower() != pubkey.lower():
+                        raise ThalovantConnectionError("Trusted Noise server key changed; refusing connection.")
+                    return
                 pins[node_id] = pubkey
                 self.IDENTITY_FILE["pinned_noise_keys"] = pins
                 current.update(self.IDENTITY_FILE)
@@ -267,10 +270,10 @@ class NoiseChannel:
         session = NoiseTransport(self.handshake)
         with _store_lock:
             pin = self.store.get_pinned_noise_key(self.pin_id)
-            if pin and pin != session.remote_static_key:
-                raise ThalovantConnectionError("Trusted Noise server key changed; refusing connection.")
             if not session.remote_static_key:
                 raise ThalovantConnectionError("Noise handshake did not authenticate a server key.")
+            if pin and pin.lower() != session.remote_static_key.lower():
+                raise ThalovantConnectionError("Trusted Noise server key changed; refusing connection.")
             if not pin:
                 self.store.pin_noise_key(self.pin_id, session.remote_static_key)
                 path = Path(self.store.IDENTITY_FILE.path)
