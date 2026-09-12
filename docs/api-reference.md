@@ -493,9 +493,13 @@ What a hub can be asked, from `ThalovantClient.intents()`.
 
 A `HubIntent` has `skill_id`, `name`, `id` (`skill_id:name`), `engine`
 (`padatious` or `adapt`), `enabled`, `phrases: dict[str, tuple[str, ...]]` keyed
-by language, `phrases_for(lang)`, `languages`, and `examples(lang=None, limit=2)`,
-which prefers whole sentences over ones with a slot; `examples(..., speakable=True, slots=...)`
-renders each pattern as a sentence a person could say (see `speakable()`).
+by language, `phrases_for(lang)` (by the matcher the rest of OVOS uses, so `fr`
+finds `fr-FR`), `languages`, and `examples(lang=None, limit=2)`, best first: whole
+sentences before prefixes waiting for an entity, sentences before patterns with a
+slot, the fullest phrasing first. `examples(..., speakable=True, slots=...)` renders
+each pattern as a sentence a person could say (see `speakable()`);
+`examples(..., sentence=True)` also sets it the way a person reads it, capitalised
+and closed with the mark the language's rules give it (see `thalovant.listing`).
 
 `IntentRegistration` is one row of the manifest (`skill_id`, `intent_name`,
 `lang`, `method`, `enabled`, `session_id`, optional `definition`).
@@ -540,7 +544,27 @@ UI-friendly output item:
 - `build_client_context(...)`
 - `build_location(city, region, country, latitude, longitude, timezone) -> dict | None`
 - `request_context(context, stt_lang=None, pipeline=None, location=None) -> dict | None`
-- `speakable(pattern, slots=None) -> str`
+- `speakable(pattern, slots=None, lang=None) -> str`
+- `as_sentence(text, lang=None) -> str`
+
+## Listing helpers (`thalovant.listing`)
+
+Everything that turns a registered pattern into something a person reads is
+in `thalovant.listing`, and everything in it that depends on the language is
+data next to the code: `locale/<lang>/language.yaml` carries the words a rule
+turns on (`trailing_words`, `question_openers`, `question_words_anywhere`,
+`question_patterns`, `written_forms`, `slot_examples`; the keys are
+`listing.LANGUAGE_KEYS`) and `locale/scripts.yaml` which marks close a
+sentence per script. A language is found with `ovos_spec_tools.language`
+(`fr-CA` reads the French file); a language nothing describes gets no rule at
+all rather than another language's, so its phrases print bare.
+
+- `language_data(lang) -> dict`, `described() -> tuple[str, ...]`
+- `slot_examples(lang) -> dict[str, str]`
+- `rank(phrases, lang) -> tuple[str, ...]` — the order worth showing them in
+- `dangling(text, lang) -> bool`, `asks(text, lang) -> bool`
+- `as_sentence(text, lang=None) -> str`
+- `marks(kind, spacing) -> str`, `sentence_ends() -> str`
 
 `build_client_context` builds generic user/auth/device/channel/platform
 metadata for web, mobile, kiosk, service, and enterprise clients.

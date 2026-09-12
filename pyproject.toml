@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thalovant"
-version = "0.6.1"
+version = "0.6.2"
 description = "Python SDK and CLI for direct Thalovant hub data-plane clients and agents"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Thalovant" }]
@@ -36,6 +36,9 @@ dependencies = [
     # transport crypto and closes anything that cannot complete it with a
     # 1008; 0.4.4 has no noise module at all.
     "hivemind-bus-client>=1.1.1a1",
+    # The language matcher the rest of OVOS uses (`fr` finds `fr-FR`), with
+    # langcodes so bare and regional tags measure the way they do in a skill.
+    "ovos-spec-tools[langcodes]>=1.10.5a1",
     # the primitive hivemind_bus_client.noise imports. Without it
     # NOISE_SUPPORTED is False and HiveMindSlaveProtocol._should_use_noise
     # silently selects the legacy handshake the hub no longer offers.

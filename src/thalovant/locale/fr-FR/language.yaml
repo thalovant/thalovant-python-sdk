@@ -1,0 +1,88 @@
+# Ce que la liste sait du français sans qu'aucune phrase n'y soit lue : les
+# mots sur lesquels une règle se déclenche quand un motif enregistré est
+# imprimé comme une chose qu'on peut dire. Chaque clé est facultative ; une
+# langue qui n'en donne aucune n'a aucune règle -- jamais celles de
+# l'anglais. Les clés lues par le code sont dans
+# `thalovant.listing.LANGUAGE_KEYS`.
+
+# Une phrase enregistrée qui finit sur l'un de ces mots est un préfixe de
+# mot-clé en attente d'une entité (« quelles sont les conditions actuelles
+# a »), pas une phrase qu'on dit. La liste la classe après les phrases
+# entières et ne la ponctue pas. « a » sans accent : la skill météo écrit
+# son français sans accents.
+trailing_words:
+  - à
+  - a
+  - de
+  - du
+  - des
+  - au
+  - aux
+  - en
+  - dans
+  - pour
+  - sur
+  - avec
+  - chez
+  - vers
+  - par
+  - le
+  - la
+  - les
+  - un
+  - une
+  - mon
+  - ma
+  - mes
+
+# Une phrase qui s'ouvre sur l'un de ces mots est une question.
+question_openers:
+  - quel
+  - quelle
+  - quels
+  - quelles
+  - lequel
+  - laquelle
+  - que
+  - quoi
+  - qui
+  - quand
+  - où
+  - comment
+  - combien
+  - pourquoi
+
+# Une question où que ces mots se trouvent, pas seulement en tête. À l'oral
+# on demande « il est quelle heure » et « on est quel mois » sans inversion
+# et sans interrogatif devant ; un « quel » au milieu est la seule chose qui
+# distingue ces phrases d'une affirmation. Volontairement étroit : « que » et
+# « qui » sont bien plus souvent relatifs qu'interrogatifs (« oublie ce que
+# j'ai dit » est un ordre).
+question_words_anywhere:
+  - quel
+  - quelle
+  - quels
+  - quelles
+  - combien
+
+# Inversion sujet-verbe, et « est-ce que ». Expressions régulières, sans
+# tenir compte de la casse. La skill météo écrit son français sans accents
+# ni traits d'union (« y a t il de la neige », « ai je besoin d une veste »),
+# donc les formes espacées comptent autant que les formes avec trait d'union.
+# « -vous » et « -nous » sont précédés d'un lookbehind : « rendez-vous » est
+# un nom, et sans lui toute phrase qui en prend un serait une question.
+question_patterns:
+  - "\\bqu'est[- ]ce\\b"
+  - '\best[- ]ce\b'
+  - '(?<!rendez)-(?:t-)?(?:il|elle|on|ils|elles|tu|je|vous|nous)\b'
+  - '\bt (?:il|elle|on)\b'
+  - '\bai je\b'
+
+# Ce que devient un slot quand un motif enregistré est lu à voix haute.
+# Plausible, jamais un fait sur la maison.
+slot_examples:
+  incident: le dernier
+  level: cinquante
+  location: Toronto
+  query: la porte du garage
+  topic: l'électricité

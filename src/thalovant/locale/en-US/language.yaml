@@ -1,0 +1,80 @@
+# What the listing knows about English that is not a sentence anybody reads:
+# the words a rule turns on when a registered pattern is printed as
+# something a person could say. A language is data, so it lives here rather
+# than in a module, and a new language is a directory, not an edit.
+#
+# Every key is optional. A language that states none of them gets no rule at
+# all -- never English's: a wrong question mark reads as a defect, a bare
+# line does not. The keys the code reads are `thalovant.listing.LANGUAGE_KEYS`,
+# and the tests refuse a file that names any other.
+
+# A registered phrase ending on one of these is a keyword prefix waiting for
+# an entity ("weather in"), not something anybody says on its own. It is
+# listed after whole sentences and left unpunctuated: there is no honest
+# mark for half a sentence.
+trailing_words:
+  - in
+  - for
+  - at
+  - to
+  - "on"  # quoted: bare, YAML reads it as a boolean
+  - of
+  - with
+  - about
+  - from
+  - into
+  - the
+  - a
+  - an
+  - my
+  - is
+  - was
+
+# A phrase opening with one of these is a question, and is closed with a
+# question mark rather than a full stop.
+question_openers:
+  - what
+  - when
+  - where
+  - who
+  - whom
+  - whose
+  - why
+  - how
+  - which
+  - is
+  - are
+  - am
+  - was
+  - were
+  - do
+  - does
+  - did
+  - can
+  - could
+  - will
+  - would
+  - should
+  - shall
+  - may
+  - might
+  - has
+  - have
+  - had
+
+# Locale files are lower case throughout, so the first person arrives as
+# "do i need a jacket". Set as a sentence, a word listed here is written the
+# way it is written; the lone letter was the one thing left in the line that
+# still looked like a typing mistake.
+written_forms:
+  i: I
+
+# What a slot becomes when a pattern is read aloud: "volume {level} percent"
+# has to be sayable. Plausible, and never a fact about the estate. A slot
+# with no example keeps its own name, which reads worse but invents nothing.
+slot_examples:
+  incident: the last one
+  level: fifty
+  location: Toronto
+  query: the garage door
+  topic: power

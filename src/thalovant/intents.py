@@ -36,6 +36,9 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
+from ovos_spec_tools.language import closest_lang
+
+from . import listing
 from .errors import (
     ThalovantConnectionError,
     ThalovantPolicyDeniedError,
@@ -101,16 +104,18 @@ def _resolve_group(match: re.Match[str]) -> str:
     return real[0] if real else ""
 
 
-def speakable(pattern: str, slots: Mapping[str, str] | None = None) -> str:
+def speakable(pattern: str, slots: Mapping[str, str] | None = None,
+              lang: str | None = None) -> str:
     """One sentence a person could actually say, out of a matcher's pattern.
 
     Skills write intents as patterns: ``[please]`` is optional and goes,
     ``(repeat|say) that`` collapses to its first branch unless one branch is
     empty, which means the whole group was optional, and ``{slot}`` becomes
-    the example in ``slots`` or, failing that, the slot's own name with the
-    underscores as spaces -- which reads worse but never invents a fact. The
-    empty string for a pattern with nothing left, which a caller drops rather
-    than prints.
+    the example in ``slots``, else the language's own example for it
+    (``locale/<lang>/language.yaml``, see :mod:`thalovant.listing`), else the
+    slot's own name with the underscores as spaces -- which reads worse but
+    never invents a fact. The empty string for a pattern with nothing left,
+    which a caller drops rather than prints.
     """
     text = pattern
     # Innermost first, repeatedly: ``mute it [for a (second|bit)]`` has a
@@ -123,7 +128,7 @@ def speakable(pattern: str, slots: Mapping[str, str] | None = None) -> str:
         text, changed = _GROUP.subn(_resolve_group, text)
         if not changed:
             break
-    table = dict(slots or {})
+    table = {**listing.slot_examples(lang), **(slots or {})}
     text = _SLOT.sub(lambda m: table.get(m.group(1), m.group(1).replace("_", " ")), text)
     return _SPACES.sub(" ", text).strip(" ,")
 
@@ -233,34 +238,46 @@ class HubIntent:
         return tuple(self.phrases)
 
     def phrases_for(self, lang: str) -> tuple[str, ...]:
-        for candidate, sentences in self.phrases.items():
-            if same_language(candidate, lang):
-                return sentences
-        return ()
+        """The sentences registered for ``lang``, by the matcher the rest of
+        OVOS uses: ``fr`` finds ``fr-FR``, and ``fr-CA`` prefers a Canadian
+        registration when there is one and takes the French one otherwise.
+        Comparing tags exactly here printed "(nothing in fr)" under a heading
+        that had just listed fr-FR as one of the skill's languages."""
+        match = closest_lang(lang, list(self.phrases)) if self.phrases else None
+        return self.phrases[match] if match is not None else ()
 
     def examples(
         self, lang: str | None = None, limit: int = 2, *,
         speakable: bool = False, slots: Mapping[str, str] | None = None,
+        sentence: bool = False,
     ) -> tuple[str, ...]:
-        """A few sentences worth showing: whole ones before ones with a slot.
+        """A few sentences worth showing, best first (see ``listing.rank``):
+        whole sentences before prefixes waiting for an entity, sentences
+        before patterns with a slot, and the fullest phrasing first.
 
         As the skill wrote them by default; ``speakable=True`` renders each
         pattern as one sentence a person could say (see ``speakable()``),
-        with ``slots`` naming the example a slot becomes, and drops patterns
-        with nothing left once the optional parts are gone.
+        with ``slots`` naming the example a slot becomes over the language's
+        own examples, and drops patterns with nothing left once the optional
+        parts are gone. ``sentence=True`` also sets each one the way a person
+        reads it -- capitalised, closed with the mark the language's rules
+        give it (see ``listing.as_sentence``) -- and implies ``speakable``.
+        ``limit`` counts what is returned, so a pattern that renders to
+        nothing or to a repeat does not use up a place.
         """
-
         pool = self.phrases_for(lang) if lang else next(iter(self.phrases.values()), ())
-        if speakable:
-            spoken: list[str] = []
-            for text in pool:
-                sentence = _speakable(text, slots)
-                if sentence and sentence not in spoken:
-                    spoken.append(sentence)
-            pool = tuple(spoken)
-        if limit <= 0:
-            return pool
-        return tuple(sorted(pool, key=lambda text: ("{" in text, len(text)))[:limit])
+        if not speakable and not sentence:
+            return pool if limit <= 0 else listing.rank(pool, lang)[:limit]
+        shown: list[str] = []
+        for pattern in listing.rank(pool, lang):
+            text = _speakable(pattern, slots, lang)
+            if sentence:
+                text = listing.as_sentence(text, lang)
+            if text and text not in shown:
+                shown.append(text)
+                if 0 < limit <= len(shown):
+                    break
+        return tuple(shown)
 
     def as_dict(self) -> dict[str, Any]:
         return {
