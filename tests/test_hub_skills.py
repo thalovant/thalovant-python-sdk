@@ -506,6 +506,7 @@ def test_accepted_body_must_carry_an_operation_id():
 
 
 def test_history_preserves_event_and_operation_fields_and_encodes_hub():
+    """History preserves nullable wire fields and encodes the hub path segment."""
     history = {"hub_id": "hub/one", "runtime_group_id": "shared", "data": [
         {"id": "event:1", "kind": "event", "actor_email": None, "version": "1.2.0"},
         {"id": "operation:1", "kind": "operation", "status": "failed", "operation_id": "op-1"},
@@ -517,6 +518,7 @@ def test_history_preserves_event_and_operation_fields_and_encodes_hub():
 
 @pytest.mark.parametrize("limit", [0, 201, -1, True, 1.5, "50"])
 def test_history_invalid_limit_does_not_send(limit):
+    """Invalid history limits fail locally without making an HTTP request."""
     session = HubSkillSession()
     with pytest.raises(ValueError):
         api_for(session).list_hub_skill_history("hub-1", limit=limit)

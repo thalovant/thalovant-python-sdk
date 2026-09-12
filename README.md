@@ -854,6 +854,7 @@ handshake, and transport health.
 - `control.install_runtime_group_skill(runtime_group_id, skill_id, ...)`
 - `control.uninstall_runtime_group_skill(runtime_group_id, skill_id)`
 - `control.list_hub_skills(hub_id)`
+- `control.list_hub_skill_history(hub_id, limit=50)` with integer `limit` from 1 to 200
 - `control.install_hub_skill(hub_id, skill, version="latest", wait=False, timeout=120.0)`
 - `control.update_hub_skill(hub_id, skill, version=..., wait=False, timeout=120.0)`
 - `control.remove_hub_skill(hub_id, skill, wait=False, timeout=120.0)`
