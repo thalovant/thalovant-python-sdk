@@ -74,19 +74,16 @@ def dangling(text: str, lang: str | None) -> bool:
 
 
 @lru_cache(maxsize=16)
-def _question_pattern(lang: str | None) -> re.Pattern[str] | None:
+def _question_pattern(lang: str | None) -> tuple[re.Pattern[str], ...]:
     patterns = language_data(lang).get("question_patterns") or ()
-    if not patterns:
-        return None
-    return re.compile("|".join(f"(?:{pattern})" for pattern in patterns), re.IGNORECASE)
+    return tuple(re.compile(str(pattern), re.IGNORECASE) for pattern in patterns)
 
 
 def asks(text: str, lang: str | None) -> bool:
     """Whether a registered phrase is asking something, by the language's
     own ``question_openers``, ``question_words_anywhere`` and
     ``question_patterns``."""
-    pattern = _question_pattern(lang)
-    if pattern is not None and pattern.search(text):
+    if any(pattern.search(text) for pattern in _question_pattern(lang)):
         return True
     words = [word.strip(",;:!?.’'\"()").lower() for word in text.split()]
     words = [word for word in words if word]
@@ -115,7 +112,9 @@ def as_sentence(text: str, lang: str | None = None) -> str:
     text = text[0].upper() + text[1:]
     if text.endswith(tuple(sentence_ends())) or dangling(text, lang):
         return text
-    if not lang or not _words(lang, "question_openers"):
+    if not lang or not any(language_data(lang).get(key) for key in (
+        "question_openers", "question_words_anywhere", "question_patterns",
+    )):
         return text
     # Locale files are lower case throughout, so English first person
     # arrives as "do i need a jacket"; ``written_forms`` spells it back.

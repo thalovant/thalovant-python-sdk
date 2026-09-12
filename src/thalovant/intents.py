@@ -265,14 +265,15 @@ class HubIntent:
         ``limit`` counts what is returned, so a pattern that renders to
         nothing or to a repeat does not use up a place.
         """
-        pool = self.phrases_for(lang) if lang else next(iter(self.phrases.values()), ())
+        render_lang = lang or next(iter(self.phrases), None)
+        pool = self.phrases_for(render_lang) if render_lang else ()
         if not speakable and not sentence:
-            return pool if limit <= 0 else listing.rank(pool, lang)[:limit]
+            return pool if limit <= 0 else listing.rank(pool, render_lang)[:limit]
         shown: list[str] = []
-        for pattern in listing.rank(pool, lang):
-            text = _speakable(pattern, slots, lang)
+        for pattern in listing.rank(pool, render_lang):
+            text = _speakable(pattern, slots, render_lang)
             if sentence:
-                text = listing.as_sentence(text, lang)
+                text = listing.as_sentence(text, render_lang)
             if text and text not in shown:
                 shown.append(text)
                 if 0 < limit <= len(shown):
