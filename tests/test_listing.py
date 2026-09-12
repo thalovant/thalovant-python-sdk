@@ -53,7 +53,7 @@ def invented(tmp_path, monkeypatch):
 def test_the_language_data_is_installed_for_the_tests():
     assert listing.available()
     assert listing.language_data("fr-CA")["question_openers"]
-    assert listing.language_data("zh-CN") == {} and listing.language_data(None) == {}
+    assert listing.language_data("tlh") == {} and listing.language_data(None) == {}
 
 
 # -- a pattern read aloud ---------------------------------------------------------
@@ -64,7 +64,7 @@ def test_a_slot_reads_as_the_language_s_own_example():
     # The caller's example wins; a language nothing describes keeps the name.
     assert speakable("weather in {location}", {"location": "Sherbrooke"}, "en") == (
         "weather in Sherbrooke")
-    assert speakable("weather in {location}", lang="zh") == "weather in location"
+    assert speakable("weather in {location}", lang="tlh") == "weather in location"
     assert speakable("set the {gadget_name} going", lang="en") == "set the gadget name going"
 
 
@@ -102,8 +102,15 @@ def test_a_capital_already_there_is_kept():
 
 
 def test_a_language_without_known_interrogatives_is_left_bare():
-    assert as_sentence("como esta el tiempo", "es-ES") == "Como esta el tiempo"
+    assert as_sentence("nuqneH", "tlh") == "NuqneH"
     assert as_sentence("what time is it", None) == "What time is it"
+
+
+def test_a_language_the_treebanks_describe_gets_its_marks():
+    """Spanish is derived like every other language now: a question opener
+    from Universal Dependencies closes the line with a question mark."""
+    assert as_sentence("qué hora es", "es-ES") == "Qué hora es?"
+    assert as_sentence("enciende la luz", "es-ES") == "Enciende la luz."
 
 
 def test_a_prefix_waiting_for_an_entity_is_not_punctuated():

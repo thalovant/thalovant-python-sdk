@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.8 — 2026-09-12
+
+- The listing reads `thalovant-languages` 0.2.0, which derives 270 languages from Universal Dependencies, CLDR and Unicode instead of describing two by hand. A Spanish or German phrase is now set with its own question mark; a language nothing describes still prints bare.
+
 ## 0.6.7 — 2026-09-12
 
 - 0.6.6 attached its filter to the `OVOS` logger, which ovos-utils never uses for a deprecation: it names that logger after the call site, one per site, with its own handler and no propagation. The filter now rides the library's logger factory, so every logger it hands out under its name carries it, and the hub-shape deprecation is gone from the satellite's journal and the connector's. Measured on the node before the change: three lines per question.

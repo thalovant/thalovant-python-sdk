@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thalovant"
-version = "0.6.7"
+version = "0.6.8"
 description = "Python SDK and CLI for direct Thalovant hub data-plane clients and agents"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Thalovant" }]
@@ -69,14 +69,14 @@ thalovant = "thalovant.cli:main"
 dev = [
     "build>=1.2",
     "pytest>=8.0",
-    "thalovant-languages>=0.1.0",
+    "thalovant-languages>=0.2.1",
 ]
 # Every word the intent listing turns a rule on -- what makes a phrase a
 # question, what a slot reads as -- lives in its own package, one file per
 # language, shared with the voice satellite. Without it a listing prints
 # bare, capitalised lines.
 listing = [
-    "thalovant-languages>=0.1.0",
+    "thalovant-languages>=0.2.1",
 ]
 publish = [
     "build>=1.2",
