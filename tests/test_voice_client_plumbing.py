@@ -209,3 +209,13 @@ def test_examples_can_be_rendered_speakable():
     assert intent.examples("en-us", 0, speakable=True, slots={"level": "fifty"}) == (
         "repeat that", "volume fifty percent")
     assert intent.examples("en-us", 1, speakable=True) == ("repeat that",)
+
+
+@pytest.mark.parametrize("patterns, expected", [
+    (("{query}", "what time is it"), "what time is it"),
+    (("{query}", "say hello", "query"), "query"),
+])
+def test_speakable_examples_preserve_source_slot_priority(patterns, expected):
+    intent = HubIntent(skill_id="s", name="n", engine="padatious",
+                       phrases={"en-us": patterns})
+    assert intent.examples("en-us", 1, speakable=True) == (expected,)

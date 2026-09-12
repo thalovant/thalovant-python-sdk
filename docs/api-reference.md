@@ -587,3 +587,7 @@ Diagnostic report:
 - `ThalovantTimeoutError`
 - `ThalovantRuntimeError`
 - `ThalovantUnsupportedProtocolError`
+
+## Speakable Example Ranking
+
+`HubIntent.examples(speakable=True)` preserves the original patterns' complete-phrase priority before applying `limit`. Rendering slots does not promote a slot-based pattern above a complete phrase. If multiple patterns render to the same sentence, a complete source phrase gives that sentence complete-phrase priority.

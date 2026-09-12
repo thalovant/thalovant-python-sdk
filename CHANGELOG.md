@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 — 2026-09-12
+
+- Preserve complete-phrase priority when rendering speakable intent examples before applying a result limit. Deduplicated examples retain the best priority of their original patterns.
+
 ## 0.6.1 — 2026-09-12
 
 What a voice client needs, moved in from the Custos satellite, which had
