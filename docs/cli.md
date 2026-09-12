@@ -68,7 +68,8 @@ thalovant --identity _identity.json --json intents
 
 Lists what the hub can be asked, grouped by skill, with the sentences a person
 says to reach each intent in each language, as the skill wrote them (`{location}`
-marks a slot). Two sentences per intent by default, `--all` for every one. The
+marks a slot). Two sentences per intent by default, `--all` for every one,
+`--speakable` to print each pattern as one sentence a person could say. The
 hub's connection must be allowed to publish `ovos.intent.list` and
 `ovos.intent.describe`; a hub allowed for only the engine manifests lists names
 and says so, and so does a hub that simply never answers the listing.

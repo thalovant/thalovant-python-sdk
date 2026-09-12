@@ -9,7 +9,7 @@ from pathlib import Path
 import queue
 import threading
 import time
-from typing import Any, AsyncIterator, Callable, Iterable, Iterator
+from typing import Any, AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from urllib.parse import urlparse
 
 from .conversation import AsyncThalovantConversation, ThalovantConversation
@@ -19,7 +19,11 @@ from .errors import (
     ThalovantRuntimeError,
     ThalovantTimeoutError,
 )
+from .context import request_context
 from .events import (
+    EVENT_AUDIO_QUEUE,
+    MAX_AUDIO_CLIP_BYTES,
+    MAX_REPLY_MEDIA_BYTES,
     EVENT_INTENT_FAILURE,
     EVENT_INTENT_UNMATCHED,
     EVENT_OVOS_UTTERANCE_SPEAK,
@@ -92,6 +96,7 @@ def _transport_for_protocol(
     handshake_timeout: float,
     send_timeout: float,
     noise_state_dir: str | None = None,
+    self_signed: bool = False,
 ) -> Transport:
     kwargs = {
         "useragent": useragent,
@@ -101,14 +106,14 @@ def _transport_for_protocol(
         "noise_state_dir": noise_state_dir,
     }
     if protocol == "https":
-        return HiveMindHTTPTransport(identity, **kwargs)
+        return HiveMindHTTPTransport(identity, self_signed=self_signed, **kwargs)
     if protocol == "wss":
         endpoint = identity.endpoint_for("wss")
         if not endpoint:
             raise ThalovantUnsupportedProtocolError(
                 "WSS is enabled, but the identity does not include a WSS endpoint."
             )
-        return HiveMindWSSTransport(identity, **kwargs)
+        return HiveMindWSSTransport(identity, self_signed=self_signed, **kwargs)
     if protocol == "mqtt":
         if identity.mqtt is None:
             raise ThalovantUnsupportedProtocolError(
@@ -192,9 +197,14 @@ class ThalovantClient:
         protocol: HubProtocol | None = None,
         transport: Transport | None = None,
         noise_state_dir: str | None = None,
+        self_signed: bool = False,
     ) -> None:
         self.identity = identity
         self.useragent = useragent
+        # Certificate checking is on unless the caller turns it off for a
+        # development hub; before this option a client that wanted to say so
+        # had to build the transport itself.
+        self.self_signed = self_signed
         if any(not math.isfinite(value) or value < 0 for value in (
             reply_settle_seconds, empty_reply_wait_seconds,
         )):
@@ -212,6 +222,7 @@ class ThalovantClient:
             handshake_timeout=handshake_timeout,
             send_timeout=send_timeout,
             noise_state_dir=noise_state_dir,
+            self_signed=self_signed,
         )
         self._connected = False
         self._reply_ids_lock = threading.Lock()
@@ -869,11 +880,25 @@ class ThalovantClient:
         context: dict[str, Any] | None = None,
         session_id: str | None = None,
         request_id: str | None = None,
+        stt_lang: str | None = None,
+        pipeline: Sequence[str] | None = None,
+        location: Mapping[str, Any] | None = None,
     ) -> ThalovantReply:
-        """Send a text utterance and wait for the hub's spoken reply."""
+        """Send a text utterance and wait for the hub's spoken reply.
+
+        ``stt_lang`` is the language a recogniser decided on, sent as the
+        hub's highest-priority language hint; ``pipeline`` names the intent
+        stages to run, in order; ``location`` is ``build_location()``'s
+        result, which outranks the hub's own configured place. All three are
+        merged into ``context`` by ``request_context()``. Embedded skill
+        sounds (``mycroft.audio.queue``) arrive in ``reply.media_events``, in
+        order with the speech.
+        """
 
         return self._ask(
-            text, timeout=timeout, lang=lang, context=context,
+            text, timeout=timeout, lang=lang,
+            context=request_context(context, stt_lang=stt_lang, pipeline=pipeline,
+                                    location=location),
             session_id=session_id, request_id=request_id,
         )
 
@@ -1112,6 +1137,8 @@ class ThalovantClient:
         fragments: list[str] = []
         raw_messages: list[Any] = []
         events: list[ThalovantEvent] = []
+        dropped_media = 0
+        media_chars = 0
         registered: list[tuple[str, Callable[[Any], None]]] = []
         errors: list[BaseException] = []
         failure_event: ThalovantEvent | None = None
@@ -1153,7 +1180,7 @@ class ThalovantClient:
 
         def handle_query_frame(message: Any) -> None:
             nonlocal failure_event, soft_failure_event, terminal
-            nonlocal empty_deadline, settle_deadline
+            nonlocal empty_deadline, settle_deadline, dropped_media, media_chars
             with state:
                 if terminal:
                     return
@@ -1173,6 +1200,20 @@ class ThalovantClient:
                     # request ID remains required to exclude ambient replies.
                     if event.request_id != request_id:
                         return
+                if event.name == EVENT_AUDIO_QUEUE:
+                    # A skill sound rides along with the speech, in order. It
+                    # never settles or fails the reply, and it is bounded here
+                    # before it is kept: the payload is the hub's to size, and
+                    # the bus can deliver one message object twice.
+                    if any(previous.raw is event.raw for previous in events):
+                        return
+                    encoded = event.data.get("binary_data")
+                    if (not isinstance(encoded, str)
+                            or len(encoded) > MAX_AUDIO_CLIP_BYTES * 2
+                            or media_chars + len(encoded) > MAX_REPLY_MEDIA_BYTES * 2):
+                        dropped_media += 1
+                        return
+                    media_chars += len(encoded)
                 raw_messages.append(message if direct else event.raw)
                 events.append(event)
                 if direct and event.name == "hive.query.complete":
@@ -1205,6 +1246,7 @@ class ThalovantClient:
             kinds = ("query", "cascade") if direct else (
                 EVENT_SPEAK, EVENT_OVOS_UTTERANCE_SPEAK, EVENT_UTTERANCE_HANDLED,
                 EVENT_INTENT_FAILURE, EVENT_INTENT_UNMATCHED, EVENT_POLICY_DENIED, EVENT_QUERY_TIMEOUT,
+                EVENT_AUDIO_QUEUE,
             )
             for kind in kinds:
                 with state:
@@ -1319,6 +1361,7 @@ class ThalovantClient:
                 raw_messages=tuple(raw_messages),
                 events=tuple(events),
                 failure_event=failure_event,
+                dropped_media=dropped_media,
             )
             completed = True
             return reply
@@ -1689,6 +1732,9 @@ class AsyncThalovantClient:
         context: dict[str, Any] | None = None,
         session_id: str | None = None,
         request_id: str | None = None,
+        stt_lang: str | None = None,
+        pipeline: Sequence[str] | None = None,
+        location: Mapping[str, Any] | None = None,
     ) -> ThalovantReply:
         cancellation = threading.Event()
         try:
@@ -1697,7 +1743,8 @@ class AsyncThalovantClient:
                 text,
                 timeout=timeout,
                 lang=lang,
-                context=context,
+                context=request_context(context, stt_lang=stt_lang, pipeline=pipeline,
+                                        location=location),
                 session_id=session_id,
                 request_id=request_id,
                 cancellation=cancellation,

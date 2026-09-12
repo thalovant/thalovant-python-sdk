@@ -89,6 +89,8 @@ def _build_parser() -> argparse.ArgumentParser:
     intents.add_argument("--lang", action="append", dest="langs", metavar="LANG",
                          help="Language to list; repeat for several. Default en-us.")
     intents.add_argument("--timeout", type=float, default=5.0)
+    intents.add_argument("--speakable", action="store_true",
+                         help="Print each pattern as one sentence a person could say.")
     intents.add_argument("--all", action="store_true",
                          help="Every sentence each intent answers to, not two.")
     intents.set_defaults(handler=_cmd_intents)
@@ -248,7 +250,8 @@ def _cmd_intents(client: ThalovantClient, args: argparse.Namespace) -> int:
         for intent in skill.intents:
             shown = False
             for lang in inventory.languages:
-                examples = intent.examples(lang, 0 if args.all else 2)
+                examples = intent.examples(lang, 0 if args.all else 2,
+                                           speakable=getattr(args, "speakable", False))
                 if not examples:
                     continue
                 shown = True

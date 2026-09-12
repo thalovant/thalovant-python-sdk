@@ -28,6 +28,8 @@ fallback for a hub allowed for those alone.
 
 from __future__ import annotations
 
+import re
+
 import math
 import threading
 import time
@@ -70,6 +72,63 @@ _ENGINE_BY_METHOD = {"template": "padatious", "keyword": "adapt"}
 # drops replies past its capacity and the inventory comes back missing
 # sentences. Batching also spares the hub a burst it never asked for.
 DESCRIBE_BATCH = 32
+
+
+_OPTIONAL = re.compile(r"\[[^\[\]]*\]")
+_GROUP = re.compile(r"\(([^()]*)\)")
+_SLOT = re.compile(r"\{([a-z_][a-z0-9_]*)\}")
+_SPACES = re.compile(r"\s{2,}")
+
+
+def _resolve_group(match: re.Match[str]) -> str:
+    """One alternative out of ``(a|b|c)``, or nothing when the group is optional.
+
+    An empty alternative means the group may be left out, but that alone does
+    not say whether leaving it out reads better. What decides it is how many
+    real alternatives there are beside the empty one::
+
+        (already |)ask       one word, optional      -> "ask"
+        (about|for|to|)      a choice, or nothing    -> "about"
+
+    Dropping the second would give "did i ask the garage door", and choosing
+    a branch in the first would give "already ask". Counting the non-empty
+    branches gets both right.
+    """
+    options = [option.strip() for option in match.group(1).split("|")]
+    real = [option for option in options if option]
+    if len(real) < len(options) and len(real) <= 1:
+        return ""
+    return real[0] if real else ""
+
+
+def speakable(pattern: str, slots: Mapping[str, str] | None = None) -> str:
+    """One sentence a person could actually say, out of a matcher's pattern.
+
+    Skills write intents as patterns: ``[please]`` is optional and goes,
+    ``(repeat|say) that`` collapses to its first branch unless one branch is
+    empty, which means the whole group was optional, and ``{slot}`` becomes
+    the example in ``slots`` or, failing that, the slot's own name with the
+    underscores as spaces -- which reads worse but never invents a fact. The
+    empty string for a pattern with nothing left, which a caller drops rather
+    than prints.
+    """
+    text = pattern
+    # Innermost first, repeatedly: ``mute it [for a (second|bit)]`` has a
+    # group inside an optional part, and the optional part takes it with it.
+    while True:
+        text, changed = _OPTIONAL.subn("", text)
+        if not changed:
+            break
+    while True:
+        text, changed = _GROUP.subn(_resolve_group, text)
+        if not changed:
+            break
+    table = dict(slots or {})
+    text = _SLOT.sub(lambda m: table.get(m.group(1), m.group(1).replace("_", " ")), text)
+    return _SPACES.sub(" ", text).strip(" ,")
+
+
+_speakable = speakable
 
 
 def same_language(a: str, b: str) -> bool:
@@ -179,10 +238,26 @@ class HubIntent:
                 return sentences
         return ()
 
-    def examples(self, lang: str | None = None, limit: int = 2) -> tuple[str, ...]:
-        """A few sentences worth showing: whole ones before ones with a slot."""
+    def examples(
+        self, lang: str | None = None, limit: int = 2, *,
+        speakable: bool = False, slots: Mapping[str, str] | None = None,
+    ) -> tuple[str, ...]:
+        """A few sentences worth showing: whole ones before ones with a slot.
+
+        As the skill wrote them by default; ``speakable=True`` renders each
+        pattern as one sentence a person could say (see ``speakable()``),
+        with ``slots`` naming the example a slot becomes, and drops patterns
+        with nothing left once the optional parts are gone.
+        """
 
         pool = self.phrases_for(lang) if lang else next(iter(self.phrases.values()), ())
+        if speakable:
+            spoken: list[str] = []
+            for text in pool:
+                sentence = _speakable(text, slots)
+                if sentence and sentence not in spoken:
+                    spoken.append(sentence)
+            pool = tuple(spoken)
         if limit <= 0:
             return pool
         return tuple(sorted(pool, key=lambda text: ("{" in text, len(text)))[:limit])

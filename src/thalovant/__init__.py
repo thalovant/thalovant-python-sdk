@@ -15,7 +15,7 @@ from .control import (
     OperationStatus,
     ThalovantControlPlane,
 )
-from .context import build_client_context
+from .context import build_client_context, build_location, request_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
     ThalovantAPIError,
@@ -28,6 +28,7 @@ from .errors import (
     ThalovantUnsupportedProtocolError,
 )
 from .events import (
+    EVENT_AUDIO_QUEUE,
     EVENT_INTENT_DESCRIBE,
     EVENT_INTENT_DESCRIBE_RESPONSE,
     EVENT_INTENT_FAILURE,
@@ -50,6 +51,7 @@ from .intents import (
     HubSkillIntents,
     IntentDefinition,
     IntentRegistration,
+    speakable,
 )
 from .models import (
     ThalovantConnectionInfo,
@@ -131,6 +133,10 @@ __all__ = [
     "ThalovantTimeoutError",
     "ThalovantUnsupportedProtocolError",
     "build_client_context",
+    "build_location",
+    "request_context",
+    "speakable",
+    "EVENT_AUDIO_QUEUE",
     "default_config_path",
     "mqtt_topics_for_identity",
     "select_data_plane_endpoint",

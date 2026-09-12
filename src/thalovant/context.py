@@ -83,3 +83,75 @@ def build_client_context(
         result["session"] = session
 
     return result
+
+
+def build_location(
+    city: str = "",
+    region: str = "",
+    country: str = "",
+    latitude: float | str | None = None,
+    longitude: float | str | None = None,
+    timezone: str = "",
+) -> dict[str, Any] | None:
+    """Where the caller is, in the shape the hub's skills read.
+
+    Sent at the request level (``ask(location=...)``) it outranks the hub's own
+    configured place, where a session-carried one ranks below it: ovos-bus-client
+    fills session location from whichever process built the session, and a
+    stock default arrives that way. Seen in the field without it: a bare
+    weather question answered for the hub's city, and a named place going up
+    with no hint and coming back HTTP 409 ambiguous.
+
+    ``None`` when there is nothing worth sending -- a location needs a city. A
+    zero coordinate is not a position, it is the Atlantic, so ``0, 0`` and
+    anything outside the globe are left out rather than sent.
+    """
+    city = (city or "").strip()
+    if not city:
+        return None
+    location: dict[str, Any] = {"city": city}
+    if (region or "").strip():
+        location["region"] = region.strip()
+    if (country or "").strip():
+        location["country_code"] = country.strip().upper()
+    if (timezone or "").strip():
+        location["timezone"] = {"code": timezone.strip()}
+    try:
+        lat, lon = float(latitude), float(longitude)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return location
+    if (lat or lon) and -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0:
+        location["coordinate"] = {"latitude": lat, "longitude": lon}
+    return location
+
+
+def request_context(
+    context: Mapping[str, Any] | None = None,
+    *,
+    stt_lang: str | None = None,
+    pipeline: Sequence[str] | None = None,
+    location: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Per-request hints a hub reads, merged into ``context``.
+
+    ``stt_lang`` is the language a recogniser decided on by transcribing in it
+    and scoring better than the other model did. ovos-core reads three hints in
+    priority order -- ``stt_lang``, ``request_lang``, ``detected_lang`` -- and
+    validates the value against the hub's own languages, so this is a request,
+    not an override. ``pipeline`` names the intent stages the hub should run,
+    in order, under ``session``; left out, the hub decides, which is the right
+    default for anything that is not measured. ``location`` is what
+    ``build_location()`` returns. ``None`` when there is nothing to send.
+    """
+    result = dict(context or {})
+    if pipeline:
+        stages = [str(stage).strip() for stage in pipeline if str(stage).strip()]
+        if stages:
+            session = dict(result.get("session") or {})
+            session["pipeline"] = stages
+            result["session"] = session
+    if stt_lang and stt_lang.strip():
+        result["stt_lang"] = stt_lang.strip()
+    if location:
+        result["location"] = dict(location)
+    return result or None

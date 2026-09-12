@@ -776,6 +776,22 @@ for item in reply.display_items(max_text_chars=600):
         print([choice["title"] for choice in item.data])
 ```
 
+## Skill Sounds
+
+A skill that would play a clip on the hub's own speaker sends it to a remote
+client instead, in order with the speech around it. Keep a settle window: the
+burst arrives together, and a zero window closes on the first sentence.
+
+```python
+client = ThalovantClient.from_identity_file("_identity.json", reply_settle_seconds=0.1)
+reply = client.ask("Pull my finger.", stt_lang="en-us")
+for event in reply.media_events:
+    if event.is_audio:
+        play(event.audio_bytes())          # bounded, decoded from hex
+    else:
+        speak(event.text, event.lang or reply.lang)
+```
+
 ## Async Apps
 
 ```python
