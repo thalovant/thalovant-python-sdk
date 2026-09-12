@@ -200,6 +200,13 @@ def test_a_pattern_is_printed_as_a_sentence(pattern, spoken):
     assert speakable(pattern, {"query": "the garage door", "level": "fifty"}) == spoken
 
 
+def test_request_hints_copy_session_without_pipeline():
+    base = {"session": {"session_id": "kept"}}
+    result = request_context(base, stt_lang="fr")
+    result["session"]["session_id"] = "changed"
+    assert base["session"]["session_id"] == "kept"
+
+
 def test_examples_can_be_rendered_speakable():
     intent = HubIntent(skill_id="s", name="n", engine="padatious", phrases={
         "en-us": ("[please] (repeat|say) that (again|)", "volume [to] {level} percent", "[please]"),
@@ -209,3 +216,18 @@ def test_examples_can_be_rendered_speakable():
     assert intent.examples("en-us", 0, speakable=True, slots={"level": "fifty"}) == (
         "repeat that", "volume fifty percent")
     assert intent.examples("en-us", 1, speakable=True) == ("repeat that",)
+
+
+@pytest.mark.parametrize("patterns, expected", [
+    (("{query}", "what time is it"), "what time is it"),
+    # Rendered the same from a slot pattern and from a literal: it is a whole
+    # phrase, and the slot pattern behind it does not demote it.
+    (("{query}", "query"), "query"),
+    # Among whole phrases the fullest wins, not the shortest ("aqi" was the
+    # one example the weather skill got to show).
+    (("{query}", "say hello", "query"), "say hello"),
+])
+def test_speakable_examples_preserve_source_slot_priority(patterns, expected):
+    intent = HubIntent(skill_id="s", name="n", engine="padatious",
+                       phrases={"en-us": patterns})
+    assert intent.examples("en-us", 1, speakable=True) == (expected,)

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.2 — 2026-09-12
+## 0.6.5 — 2026-09-12
 
 The listing half of what the voice satellite knew about languages, so that
 `thalovant intents --speakable` and `thalovant-voice intents` print the same
@@ -10,7 +10,25 @@ sentences from one implementation.
 - `speakable(pattern, slots=None, lang=None)` fills a slot from the language's own examples when the caller names none: `{level}` reads "fifty" in English and "cinquante" in French.
 - `HubIntent.examples()` ranks by `listing.rank`, takes `sentence=True`, and counts what it returns rather than what it tried, so a pattern that renders to nothing no longer uses up a place. `phrases_for(lang)` matches languages the way the rest of OVOS does (`ovos_spec_tools.language`): `fr` finds `fr-FR`.
 - `thalovant intents --speakable` prints sentences.
-- New dependency: `ovos-spec-tools[langcodes]`.
+- New dependency `ovos-spec-tools[langcodes]` (the matcher the rest of OVOS uses); the language data itself is the `thalovant[listing]` extra, `thalovant-languages`.
+
+## 0.6.4 — 2026-09-12
+
+- Require Requests 2.33.0 and cryptography 50.0.0 or newer to exclude known vulnerable versions. CI exercises those floors on Python 3.10 and audits both runtime and documentation dependencies.
+
+- Snapshot nested configuration changes and personas before the first merge read. Concurrent caller mutation cannot change the payload between revision-conflict retries.
+- Copy the request session even when no pipeline hint is supplied.
+- Clarify that guarded configuration merging requires hubs:read and hubs:write scopes plus a paid plan.
+
+## 0.6.3 — 2026-09-12
+
+- Prevent concurrent runtime configuration merges from losing unrelated changes. Read the configuration revision, send conditional PUT, and reread/remerge the original delta on HTTP 412, with at most three write attempts. Network failures and other statuses are not retried.
+- Safe merges require an API exposing configuration revisions and conditional PUT. Older servers fail without a write; `merge=False` retains unconditional PATCH replacement.
+- Expose `ThalovantAPIError.status_code` for HTTP failures.
+
+## 0.6.2 — 2026-09-12
+
+- Preserve complete-phrase priority when rendering speakable intent examples before applying a result limit. Deduplicated examples retain the best priority of their original patterns.
 
 ## 0.6.1 — 2026-09-12
 
