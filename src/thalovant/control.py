@@ -536,7 +536,8 @@ class ThalovantControlPlane:
             if 200 <= response.status_code < 300:
                 if not isinstance(body, dict):
                     raise ThalovantAPIError(
-                        "Thalovant API returned an unexpected response shape."
+                        "Thalovant API returned an unexpected response shape.",
+                        status_code=response.status_code,
                     )
                 return body
             error = (
@@ -548,12 +549,14 @@ class ThalovantControlPlane:
                 wait += 5.0
             elif error == "access_denied":
                 raise ThalovantAPIError(
-                    "The device sign-in request was denied in the browser."
+                    "The device sign-in request was denied in the browser.",
+                    status_code=response.status_code,
                 )
             elif error == "expired_token":
                 raise ThalovantAPIError(
                     "The device sign-in code expired before it was approved. "
-                    "Call login_with_browser() again to request a new code."
+                    "Call login_with_browser() again to request a new code.",
+                    status_code=response.status_code,
                 )
             elif error != "authorization_pending":
                 raise ThalovantAPIError(_error_detail(response), status_code=response.status_code)
@@ -1580,9 +1583,13 @@ class ThalovantControlPlane:
         try:
             body = response.json()
         except ValueError as exc:
-            raise ThalovantAPIError("Thalovant API returned a non-JSON response.") from exc
+            raise ThalovantAPIError(
+                "Thalovant API returned a non-JSON response.", status_code=response.status_code
+            ) from exc
         if not isinstance(body, dict):
-            raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
+            raise ThalovantAPIError(
+                "Thalovant API returned an unexpected response shape.", status_code=response.status_code
+            )
         return body
 
     def _send(
@@ -1640,7 +1647,10 @@ class ThalovantControlPlane:
             # Requests error chains may contain URL credentials or query data.
             raise ThalovantAPIError("Could not reach the Thalovant API.") from None
         if 300 <= response.status_code < 400:
-            raise ThalovantAPIError("Thalovant API redirected the request; redirects are disabled.")
+            raise ThalovantAPIError(
+                "Thalovant API redirected the request; redirects are disabled.",
+                status_code=response.status_code,
+            )
         return response
 
 

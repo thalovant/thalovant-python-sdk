@@ -79,7 +79,7 @@ class ScriptedSession:
 SNAPSHOT = FakeResponse(200, {"config": {"env": []}, "revision": "a" * 64})
 
 
-@pytest.mark.parametrize("failure", [400, 401, 403, 404, 405, 409, 422, 429, 500, 503])
+@pytest.mark.parametrize("failure", [302, 307, 400, 401, 403, 404, 405, 409, 422, 429, 500, 503])
 def test_only_revision_conflicts_are_retried(failure):
     session = ScriptedSession([SNAPSHOT, FakeResponse(failure, {"detail": "Failure"})])
     with pytest.raises(ThalovantAPIError) as exc:
@@ -118,3 +118,28 @@ def test_malformed_snapshot_is_not_replaced_with_empty_config(config):
     with pytest.raises(ThalovantAPIError, match="invalid runtime configuration"):
         plane(session).update_runtime_group_config("g", {"lang": "fr-fr"})
     assert session.methods == ["GET"]
+
+
+@pytest.mark.parametrize("args", [(), ("failure",), ("failure", "context")])
+def test_http_status_preserves_existing_exception_construction(args):
+    error = ThalovantAPIError(*args, status_code=412)
+    assert error.args == args
+    assert error.status_code == 412
+    assert str(error) == str(Exception(*args))
+
+
+@pytest.mark.parametrize("error", ["access_denied", "expired_token"])
+def test_device_sign_in_errors_keep_their_http_status(error):
+    session = ScriptedSession([FakeResponse(400, {"error": error})])
+    with pytest.raises(ThalovantAPIError) as exc:
+        plane(session)._poll_device_token("test-device", interval=1, timeout=5)
+    assert exc.value.status_code == 400
+    assert session.methods == ["POST"]
+
+
+@pytest.mark.parametrize("payload", [[], "invalid", None])
+def test_malformed_http_response_keeps_its_status(payload):
+    session = ScriptedSession([FakeResponse(200, payload)])
+    with pytest.raises(ThalovantAPIError) as exc:
+        plane(session).get_runtime_group_config("g")
+    assert exc.value.status_code == 200

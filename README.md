@@ -871,7 +871,7 @@ handshake, and transport health.
 - `control.create_runtime_group(payload)`
 - `control.update_runtime_group(runtime_group_id, payload)`
 - `control.get_runtime_group_config(runtime_group_id)`
-- `control.update_runtime_group_config(runtime_group_id, config, personas=None)`
+- `control.update_runtime_group_config(runtime_group_id, config, *, personas=None, merge=True)`
 - `control.release_runtime_group(runtime_group_id, channel=..., ...)`
 - `control.delete_runtime_group(runtime_group_id)`
 - `control.install_runtime_group_skill(runtime_group_id, skill_id, ...)`
