@@ -15,13 +15,19 @@ Constructors:
 - `ThalovantClient.from_identity_file(path, **options)`
 - `ThalovantClient.from_env(**options)`
 
+Options: `useragent`, `connect_timeout`, `handshake_timeout`, `send_timeout`,
+`reply_settle_seconds`, `empty_reply_wait_seconds`, `auto_reconnect`,
+`reconnect_attempts`, `protocol`, `transport`, `noise_state_dir`, and
+`self_signed` (default `False`: HTTPS and WSS certificates are checked; set it
+only for a development hub).
+
 Common methods:
 
 - `connect()`
 - `close()` / `disconnect()`
 - `healthcheck() -> ThalovantHealth`
 - `doctor() -> ThalovantDoctorReport`
-- `ask(text, timeout=12.0, lang="en-us", context=None, session_id=None, request_id=None) -> ThalovantReply`
+- `ask(text, timeout=12.0, lang="en-us", context=None, session_id=None, request_id=None, stt_lang=None, pipeline=None, location=None) -> ThalovantReply`
 - `send_utterance(text, lang="en-us", context=None, session_id=None, request_id=None)`
 - `send_action(payload, title=None, lang="en-us", context=None, session_id=None, request_id=None)`
 - `send_code(value, kind="code", label=None, lang="en-us", context=None, session_id=None, request_id=None)`
@@ -31,6 +37,16 @@ Common methods:
 - `listen(event_name, timeout=None, max_events=None, predicate=None, context=None, session_id=None, request_id=None)`
 - `emit(event_type, data=None, context=None)`
 - `intents(languages=None, timeout=5.0, describe=True, fallback=True) -> HubIntentInventory`
+
+`ask()` takes three hints a hub reads, merged into `context` by
+`request_context()`: `stt_lang`, the language a recogniser decided on, which
+ovos-core reads before `request_lang` and `detected_lang`; `pipeline`, the
+intent stages to run in order, under `session`; and `location`, what
+`build_location()` returns, at the request level where it outranks the hub's
+own configured place. Embedded skill sounds (`mycroft.audio.queue`) are
+collected for the request and returned in order with the speech in
+`reply.media_events`; they arrive within the settle window, so a client that
+plays them wants `reply_settle_seconds` above zero.
 - `list_intents(lang=None, timeout=5.0, include_definitions=False) -> list[IntentRegistration]`
 - `describe_intent(skill_id, intent_name, lang=None, timeout=5.0) -> list[IntentDefinition]`
 
@@ -456,6 +472,8 @@ Helpers:
 - `lang`
 - `is_failure`
 - `is_policy_denied`
+- `is_audio` / `has_audio`
+- `audio_bytes(max_bytes=4 MiB)` — an embedded skill sound, decoded from its hexadecimal `binary_data`; `ValueError` for an event without a clip, one that is not hexadecimal, or one over the limit
 - `matches_context(...)`
 - `as_dict()`
 - `rich_media`
@@ -476,7 +494,8 @@ What a hub can be asked, from `ThalovantClient.intents()`.
 A `HubIntent` has `skill_id`, `name`, `id` (`skill_id:name`), `engine`
 (`padatious` or `adapt`), `enabled`, `phrases: dict[str, tuple[str, ...]]` keyed
 by language, `phrases_for(lang)`, `languages`, and `examples(lang=None, limit=2)`,
-which prefers whole sentences over ones with a slot.
+which prefers whole sentences over ones with a slot; `examples(..., speakable=True, slots=...)`
+renders each pattern as a sentence a person could say (see `speakable()`).
 
 `IntentRegistration` is one row of the manifest (`skill_id`, `intent_name`,
 `lang`, `method`, `enabled`, `session_id`, optional `definition`).
@@ -496,6 +515,10 @@ Fields and helpers:
 - `request_id`
 - `events`
 - `failure_event`
+- `lang` — the language the hub answered in, from the first event that names one
+- `media_events` — speech and embedded skill sounds, in the order the hub sent them
+- `has_audio`
+- `dropped_media` — skill sounds over the clip or reply budget, left out of `events`
 - `as_dict()`
 - `display_items(max_text_chars=None)`
 
@@ -515,9 +538,15 @@ UI-friendly output item:
 ## Context Helpers
 
 - `build_client_context(...)`
+- `build_location(city, region, country, latitude, longitude, timezone) -> dict | None`
+- `request_context(context, stt_lang=None, pipeline=None, location=None) -> dict | None`
+- `speakable(pattern, slots=None) -> str`
 
-Builds generic user/auth/device/channel/platform metadata for web, mobile,
-kiosk, service, and enterprise clients.
+`build_client_context` builds generic user/auth/device/channel/platform
+metadata for web, mobile, kiosk, service, and enterprise clients.
+`build_location` is where the caller is, in the shape the hub's skills read:
+`None` without a city, and a zero or out-of-range coordinate is left out.
+`request_context` merges the per-request hints `ask()` takes into a context.
 
 ### `ThalovantHealth`
 
@@ -547,6 +576,7 @@ Diagnostic report:
 - `EVENT_UTTERANCE_HANDLED`
 - `EVENT_INTENT_FAILURE`
 - `EVENT_POLICY_DENIED`
+- `EVENT_AUDIO_QUEUE`
 
 ## Exceptions
 

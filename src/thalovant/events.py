@@ -34,6 +34,16 @@ EVENT_PADATIOUS_MANIFEST = "intent.service.padatious.manifest"
 EVENT_FALLBACK_LIST = "ovos.skills.fallback.list"
 EVENT_FALLBACK_LIST_RESPONSE = "ovos.skills.fallback.list.response"
 EVENT_QUERY_TIMEOUT = "hive.query.timeout"
+# An embedded skill sound. A skill that would play a clip on the hub's own
+# speaker sends it here for a remote client instead, hex-encoded, so the
+# client can play it in order with the speech around it.
+EVENT_AUDIO_QUEUE = "mycroft.audio.queue"
+# What a reply plays, in the order the hub sent it.
+MEDIA_EVENTS = (EVENT_SPEAK, EVENT_OVOS_UTTERANCE_SPEAK, EVENT_AUDIO_QUEUE)
+# A clip is bounded before anything decodes it: the hub can send anything.
+MAX_AUDIO_CLIP_BYTES = 4 * 1024 * 1024
+# And one reply is bounded as a whole, however many clips it carries.
+MAX_REPLY_MEDIA_BYTES = 16 * 1024 * 1024
 FAILURE_EVENTS = (
     EVENT_INTENT_FAILURE,
     EVENT_INTENT_UNMATCHED,
@@ -101,6 +111,35 @@ class ThalovantEvent:
         session = _session_from_context(self.context)
         lang = self.data.get("lang") or self.context.get("lang") or session.get("lang")
         return str(lang) if lang is not None else None
+
+    @property
+    def is_audio(self) -> bool:
+        return self.name == EVENT_AUDIO_QUEUE
+
+    @property
+    def has_audio(self) -> bool:
+        """Whether this is a skill sound carrying an embedded clip."""
+        encoded = self.data.get("binary_data") if self.is_audio else None
+        return isinstance(encoded, str) and bool(encoded)
+
+    def audio_bytes(self, *, max_bytes: int = MAX_AUDIO_CLIP_BYTES) -> bytes:
+        """The embedded clip, decoded from its hexadecimal ``binary_data``.
+
+        Only the bytes the event carries: a path or URL in the payload names
+        something on the hub's own filesystem or network and is not fetched.
+        ``ValueError`` for an event without a clip, one that is not
+        hexadecimal, or one over ``max_bytes`` -- checked on the encoded
+        length, before anything is decoded.
+        """
+        encoded = self.data.get("binary_data") if self.is_audio else None
+        if not isinstance(encoded, str) or not encoded:
+            raise ValueError("this event carries no embedded audio")
+        if len(encoded) > max_bytes * 2:
+            raise ValueError("embedded audio exceeds the clip limit")
+        try:
+            return bytes.fromhex(encoded)
+        except ValueError as error:
+            raise ValueError("embedded audio is not hexadecimal") from error
 
     @property
     def is_policy_denied(self) -> bool:

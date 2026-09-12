@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .events import ThalovantEvent
+from .events import EVENT_AUDIO_QUEUE, MEDIA_EVENTS, ThalovantEvent
 from .rich import ThalovantDisplayItem, strip_ssml
 
 ThalovantConnectionPhase = Literal[
@@ -82,10 +82,42 @@ class ThalovantReply:
     raw_messages: tuple[Any, ...] = field(default_factory=tuple)
     events: tuple[ThalovantEvent, ...] = field(default_factory=tuple)
     failure_event: ThalovantEvent | None = None
+    #: Skill sounds the hub sent that were over the clip or reply budget and
+    #: were left out of ``events`` rather than kept in memory.
+    dropped_media: int = 0
 
     @property
     def ok(self) -> bool:
         return self.handled and self.failure_event is None
+
+    @property
+    def lang(self) -> str | None:
+        """The language the hub answered in: the first event that names one.
+
+        Taken from the reply rather than the request because the hub is
+        entitled to disagree -- a skill with no locale for the session answers
+        in its own language, and a client that renders that sentence with the
+        requested language's voice is the one outcome that sounds broken rather
+        than untranslated. ``None`` when no event says.
+        """
+        for event in self.events:
+            if event.lang:
+                return event.lang
+        return None
+
+    @property
+    def media_events(self) -> tuple[ThalovantEvent, ...]:
+        """Speech and embedded skill sounds, in the order the hub sent them.
+
+        ``text`` is the speech joined; this is the same speech with the clips
+        between the sentences where a skill put them, for a client that plays
+        a reply rather than prints it.
+        """
+        return tuple(event for event in self.events if event.name in MEDIA_EVENTS)
+
+    @property
+    def has_audio(self) -> bool:
+        return any(event.name == EVENT_AUDIO_QUEUE for event in self.events)
 
     @property
     def display_text(self) -> str:
@@ -112,9 +144,11 @@ class ThalovantReply:
             "ok": self.ok,
             "session_id": self.session_id,
             "request_id": self.request_id,
+            "lang": self.lang,
             "display_items": [item.as_dict() for item in self.display_items()],
             "failure_event": self.failure_event.as_dict() if self.failure_event else None,
             "events": [event.as_dict() for event in self.events],
+            "dropped_media": self.dropped_media,
         }
 
 

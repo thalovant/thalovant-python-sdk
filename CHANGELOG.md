@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1 — 2026-09-12
+
+What a voice client needs, moved in from the Custos satellite, which had
+built each of these for itself against the SDK's public surface.
+
+- `ThalovantClient(self_signed=...)` reaches the HTTPS and WSS transports through the client factory. Certificate checking stays on by default; a client that wanted to say so no longer has to build its own transport.
+- `ask(stt_lang=, pipeline=, location=)` on both clients, merged into the request context by the new `request_context()`: `stt_lang` is the hub's highest-priority language hint (the one a recogniser decided), `pipeline` names the intent stages under `session`, and `location` — built by the new `build_location()` — is sent at the request level, where it outranks the hub's own configured place.
+- Embedded skill sounds. `ask()` now subscribes to `mycroft.audio.queue` (`EVENT_AUDIO_QUEUE`) for the request and keeps those events in order with the speech: `reply.media_events`, `reply.has_audio`, `event.is_audio`, `event.has_audio`, and `event.audio_bytes()` decode the bounded hex clip; a clip over 4 MiB, or a reply over 16 MiB of clips, is left out and counted in `reply.dropped_media`. Clips arrive within the settle window, so a client that plays them wants `reply_settle_seconds` above zero.
+- `reply.lang`: the language the hub answered in, from the first event that names one, also in `as_dict()`.
+- `speakable(pattern, slots=None)` renders an intent pattern as one sentence a person could say — optional parts dropped, alternations collapsed, slots filled from `slots` or named — and `HubIntent.examples(..., speakable=True, slots=...)` and `thalovant intents --speakable` use it.
+
 ## 0.6.0 — 2026-09-12
 
 - Add shared-runtime hub skill history with bounded limits.
