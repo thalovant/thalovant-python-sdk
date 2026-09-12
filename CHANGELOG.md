@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 — 2026-09-12
+
+- Add shared-runtime hub skill history with bounded limits.
+- Correct hub skill documentation: changes affect every hub sharing the runtime group.
+
 ## 0.5.16
 
 - Reject malformed rows in hub skill listings instead of silently reporting incomplete state.
