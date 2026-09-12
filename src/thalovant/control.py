@@ -999,9 +999,9 @@ class ThalovantControlPlane:
 
         path = f"/v1/runtime-groups/{runtime_group_id}/config"
         if not merge:
-            body: dict[str, Any] = {"config": dict(config)}
+            body: dict[str, Any] = {"config": deepcopy(dict(config))}
             if personas is not None:
-                body["personas"] = dict(personas)
+                body["personas"] = deepcopy(dict(personas))
             return self._request("PATCH", path, json=body)
 
         # Freeze the complete caller payload before I/O so conflict retries

@@ -102,6 +102,24 @@ def test_merge_snapshots_nested_config_and_personas_before_io():
     assert session.writes == 2
 
 
+def test_replacement_snapshots_nested_values_before_transport_dispatch():
+    config = {"nested": {"value": "original"}}
+    personas = {"default": {"name": "original"}}
+
+    class MutatingSession:
+        def request(self, method, url, **kwargs):
+            assert method == "PATCH"
+            config["nested"]["value"] = "changed"
+            personas["default"]["name"] = "changed"
+            assert kwargs["json"] == {
+                "config": {"nested": {"value": "original"}},
+                "personas": {"default": {"name": "original"}},
+            }
+            return FakeResponse(200, {})
+
+    plane(MutatingSession()).update_runtime_group_config("g", config, personas=personas, merge=False)
+
+
 @pytest.mark.parametrize("failure", [302, 307, 400, 401, 403, 404, 405, 409, 422, 429, 500, 503])
 def test_only_revision_conflicts_are_retried(failure):
     session = ScriptedSession([SNAPSHOT, FakeResponse(failure, {"detail": "Failure"})])
