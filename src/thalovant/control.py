@@ -536,7 +536,8 @@ class ThalovantControlPlane:
             if 200 <= response.status_code < 300:
                 if not isinstance(body, dict):
                     raise ThalovantAPIError(
-                        "Thalovant API returned an unexpected response shape."
+                        "Thalovant API returned an unexpected response shape.",
+                        status_code=response.status_code,
                     )
                 return body
             error = (
@@ -548,15 +549,17 @@ class ThalovantControlPlane:
                 wait += 5.0
             elif error == "access_denied":
                 raise ThalovantAPIError(
-                    "The device sign-in request was denied in the browser."
+                    "The device sign-in request was denied in the browser.",
+                    status_code=response.status_code,
                 )
             elif error == "expired_token":
                 raise ThalovantAPIError(
                     "The device sign-in code expired before it was approved. "
-                    "Call login_with_browser() again to request a new code."
+                    "Call login_with_browser() again to request a new code.",
+                    status_code=response.status_code,
                 )
             elif error != "authorization_pending":
-                raise ThalovantAPIError(_error_detail(response))
+                raise ThalovantAPIError(_error_detail(response), status_code=response.status_code)
             remaining = deadline - clock()
             if remaining <= 0:
                 raise ThalovantTimeoutError(
@@ -977,31 +980,48 @@ class ThalovantControlPlane:
         Pass ``merge=False`` for the raw replacing call, when the intent really
         is to define the whole configuration.
 
-        **The merge is read-then-write and the API offers nothing to make it
-        atomic** -- the config route carries no ETag or revision, so there is
-        nothing to send back conditionally. Two callers merging different keys
-        at the same time will both succeed and the later write wins, losing the
-        earlier one. That is strictly better than the replacing behaviour it
-        replaces, which lost every key the caller did not name whether or not
-        anyone else was writing, but it is not a lock: a caller that must not
-        race should serialise its own updates.
+        Merges use the GET revision in a conditional PUT. If another writer
+        changes the configuration, reread and reapply the original delta, up to
+        three write attempts. Only a 412 conflict is retried; network and other
+        failures propagate. An older API without revisions or conditional PUT
+        support is rejected without falling back to an unsafe write.
+
+        ``merge=False`` retains unconditional PATCH replacement semantics.
+        Concurrent writers of the same key intentionally replace that value;
+        use guarded writes consistently to preserve unrelated changes.
 
         ``personas`` is replaced only when provided, merge or not.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
 
-        if merge:
-            stored = self.get_runtime_group_config(runtime_group_id).get("config")
-            config = _deep_merge(stored if isinstance(stored, Mapping) else {}, config)
-        body: dict[str, Any] = {"config": dict(config)}
-        if personas is not None:
-            body["personas"] = dict(personas)
-        return self._request(
-            "PATCH",
-            f"/v1/runtime-groups/{runtime_group_id}/config",
-            json=body,
-        )
+        path = f"/v1/runtime-groups/{runtime_group_id}/config"
+        if not merge:
+            body: dict[str, Any] = {"config": dict(config)}
+            if personas is not None:
+                body["personas"] = dict(personas)
+            return self._request("PATCH", path, json=body)
+
+        for attempt in range(3):
+            snapshot = self.get_runtime_group_config(runtime_group_id)
+            revision = snapshot.get("revision")
+            if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+                raise ThalovantAPIError(
+                    "This API does not support safe configuration merges; "
+                    "upgrade the API before retrying."
+                )
+            stored = snapshot.get("config")
+            if not isinstance(stored, Mapping):
+                raise ThalovantAPIError("Thalovant API returned an invalid runtime configuration.")
+            body = {"config": _deep_merge(stored, config), "expected_revision": revision}
+            if personas is not None:
+                body["personas"] = dict(personas)
+            try:
+                return self._request("PUT", path, json=body)
+            except ThalovantAPIError as exc:
+                if exc.status_code != 412 or attempt == 2:
+                    raise
+        raise AssertionError("Configuration retry limit exhausted")  # pragma: no cover
 
     def release_runtime_group(
         self,
@@ -1557,15 +1577,19 @@ class ThalovantControlPlane:
     ) -> dict[str, Any]:
         response = self._send(method, path, json=json, params=params, headers=headers, auth=auth)
         if response.status_code < 200 or response.status_code >= 300:
-            raise ThalovantAPIError(_error_detail(response))
+            raise ThalovantAPIError(_error_detail(response), status_code=response.status_code)
         if not response.text.strip():
             return {}
         try:
             body = response.json()
         except ValueError as exc:
-            raise ThalovantAPIError("Thalovant API returned a non-JSON response.") from exc
+            raise ThalovantAPIError(
+                "Thalovant API returned a non-JSON response.", status_code=response.status_code
+            ) from exc
         if not isinstance(body, dict):
-            raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
+            raise ThalovantAPIError(
+                "Thalovant API returned an unexpected response shape.", status_code=response.status_code
+            )
         return body
 
     def _send(
@@ -1623,7 +1647,10 @@ class ThalovantControlPlane:
             # Requests error chains may contain URL credentials or query data.
             raise ThalovantAPIError("Could not reach the Thalovant API.") from None
         if 300 <= response.status_code < 400:
-            raise ThalovantAPIError("Thalovant API redirected the request; redirects are disabled.")
+            raise ThalovantAPIError(
+                "Thalovant API redirected the request; redirects are disabled.",
+                status_code=response.status_code,
+            )
         return response
 
 

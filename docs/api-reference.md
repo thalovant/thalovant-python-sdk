@@ -238,11 +238,14 @@ spellings, which are converted before the request is sent.
   patch of `replicas` and container `resources`. No `If-Match` is used.
 - `get_runtime_group_config(runtime_group_id)` (needs only `hubs:read`) and
   `update_runtime_group_config(runtime_group_id, config, *, personas=None, merge=True)` —
-  `GET`/`PATCH /v1/runtime-groups/{id}/config`. The update **merges** `config`
-  into a snapshot read by the Python helper before the API replaces the stored
-  configuration. This read/merge/write is not atomic: serialize writers because
-  the route provides no revision or conditional-write token. `merge=False`
-  replaces the full configuration. `personas` is replaced only when passed.
+  `GET`/conditional `PUT /v1/runtime-groups/{id}/config`. The helper merges
+  `config` into the latest snapshot and sends its `revision` as `expected_revision`.
+  A 412 conflict triggers a fresh read and merge of the original caller delta,
+  up to three write attempts. Other failures, including network failures, are
+  not retried. Older APIs without revisions or conditional PUT fail without a
+  write. `merge=False` uses legacy unconditional PATCH replacement and requires
+  coordinating writers. Lists are replaced; `personas` is replaced only when passed.
+  HTTP failures expose `ThalovantAPIError.status_code`.
 - `release_runtime_group(runtime_group_id, ...)` —
   `POST /v1/runtime-groups/{id}/release`, with the same options as
   `release_hub`.
