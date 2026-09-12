@@ -926,3 +926,5 @@ never repeats an accepted mutation and starts no new read after its deadline;
 an already-running HTTP request retains its normal request timeout.
 
 Read history with `api.list_hub_skill_history(hub_id, limit=50)`; it returns the API JSON envelope.
+
+When using `HubIntent.examples(speakable=True)`, version 0.6.2 preserves complete source phrases ahead of slot-based phrases before limiting the results.

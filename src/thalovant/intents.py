@@ -251,16 +251,19 @@ class HubIntent:
         """
 
         pool = self.phrases_for(lang) if lang else next(iter(self.phrases.values()), ())
+        slot_rank: dict[str, bool] = {}
         if speakable:
             spoken: list[str] = []
             for text in pool:
                 sentence = _speakable(text, slots)
-                if sentence and sentence not in spoken:
-                    spoken.append(sentence)
+                if sentence:
+                    slot_rank[sentence] = slot_rank.get(sentence, True) and "{" in text
+                    if sentence not in spoken:
+                        spoken.append(sentence)
             pool = tuple(spoken)
         if limit <= 0:
             return pool
-        return tuple(sorted(pool, key=lambda text: ("{" in text, len(text)))[:limit])
+        return tuple(sorted(pool, key=lambda text: (slot_rank.get(text, "{" in text), len(text)))[:limit])
 
     def as_dict(self) -> dict[str, Any]:
         return {
