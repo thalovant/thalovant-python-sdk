@@ -42,7 +42,11 @@ dependencies = [
     "poorman-handshake>=2.0.0a3",
     "paho-mqtt>=2.1.0",
     "PyYAML>=6.0.2",
-    "requests>=2.31.0",
+    # Security floors: Requests GHSA-gc5v-m9x4-r6x2 and cryptography
+    # GHSA-g6cj-pr64-35w5. Do not allow an existing vulnerable install to satisfy
+    # the SDK's requirements just because the latest resolver output is safe.
+    "requests>=2.33.0",
+    "cryptography>=50.0.0",
 ]
 
 [project.urls]
