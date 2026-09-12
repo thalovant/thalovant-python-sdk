@@ -496,9 +496,13 @@ What a hub can be asked, from `ThalovantClient.intents()`.
 
 A `HubIntent` has `skill_id`, `name`, `id` (`skill_id:name`), `engine`
 (`padatious` or `adapt`), `enabled`, `phrases: dict[str, tuple[str, ...]]` keyed
-by language, `phrases_for(lang)`, `languages`, and `examples(lang=None, limit=2)`,
-which prefers whole sentences over ones with a slot; `examples(..., speakable=True, slots=...)`
-renders each pattern as a sentence a person could say (see `speakable()`).
+by language, `phrases_for(lang)` (by the matcher the rest of OVOS uses, so `fr`
+finds `fr-FR`), `languages`, and `examples(lang=None, limit=2)`, best first: whole
+sentences before prefixes waiting for an entity, sentences before patterns with a
+slot, the fullest phrasing first. `examples(..., speakable=True, slots=...)` renders
+each pattern as a sentence a person could say (see `speakable()`);
+`examples(..., sentence=True)` also sets it the way a person reads it, capitalised
+and closed with the mark the language's rules give it (see `thalovant.listing`).
 
 `IntentRegistration` is one row of the manifest (`skill_id`, `intent_name`,
 `lang`, `method`, `enabled`, `session_id`, optional `definition`).
@@ -543,7 +547,28 @@ UI-friendly output item:
 - `build_client_context(...)`
 - `build_location(city, region, country, latitude, longitude, timezone) -> dict | None`
 - `request_context(context, stt_lang=None, pipeline=None, location=None) -> dict | None`
-- `speakable(pattern, slots=None) -> str`
+- `speakable(pattern, slots=None, lang=None) -> str`
+- `as_sentence(text, lang=None) -> str`
+
+## Listing helpers (`thalovant.listing`)
+
+Everything that turns a registered pattern into something a person reads is
+in `thalovant.listing`, and nothing in it knows a word of any language: what
+makes a phrase a question, which endings mean a prefix waiting for an entity,
+what a slot reads as and which marks close a sentence all come from the
+[`thalovant-languages`](https://github.com/thalovant/thalovant-languages)
+package (`pip install thalovant[listing]`), one file per language, found with
+`ovos_spec_tools.language` so `fr-CA` reads the French file. A language
+nothing describes gets no rule at all rather than another language's, and
+so does a client without the package: its phrases print capitalised and bare.
+
+- `available() -> bool` — whether the language data is installed
+- `language_data(lang) -> dict`
+- `slot_examples(lang) -> dict[str, str]`
+- `rank(phrases, lang) -> tuple[str, ...]` — the order worth showing them in
+- `dangling(text, lang) -> bool`, `asks(text, lang) -> bool`
+- `as_sentence(text, lang=None) -> str`
+- `sentence_ends() -> str`
 
 `build_client_context` builds generic user/auth/device/channel/platform
 metadata for web, mobile, kiosk, service, and enterprise clients.

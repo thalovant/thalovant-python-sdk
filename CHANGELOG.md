@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.5 — 2026-09-12
+
+The listing half of what the voice satellite knew about languages, so that
+`thalovant intents --speakable` and `thalovant-voice intents` print the same
+sentences from one implementation.
+
+- `thalovant.listing`: `as_sentence(text, lang)` sets a rendered pattern the way a person reads it -- capitalised, closed with a question mark where the language's rules say it asks, left bare where they say nothing; `rank(phrases, lang)` orders registered phrases best first (whole sentences before prefixes waiting for an entity, sentences before patterns with a slot, the fullest phrasing first). Every word a rule turns on comes from the `thalovant-languages` package (the `listing` extra), one file per language shared with the voice satellite; the SDK itself carries no language data, and without the extra a listing prints capitalised, bare lines.
+- `speakable(pattern, slots=None, lang=None)` fills a slot from the language's own examples when the caller names none: `{level}` reads "fifty" in English and "cinquante" in French.
+- `HubIntent.examples()` ranks by `listing.rank`, takes `sentence=True`, and counts what it returns rather than what it tried, so a pattern that renders to nothing no longer uses up a place. `phrases_for(lang)` matches languages the way the rest of OVOS does (`ovos_spec_tools.language`): `fr` finds `fr-FR`.
+- `thalovant intents --speakable` prints sentences.
+- New dependency `ovos-spec-tools[langcodes]` (the matcher the rest of OVOS uses); the language data itself is the `thalovant[listing]` extra, `thalovant-languages`.
+
 ## 0.6.4 — 2026-09-12
 
 - Require Requests 2.33.0 and cryptography 50.0.0 or newer to exclude known vulnerable versions. CI exercises those floors on Python 3.10 and audits both runtime and documentation dependencies.

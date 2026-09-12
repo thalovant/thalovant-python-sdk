@@ -45,6 +45,7 @@ from .events import (
     ThalovantEvent,
 )
 from .identity import MqttBrokerCredentials, ThalovantIdentity, default_config_path
+from .listing import as_sentence
 from .intents import (
     HubIntent,
     HubIntentInventory,
@@ -136,6 +137,7 @@ __all__ = [
     "build_location",
     "request_context",
     "speakable",
+    "as_sentence",
     "EVENT_AUDIO_QUEUE",
     "default_config_path",
     "mqtt_topics_for_identity",

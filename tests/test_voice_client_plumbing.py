@@ -220,7 +220,12 @@ def test_examples_can_be_rendered_speakable():
 
 @pytest.mark.parametrize("patterns, expected", [
     (("{query}", "what time is it"), "what time is it"),
-    (("{query}", "say hello", "query"), "query"),
+    # Rendered the same from a slot pattern and from a literal: it is a whole
+    # phrase, and the slot pattern behind it does not demote it.
+    (("{query}", "query"), "query"),
+    # Among whole phrases the fullest wins, not the shortest ("aqi" was the
+    # one example the weather skill got to show).
+    (("{query}", "say hello", "query"), "say hello"),
 ])
 def test_speakable_examples_preserve_source_slot_priority(patterns, expected):
     intent = HubIntent(skill_id="s", name="n", engine="padatious",
