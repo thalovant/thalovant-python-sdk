@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import logging
 import re
 import queue
 import socket
@@ -675,10 +676,37 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
         client.close()
 
 
+# The OVOS client library logs a deprecation every time it reads a session
+# whose location is in the retired nested shape -- and the hub's own sessions
+# arrive in that shape, on every reply, as do the ones hivemind's fake bus
+# builds. Nothing a client can change: the shape is the hub's. Three lines per
+# question in a voice satellite's journal is noise, so that one record is
+# dropped here, once, at the logger the library writes to. Every other warning
+# from that logger still goes through.
+_UPSTREAM_LOCATION_DEPRECATION = "nested mycroft.conf 'location' shape"
+_OVOS_LOGGER = "OVOS"
+
+
+class _QuietUpstreamLocationDeprecation(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            return _UPSTREAM_LOCATION_DEPRECATION not in record.getMessage()
+        except Exception:  # a record that cannot even render is not ours to drop
+            return True
+
+
+def quiet_upstream_location_deprecation() -> None:
+    """Drop the library's deprecation about the hub's session location shape."""
+    logger = logging.getLogger(_OVOS_LOGGER)
+    if not any(isinstance(f, _QuietUpstreamLocationDeprecation) for f in logger.filters):
+        logger.addFilter(_QuietUpstreamLocationDeprecation())
+
+
 class HiveMindWSSTransport(HiveMindHTTPTransport):
     """Adapter around `hivemind_bus_client.client.HiveMessageBusClient`."""
 
     def connect(self) -> None:
+        quiet_upstream_location_deprecation()
         if self.is_connected():
             return
         endpoint = self.identity.endpoint_for("wss")

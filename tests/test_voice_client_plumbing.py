@@ -231,3 +231,22 @@ def test_speakable_examples_preserve_source_slot_priority(patterns, expected):
     intent = HubIntent(skill_id="s", name="n", engine="padatious",
                        phrases={"en-us": patterns})
     assert intent.examples("en-us", 1, speakable=True) == (expected,)
+
+
+# -- the hub's session shape is not the client's to warn about ----------------
+
+def test_the_upstream_location_deprecation_is_dropped_and_nothing_else_is(caplog):
+    import logging
+
+    from thalovant.transport import quiet_upstream_location_deprecation
+
+    quiet_upstream_location_deprecation()
+    quiet_upstream_location_deprecation()  # idempotent: one filter, not two
+    logger = logging.getLogger("OVOS")
+    assert sum(type(f).__name__ == "_QuietUpstreamLocationDeprecation" for f in logger.filters) == 1
+    with caplog.at_level(logging.WARNING, logger="OVOS"):
+        logger.warning("Deprecation version=3.0.0. Caller=hivemind_bus_client.protocol:853. "
+                       "the nested mycroft.conf 'location' shape (city/coordinate/timezone) "
+                       "on session.location is deprecated")
+        logger.warning("something else the library has to say")
+    assert [r.getMessage() for r in caplog.records] == ["something else the library has to say"]

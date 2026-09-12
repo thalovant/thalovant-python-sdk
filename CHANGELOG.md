@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6 — 2026-09-12
+
+- The OVOS client library logs a deprecation for every session it reads whose location is in the retired nested shape, and the hub's own sessions arrive that way on every reply. The WSS transport drops that one record at the library's logger; every other warning still goes through. Three lines per question in a voice satellite's journal, and nine an hour in a connector's, was noise about something no client can change.
+
 ## 0.6.5 — 2026-09-12
 
 The listing half of what the voice satellite knew about languages, so that
