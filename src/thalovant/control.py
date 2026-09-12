@@ -1250,7 +1250,7 @@ class ThalovantControlPlane:
         """List the skills one hub carries, with their install state.
 
         Where :meth:`list_runtime_group_inventory` describes a whole runtime
-        group, this describes **one hub**. The :class:`HubSkillList` envelope
+        group, this selects the runtime through its hub UUID. The :class:`HubSkillList` envelope
         says where the reading came from (``source``, ``observed_at``, the
         runtime's phase and message); each :class:`HubSkill` row in ``data``
         carries the requested ``version``, the ``installed_version`` and
@@ -1269,6 +1269,17 @@ class ThalovantControlPlane:
 
         return HubSkillList.from_dict(self._request("GET", _hub_skills_path(hub_id)))
 
+    def list_hub_skill_history(self, hub_id: str, *, limit: int = 50) -> dict[str, Any]:
+        """Read newest-first skill events and operations for the hub's shared runtime.
+
+        Requires ``hubs:inspect`` (implied by ``hubs:read``). The limit is 1–200.
+        Entries retain the API's event/operation fields, including nullable actor
+        and version information. Every hub sharing this runtime sees its history.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("limit must be an integer from 1 to 200")
+        return self._request("GET", f"{_hub_skills_path(hub_id)}/history", params={"limit": limit})
+
     def install_hub_skill(
         self,
         hub_id: str,
@@ -1278,7 +1289,10 @@ class ThalovantControlPlane:
         wait: bool = False,
         timeout: float = DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
     ) -> HubSkillOperation:
-        """Install a skill on one hub.
+        """Install a skill on the runtime group attached to a hub.
+
+        All hubs sharing that runtime group are affected; a restricted token
+        must cover every served hub.
 
         The API accepts the change with HTTP 202 and applies it live on the
         hub, typically within about fifteen seconds and without restarting it.
@@ -1325,7 +1339,7 @@ class ThalovantControlPlane:
         wait: bool = False,
         timeout: float = DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
     ) -> HubSkillOperation:
-        """Move one hub's skill to another version.
+        """Move a skill on the hub's shared runtime group to another version.
 
         ``version`` is required: ``"latest"`` or an exact ``x.y.z``. The API
         accepts with HTTP 202 and ``state="updating"``; ``wait`` and
@@ -1350,7 +1364,7 @@ class ThalovantControlPlane:
         wait: bool = False,
         timeout: float = DEFAULT_HUB_SKILL_WAIT_TIMEOUT,
     ) -> HubSkillOperation:
-        """Remove a skill from one hub.
+        """Remove a skill from the hub's shared runtime group.
 
         The API accepts with HTTP 202 and ``state="removing"``; ``wait`` and
         ``timeout`` behave exactly as in :meth:`install_hub_skill`, converging
