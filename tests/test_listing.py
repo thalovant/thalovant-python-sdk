@@ -176,3 +176,34 @@ def test_without_the_languages_package_lines_are_bare_and_slots_keep_their_names
     assert speakable("volume [to] {level} percent", lang="en-US") == "volume level percent"
     assert listing.rank(("weather in", "what is the weather"), "en") == (
         "what is the weather", "weather in")  # by length and slots alone
+
+
+
+def test_examples_without_language_keep_the_selected_registration_locale():
+    intent = HubIntent(skill_id="s", name="n", engine="padatious", phrases={
+        "fr-FR": ("volume {level} pour cent",),
+        "en-US": ("volume {level} percent",),
+    })
+    assert intent.examples(speakable=True) == ("volume cinquante pour cent",)
+    assert intent.examples(sentence=True) == ("Volume cinquante pour cent.",)
+
+
+def test_question_patterns_keep_leading_global_flags(invented):
+    (invented / "xq" / "language.yaml").write_text(
+        "question_openers: [vark]\nquestion_patterns: ['(?i)^is it', '(?m)^can it']\n",
+        encoding="utf-8",
+    )
+    assert listing.asks("IS IT ready", "xq")
+    assert listing.asks("CAN IT work", "xq")
+    assert as_sentence("is it ready", "xq") == "Is it ready?"
+
+
+@pytest.mark.parametrize("rules,question", [
+    ("question_patterns: ['^can it']\n", "can it work"),
+    ("question_words_anywhere: [plim]\n", "go plim now"),
+])
+def test_optional_question_categories_work_without_openers(invented, rules, question):
+    (invented / "xq" / "language.yaml").write_text(rules, encoding="utf-8")
+    assert listing.asks(question, "xq")
+    assert as_sentence(question, "xq").endswith("?")
+    assert as_sentence("go home", "xq") == "Go home."
