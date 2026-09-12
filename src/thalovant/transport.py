@@ -681,10 +681,17 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
 # arrive in that shape, on every reply, as do the ones hivemind's fake bus
 # builds. Nothing a client can change: the shape is the hub's. Three lines per
 # question in a voice satellite's journal is noise, so that one record is
-# dropped here, once, at the logger the library writes to. Every other warning
-# from that logger still goes through.
+# dropped. Every other warning from the library still goes through.
+#
+# Where it is dropped matters. ovos-utils names the logger of a deprecation
+# after its call site ("OVOS - ovos_bus_client.session:_normalize_location_
+# input:87"), one logger per site with its own handler and no propagation, so
+# no logger a client could name in advance ever sees the record, and the
+# library offers no switch for deprecations. The one factory those loggers
+# come through, `LOG.create_logger`, is wrapped once to attach the filter to
+# every logger it hands out under the library's name; loggers it already
+# handed out get it too. Nothing else about the library's logging changes.
 _UPSTREAM_LOCATION_DEPRECATION = "nested mycroft.conf 'location' shape"
-_OVOS_LOGGER = "OVOS"
 
 
 class _QuietUpstreamLocationDeprecation(logging.Filter):
@@ -695,11 +702,31 @@ class _QuietUpstreamLocationDeprecation(logging.Filter):
             return True
 
 
-def quiet_upstream_location_deprecation() -> None:
-    """Drop the library's deprecation about the hub's session location shape."""
-    logger = logging.getLogger(_OVOS_LOGGER)
+def _quiet(logger: logging.Logger) -> None:
     if not any(isinstance(f, _QuietUpstreamLocationDeprecation) for f in logger.filters):
         logger.addFilter(_QuietUpstreamLocationDeprecation())
+
+
+def quiet_upstream_location_deprecation() -> None:
+    """Drop the library's deprecation about the hub's session location shape."""
+    try:
+        from ovos_utils.log import LOG
+    except ImportError:  # pragma: no cover - the transport cannot run without it
+        return
+    if getattr(LOG, "_thalovant_quiet_location", False):
+        return
+    factory = LOG.create_logger  # the bound classmethod, kept as it is
+
+    def create_logger(name: str, tostdout: bool = True) -> logging.Logger:
+        logger = factory(name, tostdout)
+        if str(name).startswith(str(LOG.name)):
+            _quiet(logger)
+        return logger
+
+    LOG.create_logger = staticmethod(create_logger)
+    for logger in list((getattr(LOG, "_loggers", None) or {}).values()):
+        _quiet(logger)
+    LOG._thalovant_quiet_location = True
 
 
 class HiveMindWSSTransport(HiveMindHTTPTransport):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7 — 2026-09-12
+
+- 0.6.6 attached its filter to the `OVOS` logger, which ovos-utils never uses for a deprecation: it names that logger after the call site, one per site, with its own handler and no propagation. The filter now rides the library's logger factory, so every logger it hands out under its name carries it, and the hub-shape deprecation is gone from the satellite's journal and the connector's. Measured on the node before the change: three lines per question.
+
 ## 0.6.6 — 2026-09-12
 
 - The OVOS client library logs a deprecation for every session it reads whose location is in the retired nested shape, and the hub's own sessions arrive that way on every reply. The WSS transport drops that one record at the library's logger; every other warning still goes through. Three lines per question in a voice satellite's journal, and nine an hour in a connector's, was noise about something no client can change.

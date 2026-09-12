@@ -235,18 +235,27 @@ def test_speakable_examples_preserve_source_slot_priority(patterns, expected):
 
 # -- the hub's session shape is not the client's to warn about ----------------
 
-def test_the_upstream_location_deprecation_is_dropped_and_nothing_else_is(caplog):
+def test_the_upstream_location_deprecation_is_dropped_where_the_library_logs_it():
     import logging
 
-    from thalovant.transport import quiet_upstream_location_deprecation
+    from ovos_utils.log import LOG, log_deprecation
+
+    from thalovant.transport import _QuietUpstreamLocationDeprecation, quiet_upstream_location_deprecation
 
     quiet_upstream_location_deprecation()
-    quiet_upstream_location_deprecation()  # idempotent: one filter, not two
-    logger = logging.getLogger("OVOS")
-    assert sum(type(f).__name__ == "_QuietUpstreamLocationDeprecation" for f in logger.filters) == 1
-    with caplog.at_level(logging.WARNING, logger="OVOS"):
-        logger.warning("Deprecation version=3.0.0. Caller=hivemind_bus_client.protocol:853. "
-                       "the nested mycroft.conf 'location' shape (city/coordinate/timezone) "
-                       "on session.location is deprecated")
-        logger.warning("something else the library has to say")
-    assert [r.getMessage() for r in caplog.records] == ["something else the library has to say"]
+    quiet_upstream_location_deprecation()  # idempotent
+    # The library names a deprecation's logger after its call site and hands
+    # it out through its factory: that logger carries the filter.
+    log_deprecation("the nested mycroft.conf 'location' shape (city/coordinate/timezone) "
+                    "on session.location is deprecated", "3.0.0")
+    named = [name for name in LOG._loggers if name.startswith(f"{LOG.name} - ")]
+    assert named, "the library did not create a call-site logger"
+    for name in named:
+        logger = LOG._loggers[name]
+        filters = [f for f in logger.filters if isinstance(f, _QuietUpstreamLocationDeprecation)]
+        assert len(filters) == 1, name
+        dropped = logging.LogRecord(name, logging.WARNING, __file__, 1,
+                                    "Deprecation version=3.0.0. Caller=x:1. the nested mycroft.conf "
+                                    "'location' shape (city/coordinate/timezone) is deprecated", (), None)
+        kept = logging.LogRecord(name, logging.WARNING, __file__, 1, "something else", (), None)
+        assert not logger.filter(dropped) and logger.filter(kept)
