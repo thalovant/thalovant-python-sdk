@@ -65,6 +65,14 @@ thalovant = "thalovant.cli:main"
 dev = [
     "build>=1.2",
     "pytest>=8.0",
+    "thalovant-languages>=0.1.0",
+]
+# Every word the intent listing turns a rule on -- what makes a phrase a
+# question, what a slot reads as -- lives in its own package, one file per
+# language, shared with the voice satellite. Without it a listing prints
+# bare, capitalised lines.
+listing = [
+    "thalovant-languages>=0.1.0",
 ]
 publish = [
     "build>=1.2",

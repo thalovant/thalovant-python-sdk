@@ -8,88 +8,43 @@ then turned the patterns into sentences, each in its own way and each with
 its own word lists, and printed different things for the same hub. This
 module is the one way.
 
-Everything that depends on the language is data, next to this file::
-
-    locale/<lang>/language.yaml   the words a rule turns on (LANGUAGE_KEYS)
-    locale/scripts.yaml           which marks close a sentence, per script
-
-A language is found by the same matcher the rest of OVOS uses
-(``ovos_spec_tools.language``): ``fr-CA`` reads the French file. A language
-nothing describes gets no rule at all rather than another language's --
-"Coupe le son?" reads as a defect, and so does a Spanish question closed
-with a full stop; a bare line is the honest answer.
+Nothing here knows a word of any language. What makes a phrase a question,
+what a slot reads as, which marks close a sentence: all of it is the
+``thalovant-languages`` package (the ``listing`` extra), one file per
+language, found by the matcher the rest of OVOS uses so ``fr-CA`` reads the
+French file. Without that package a listing still prints, capitalised and
+bare -- no rule, rather than a guessed one, because "Coupe le son?" reads
+as a defect and so does a Spanish question closed with a full stop.
 """
 from __future__ import annotations
 
 import re
 from functools import lru_cache
-from pathlib import Path
 from typing import Iterable
 
-import yaml
-from ovos_spec_tools.language import closest_lang
-
-LOCALE_ROOT = Path(__file__).resolve().parent / "locale"
-
-#: The keys a ``language.yaml`` may carry, and what the listing does with each.
-LANGUAGE_KEYS: dict[str, str] = {
-    "trailing_words": "a phrase ending here is a prefix waiting for an entity, not a sentence",
-    "question_openers": "a phrase opening here is a question",
-    "question_words_anywhere": "a phrase holding one of these anywhere is a question",
-    "question_patterns": "regular expressions (case-insensitive) that make a phrase a question",
-    "written_forms": "words spelled their own way once set as a sentence",
-    "slot_examples": "what a slot becomes when a pattern is read aloud",
-}
-
-# Past this many words a registered phrase stops being an example and
-# becomes a recital; among phrases at least this long, the shorter wins.
-_FULL_ENOUGH_WORDS = 8
+try:
+    import thalovant_languages as _languages
+except ImportError:  # pragma: no cover - exercised by monkeypatching below
+    _languages = None  # type: ignore[assignment]
 
 
-@lru_cache(maxsize=1)
-def described() -> tuple[str, ...]:
-    """The languages with a ``language.yaml``."""
-    if not LOCALE_ROOT.is_dir():
-        return ()
-    return tuple(sorted(p.name for p in LOCALE_ROOT.iterdir() if (p / "language.yaml").is_file()))
+def available() -> bool:
+    """Whether the language data is installed (``pip install thalovant[listing]``)."""
+    return _languages is not None
 
 
-@lru_cache(maxsize=32)
 def language_data(lang: str | None) -> dict:
-    """What the listing knows about a language: its ``language.yaml``.
-
-    Regions read their language's file (``fr-CA`` gets ``fr-FR``'s). A
-    language nothing describes, or none at all, is an empty mapping.
-    """
-    languages = described()
-    if not lang or not languages:
-        return {}
-    match = closest_lang(lang, languages)
-    if match is None:
-        return {}
-    loaded = yaml.safe_load((LOCALE_ROOT / match / "language.yaml").read_text(encoding="utf-8"))
-    return loaded if isinstance(loaded, dict) else {}
-
-
-@lru_cache(maxsize=1)
-def scripts() -> dict:
-    """What the code knows about writing systems: ``locale/scripts.yaml``."""
-    path = LOCALE_ROOT / "scripts.yaml"
-    if not path.is_file():
-        return {}
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def marks(kind: str, spacing: str) -> str:
-    """The punctuation ``scripts.yaml`` lists under ``kind`` (``sentence_ends``,
-    ``clause_breaks``) for ``spaced`` or ``unspaced`` scripts, as one string."""
-    return str((scripts().get(kind) or {}).get(spacing) or "")
+    """What is known about a language: its file in ``thalovant-languages``,
+    by the closest tag. An empty mapping for a language nothing describes,
+    for none at all, and for a client without the language data."""
+    return _languages.language(lang) if _languages is not None else {}
 
 
 def sentence_ends() -> str:
     """Every mark a sentence ends on, in any script."""
-    return marks("sentence_ends", "spaced") + marks("sentence_ends", "unspaced")
+    if _languages is None:
+        return ""
+    return _languages.marks("sentence_ends", "spaced") + _languages.marks("sentence_ends", "unspaced")
 
 
 def slot_examples(lang: str | None) -> dict[str, str]:
@@ -99,17 +54,15 @@ def slot_examples(lang: str | None) -> dict[str, str]:
 
 
 def _words(lang: str | None, key: str) -> frozenset[str]:
-    """One word list of the language's file, lower-cased.
+    """One word list of the language, lower-cased; with no language at all,
+    every described language's list together, so a listing with no language
+    still ranks a prefix in any language after a whole sentence."""
+    return _languages.words(lang, key) if _languages is not None else frozenset()
 
-    With no language at all, every described language's list together: a
-    listing with no language ranks phrases it cannot place, and a trailing
-    word in any language still marks a prefix rather than a sentence.
-    """
-    languages = (lang,) if lang else described()
-    return frozenset(
-        str(word).lower()
-        for tag in languages
-        for word in language_data(tag).get(key) or ())
+
+# Past this many words a registered phrase stops being an example and
+# becomes a recital; among phrases at least this long, the shorter wins.
+_FULL_ENOUGH_WORDS = 8
 
 
 def dangling(text: str, lang: str | None) -> bool:

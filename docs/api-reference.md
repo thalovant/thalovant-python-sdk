@@ -550,21 +550,22 @@ UI-friendly output item:
 ## Listing helpers (`thalovant.listing`)
 
 Everything that turns a registered pattern into something a person reads is
-in `thalovant.listing`, and everything in it that depends on the language is
-data next to the code: `locale/<lang>/language.yaml` carries the words a rule
-turns on (`trailing_words`, `question_openers`, `question_words_anywhere`,
-`question_patterns`, `written_forms`, `slot_examples`; the keys are
-`listing.LANGUAGE_KEYS`) and `locale/scripts.yaml` which marks close a
-sentence per script. A language is found with `ovos_spec_tools.language`
-(`fr-CA` reads the French file); a language nothing describes gets no rule at
-all rather than another language's, so its phrases print bare.
+in `thalovant.listing`, and nothing in it knows a word of any language: what
+makes a phrase a question, which endings mean a prefix waiting for an entity,
+what a slot reads as and which marks close a sentence all come from the
+[`thalovant-languages`](https://github.com/thalovant/thalovant-languages)
+package (`pip install thalovant[listing]`), one file per language, found with
+`ovos_spec_tools.language` so `fr-CA` reads the French file. A language
+nothing describes gets no rule at all rather than another language's, and
+so does a client without the package: its phrases print capitalised and bare.
 
-- `language_data(lang) -> dict`, `described() -> tuple[str, ...]`
+- `available() -> bool` — whether the language data is installed
+- `language_data(lang) -> dict`
 - `slot_examples(lang) -> dict[str, str]`
 - `rank(phrases, lang) -> tuple[str, ...]` — the order worth showing them in
 - `dangling(text, lang) -> bool`, `asks(text, lang) -> bool`
 - `as_sentence(text, lang=None) -> str`
-- `marks(kind, spacing) -> str`, `sentence_ends() -> str`
+- `sentence_ends() -> str`
 
 `build_client_context` builds generic user/auth/device/channel/platform
 metadata for web, mobile, kiosk, service, and enterprise clients.

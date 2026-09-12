@@ -1,42 +1,38 @@
 """A registered pattern, set the way a person reads it -- and every word a
-rule turns on read from the language's file, never a constant in the code.
+rule turns on read from the `thalovant-languages` package, never a
+constant here.
 
-Two gates. Every `language.yaml` in the tree is checked for shape, so a
-misspelt key or a pattern that does not compile fails here rather than on
-the first listing in that language. And a language that exists only as a
-directory in a temporary tree gets every rule its file states, which is the
-whole point: adding a language is adding a file.
+What the data files contain is the languages package's business and is
+gated there. These tests pin what a client may rely on: the sentences the
+listing prints for the languages the hub speaks, the order phrases are
+shown in, that a language invented in a temporary tree gets every rule its
+file states with no code change, and that a client without the language
+data prints bare lines rather than guessed marks.
 """
 from __future__ import annotations
 
-import pathlib
-import re
-
 import pytest
-import yaml
+import thalovant_languages
 
-from thalovant import HubIntent, as_sentence, speakable
-from thalovant import listing
-
-LOCALE = pathlib.Path(listing.__file__).resolve().parent / "locale"
-LANGUAGE_FILES = sorted(LOCALE.glob("*/language.yaml"))
-LIST_KEYS = {"trailing_words", "question_openers", "question_words_anywhere", "question_patterns"}
-MAP_KEYS = {"written_forms", "slot_examples"}
+from thalovant import HubIntent, as_sentence, listing, speakable
 
 
-def _fresh(monkeypatch, root: pathlib.Path) -> None:
-    monkeypatch.setattr(listing, "LOCALE_ROOT", root)
-    for cached in (listing.described, listing.language_data, listing.scripts,
-                   listing._question_pattern):
-        cached.cache_clear()
+@pytest.fixture(autouse=True)
+def _installed_data(monkeypatch):
+    monkeypatch.delenv(thalovant_languages.ENV_OVERRIDE, raising=False)
+    thalovant_languages.refresh()
+    listing._question_pattern.cache_clear()
+    yield
+    thalovant_languages.refresh()
+    listing._question_pattern.cache_clear()
 
 
 @pytest.fixture
 def invented(tmp_path, monkeypatch):
     """A language nothing in the code has heard of, described only by a file."""
-    directory = tmp_path / "locale" / "xq"
-    directory.mkdir(parents=True)
-    (directory / "language.yaml").write_text(
+    tree = tmp_path / "languages"
+    (tree / "xq").mkdir(parents=True)
+    (tree / "xq" / "language.yaml").write_text(
         "trailing_words: [nef]\n"
         "question_openers: [vark]\n"
         "question_words_anywhere: [plim]\n"
@@ -45,65 +41,19 @@ def invented(tmp_path, monkeypatch):
         "slot_examples: {thing: the widget}\n",
         encoding="utf-8",
     )
-    (tmp_path / "locale" / "scripts.yaml").write_text(
-        (LOCALE / "scripts.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-    _fresh(monkeypatch, tmp_path / "locale")
-    yield directory
-    _fresh(monkeypatch, LOCALE)
+    (tree / "scripts.yaml").write_text(
+        (thalovant_languages.DATA_ROOT / "scripts.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8")
+    monkeypatch.setenv(thalovant_languages.ENV_OVERRIDE, str(tree))
+    thalovant_languages.refresh()
+    listing._question_pattern.cache_clear()
+    return tree
 
 
-# -- every file in the tree is well formed ------------------------------------
-
-def test_the_languages_the_hub_speaks_are_described():
-    assert {"en-US", "fr-FR"} <= set(listing.described())
-
-
-@pytest.mark.parametrize("path", LANGUAGE_FILES, ids=lambda p: p.parent.name)
-def test_a_language_file_names_only_keys_the_code_reads(path):
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(data, dict) and data, path
-    unknown = sorted(set(data) - set(listing.LANGUAGE_KEYS))
-    assert not unknown, unknown
-
-
-@pytest.mark.parametrize("path", LANGUAGE_FILES, ids=lambda p: p.parent.name)
-def test_a_language_file_has_the_shape_each_key_needs(path):
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    for key in LIST_KEYS & set(data):
-        assert isinstance(data[key], list) and data[key], key
-        # A bare on, off, yes or no is a boolean to YAML, not a word; quote it.
-        odd = [word for word in data[key] if not isinstance(word, str) or not word.strip()]
-        assert not odd, f"{key}: {odd!r} -- quote a word YAML reads as something else"
-        assert len(set(data[key])) == len(data[key]), f"{key} repeats a word"
-    for key in MAP_KEYS & set(data):
-        assert isinstance(data[key], dict) and data[key], key
-        assert all(isinstance(k, str) and isinstance(v, str) for k, v in data[key].items()), key
-    for pattern in data.get("question_patterns", ()):
-        re.compile(pattern, re.IGNORECASE)
-    assert "trailing_words" in data and "question_openers" in data and "slot_examples" in data
-
-
-def test_the_script_table_closes_sentences_in_every_script():
-    assert "?" in listing.marks("sentence_ends", "spaced")
-    assert "。" in listing.marks("sentence_ends", "unspaced")
-    assert "," in listing.marks("clause_breaks", "spaced")
-    assert listing.marks("no-such-kind", "spaced") == ""
-
-
-# -- a language is found by the matcher the rest of OVOS uses -------------------
-
-def test_a_region_reads_its_language_file():
-    french = listing.language_data("fr-FR")
-    assert french["trailing_words"]
-    assert listing.language_data("fr-CA") == french
-    assert listing.language_data("fr") == french
-    assert listing.language_data("en-GB") == listing.language_data("en-US")
-
-
-def test_a_language_nothing_describes_gets_no_rule_rather_than_another_language_s():
-    assert listing.language_data("es-ES") == {}
-    assert listing.language_data(None) == {}
-    assert listing.language_data("") == {}
+def test_the_language_data_is_installed_for_the_tests():
+    assert listing.available()
+    assert listing.language_data("fr-CA")["question_openers"]
+    assert listing.language_data("zh-CN") == {} and listing.language_data(None) == {}
 
 
 # -- a pattern read aloud ---------------------------------------------------------
@@ -114,7 +64,7 @@ def test_a_slot_reads_as_the_language_s_own_example():
     # The caller's example wins; a language nothing describes keeps the name.
     assert speakable("weather in {location}", {"location": "Sherbrooke"}, "en") == (
         "weather in Sherbrooke")
-    assert speakable("weather in {location}", lang="es") == "weather in location"
+    assert speakable("weather in {location}", lang="zh") == "weather in location"
     assert speakable("set the {gadget_name} going", lang="en") == "set the gadget name going"
 
 
@@ -211,3 +161,18 @@ def test_a_language_invented_as_a_file_gets_its_rules(invented):
     assert as_sentence("go to nef", "xq") == "Go to nef"
     assert speakable("open {thing}", lang="xq-ZZ") == "open the widget"
     assert listing.rank(("go to nef", "go home now"), "xq") == ("go home now", "go to nef")
+    # The installed languages are not there any more: this tree is the whole world.
+    assert as_sentence("what time is it", "en-US") == "What time is it"
+
+
+# -- a client without the language data ---------------------------------------
+
+def test_without_the_languages_package_lines_are_bare_and_slots_keep_their_names(monkeypatch):
+    monkeypatch.setattr(listing, "_languages", None)
+    listing._question_pattern.cache_clear()
+    assert not listing.available()
+    assert as_sentence("do i need a jacket", "en-US") == "Do i need a jacket"
+    assert as_sentence("quelle heure est-il?", "fr") == "Quelle heure est-il?"
+    assert speakable("volume [to] {level} percent", lang="en-US") == "volume level percent"
+    assert listing.rank(("weather in", "what is the weather"), "en") == (
+        "what is the weather", "weather in")  # by length and slots alone
