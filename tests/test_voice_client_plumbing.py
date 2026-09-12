@@ -236,26 +236,38 @@ def test_speakable_examples_preserve_source_slot_priority(patterns, expected):
 # -- the hub's session shape is not the client's to warn about ----------------
 
 def test_the_upstream_location_deprecation_is_dropped_where_the_library_logs_it():
-    import logging
+    # The SDK intentionally wraps a process-global logger factory. A fresh
+    # interpreter exercises real OVOS loggers without leaking that wrapper or
+    # filters into this process, including when an assertion fails.
+    import subprocess
+    import sys
+    import textwrap
 
-    from ovos_utils.log import LOG, log_deprecation
+    script = textwrap.dedent("""
+        import logging
 
-    from thalovant.transport import _QuietUpstreamLocationDeprecation, quiet_upstream_location_deprecation
+        from ovos_utils.log import LOG, log_deprecation
 
-    quiet_upstream_location_deprecation()
-    quiet_upstream_location_deprecation()  # idempotent
-    # The library names a deprecation's logger after its call site and hands
-    # it out through its factory: that logger carries the filter.
-    log_deprecation("the nested mycroft.conf 'location' shape (city/coordinate/timezone) "
-                    "on session.location is deprecated", "3.0.0")
-    named = [name for name in LOG._loggers if name.startswith(f"{LOG.name} - ")]
-    assert named, "the library did not create a call-site logger"
-    for name in named:
-        logger = LOG._loggers[name]
-        filters = [f for f in logger.filters if isinstance(f, _QuietUpstreamLocationDeprecation)]
-        assert len(filters) == 1, name
-        dropped = logging.LogRecord(name, logging.WARNING, __file__, 1,
-                                    "Deprecation version=3.0.0. Caller=x:1. the nested mycroft.conf "
-                                    "'location' shape (city/coordinate/timezone) is deprecated", (), None)
-        kept = logging.LogRecord(name, logging.WARNING, __file__, 1, "something else", (), None)
-        assert not logger.filter(dropped) and logger.filter(kept)
+        from thalovant.transport import _QuietUpstreamLocationDeprecation, quiet_upstream_location_deprecation
+
+        quiet_upstream_location_deprecation()
+        quiet_upstream_location_deprecation()  # idempotent
+        # The library names a deprecation's logger after its call site and hands
+        # it out through its factory: that logger carries the filter.
+        log_deprecation("the nested mycroft.conf 'location' shape (city/coordinate/timezone) "
+                        "on session.location is deprecated", "3.0.0",
+                        func_module="ovos_bus_client.session", func_name="_normalize_location_input")
+        named = [name for name in LOG._loggers if name.startswith(f"{LOG.name} - ")]
+        assert named, "the library did not create a call-site logger"
+        for name in named:
+            logger = LOG._loggers[name]
+            filters = [f for f in logger.filters if isinstance(f, _QuietUpstreamLocationDeprecation)]
+            assert len(filters) == 1, name
+            dropped = logging.LogRecord(name, logging.WARNING, "<isolated-deprecation>", 1,
+                                        "Deprecation version=3.0.0. Caller=x:1. the nested mycroft.conf "
+                                        "'location' shape (city/coordinate/timezone) is deprecated", (), None)
+            kept = logging.LogRecord(name, logging.WARNING, "<isolated-deprecation>", 1, "something else", (), None)
+            assert not logger.filter(dropped) and logger.filter(kept)
+    """)
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
