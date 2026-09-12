@@ -68,7 +68,11 @@ class ThalovantPolicyDeniedError(ThalovantRuntimeError):
 
 
 class ThalovantAPIError(ThalovantError):
-    """Raised when the Thalovant control-plane API request fails."""
+    """Raised when the control-plane request fails, with its HTTP status if known."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class ThalovantUnsupportedProtocolError(ThalovantError):

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3 — 2026-09-12
+
+- Prevent concurrent runtime configuration merges from losing unrelated changes. Read the configuration revision, send conditional PUT, and reread/remerge the original delta on HTTP 412, with at most three write attempts. Network failures and other statuses are not retried.
+- Safe merges require an API exposing configuration revisions and conditional PUT. Older servers fail without a write; `merge=False` retains unconditional PATCH replacement.
+- Expose `ThalovantAPIError.status_code` for HTTP failures.
+
 ## 0.6.2 — 2026-09-12
 
 - Preserve complete-phrase priority when rendering speakable intent examples before applying a result limit. Deduplicated examples retain the best priority of their original patterns.

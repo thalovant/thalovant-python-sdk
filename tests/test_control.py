@@ -606,6 +606,7 @@ RUNTIME_GROUP_RESOURCE = {
 }
 
 RUNTIME_GROUP_CONFIG = {
+    "revision": "a" * 64,
     "runtime_group_id": "rg-1",
     "config": {"lang": "en-us"},
     "personas": {"default": "friendly"},
@@ -703,7 +704,7 @@ PROVISIONING_ROUTES = {
     ("PATCH", "/v1/runtime-groups/rg-1"): (200, RUNTIME_GROUP_RESOURCE),
     ("DELETE", "/v1/runtime-groups/rg-1"): (204, ""),
     ("GET", "/v1/runtime-groups/rg-1/config"): (200, RUNTIME_GROUP_CONFIG),
-    ("PATCH", "/v1/runtime-groups/rg-1/config"): (200, RUNTIME_GROUP_CONFIG),
+    ("PUT", "/v1/runtime-groups/rg-1/config"): (200, RUNTIME_GROUP_CONFIG),
     ("POST", "/v1/runtime-groups/rg-1/release"): (200, RUNTIME_GROUP_RESOURCE),
     ("POST", "/v1/runtime-groups/rg-1/skills"): (200, DESIRED_SKILL),
     ("DELETE", "/v1/runtime-groups/rg-1/skills/skill-weather"): (204, ""),
@@ -1035,12 +1036,13 @@ def test_control_plane_reads_and_merges_runtime_group_config():
         if method == "GET"
         and url == ProvisioningSession.BASE_URL + "v1/runtime-groups/rg-1/config"
     ]) == 2
-    assert recorded_call(session, "PATCH", "/v1/runtime-groups/rg-1/config")["json"] == {
+    assert recorded_call(session, "PUT", "/v1/runtime-groups/rg-1/config")["json"] == {
         "config": {"lang": "en-us"},
+        "expected_revision": "a" * 64,
         "personas": {"default": "friendly"},
     }
-    assert recorded_call(without_personas, "PATCH", "/v1/runtime-groups/rg-1/config")["json"] == {
-        "config": {"lang": "fr-fr"}
+    assert recorded_call(without_personas, "PUT", "/v1/runtime-groups/rg-1/config")["json"] == {
+        "config": {"lang": "fr-fr"}, "expected_revision": "a" * 64
     }
     assert current["config"] == {"lang": "en-us"}
     assert merged["personas"] == {"default": "friendly"}
@@ -1402,9 +1404,9 @@ class ConfigSession:
         if url.endswith("/v1/auth/token"):
             return FakeResponse(200, {"access_token": "token", "expires_in": 3600})
         if url.endswith("/config") and method == "GET":
-            return FakeResponse(200, {"runtime_group_id": "g", "config": self.stored,
+            return FakeResponse(200, {"runtime_group_id": "g", "config": self.stored, "revision": "a" * 64,
                                       "personas": {}})
-        if url.endswith("/config") and method == "PATCH":
+        if url.endswith("/config") and method in {"PATCH", "PUT"}:
             body = kwargs["json"]
             self.sent.append(body)
             self.stored = body["config"]  # replaces, which is the whole problem

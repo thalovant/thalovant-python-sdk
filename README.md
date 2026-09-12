@@ -200,10 +200,17 @@ Deleting a hub also deletes its clients and ACLs. Runtime groups have no
 `If-Match` requirement, but the API refuses to delete the workspace default
 group or a group that still has hubs attached (HTTP 409).
 
-The Python helper reads and merges the stored runtime configuration before
-replacing it. The API provides no revision or conditional-write token for this
-route: serialize updates across callers to avoid overwriting a concurrent
-change. Pass `merge=False` only when replacing the complete configuration:
+The Python helper reads the stored runtime configuration and its revision, then
+merges your changes and sends a conditional `PUT`. A concurrent change returns
+HTTP 412; the helper reads again and reapplies your original changes, up to
+three write attempts. Unrelated keys and environment settings survive. Lists
+and explicitly supplied `personas` are replaced, not appended or merged.
+
+Version 0.6.3 requires API support for configuration revisions and conditional
+`PUT` when merging. Older servers fail without a write. Network failures and
+other HTTP errors are not retried. Inspect `ThalovantAPIError.status_code` for a
+final HTTP failure. Pass `merge=False` only to replace the complete configuration
+with an unconditional `PATCH`; that mode requires coordinating concurrent writers.
 
 ```python
 api.update_runtime_group_config(group["id"], {"lang": "en-us"})
