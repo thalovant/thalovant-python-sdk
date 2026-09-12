@@ -144,6 +144,8 @@ def request_context(
     ``build_location()`` returns. ``None`` when there is nothing to send.
     """
     result = dict(context or {})
+    if isinstance(result.get("session"), Mapping):
+        result["session"] = dict(result["session"])
     if pipeline:
         stages = [str(stage).strip() for stage in pipeline if str(stage).strip()]
         if stages:

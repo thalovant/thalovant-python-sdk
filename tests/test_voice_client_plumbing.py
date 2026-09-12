@@ -200,6 +200,13 @@ def test_a_pattern_is_printed_as_a_sentence(pattern, spoken):
     assert speakable(pattern, {"query": "the garage door", "level": "fifty"}) == spoken
 
 
+def test_request_hints_copy_session_without_pipeline():
+    base = {"session": {"session_id": "kept"}}
+    result = request_context(base, stt_lang="fr")
+    result["session"]["session_id"] = "changed"
+    assert base["session"]["session_id"] == "kept"
+
+
 def test_examples_can_be_rendered_speakable():
     intent = HubIntent(skill_id="s", name="n", engine="padatious", phrases={
         "en-us": ("[please] (repeat|say) that (again|)", "volume [to] {level} percent", "[please]"),

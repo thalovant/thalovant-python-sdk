@@ -79,6 +79,47 @@ class ScriptedSession:
 SNAPSHOT = FakeResponse(200, {"config": {"env": []}, "revision": "a" * 64})
 
 
+def test_merge_snapshots_nested_config_and_personas_before_io():
+    config = {"nested": {"value": "original"}}
+    personas = {"default": {"name": "original"}}
+
+    class MutatingSession:
+        writes = 0
+
+        def request(self, method, url, **kwargs):
+            if method == "GET":
+                config["nested"]["value"] = "changed"
+                personas["default"]["name"] = "changed"
+                return SNAPSHOT
+            assert method == "PUT"
+            assert kwargs["json"]["config"]["nested"]["value"] == "original"
+            assert kwargs["json"]["personas"]["default"]["name"] == "original"
+            self.writes += 1
+            return FakeResponse(412 if self.writes == 1 else 200, {})
+
+    session = MutatingSession()
+    plane(session).update_runtime_group_config("g", config, personas=personas)
+    assert session.writes == 2
+
+
+def test_replacement_snapshots_nested_values_before_transport_dispatch():
+    config = {"nested": {"value": "original"}}
+    personas = {"default": {"name": "original"}}
+
+    class MutatingSession:
+        def request(self, method, url, **kwargs):
+            assert method == "PATCH"
+            config["nested"]["value"] = "changed"
+            personas["default"]["name"] = "changed"
+            assert kwargs["json"] == {
+                "config": {"nested": {"value": "original"}},
+                "personas": {"default": {"name": "original"}},
+            }
+            return FakeResponse(200, {})
+
+    plane(MutatingSession()).update_runtime_group_config("g", config, personas=personas, merge=False)
+
+
 @pytest.mark.parametrize("failure", [302, 307, 400, 401, 403, 404, 405, 409, 422, 429, 500, 503])
 def test_only_revision_conflicts_are_retried(failure):
     session = ScriptedSession([SNAPSHOT, FakeResponse(failure, {"detail": "Failure"})])
