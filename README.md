@@ -935,3 +935,7 @@ an already-running HTTP request retains its normal request timeout.
 Read history with `api.list_hub_skill_history(hub_id, limit=50)`; it returns the API JSON envelope.
 
 When using `HubIntent.examples(speakable=True)`, version 0.6.2 preserves complete source phrases ahead of slot-based phrases before limiting the results.
+
+Configuration merges in 0.6.4 snapshot the caller’s config and personas before
+the first read, preserving the same payload through conflict retries. Guarded
+merges require both `hubs:read` and `hubs:write` scopes and a paid plan.

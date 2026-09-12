@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 import re
 import secrets
@@ -993,6 +994,7 @@ class ThalovantControlPlane:
         ``personas`` is replaced only when provided, merge or not.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
+        Guarded merging also requires ``hubs:read``.
         """
 
         path = f"/v1/runtime-groups/{runtime_group_id}/config"
@@ -1002,6 +1004,10 @@ class ThalovantControlPlane:
                 body["personas"] = dict(personas)
             return self._request("PATCH", path, json=body)
 
+        # Freeze the complete caller payload before I/O so conflict retries
+        # cannot mix an earlier config delta with subsequently mutated personas.
+        delta = deepcopy(dict(config))
+        stable_personas = deepcopy(dict(personas)) if personas is not None else None
         for attempt in range(3):
             snapshot = self.get_runtime_group_config(runtime_group_id)
             revision = snapshot.get("revision")
@@ -1013,9 +1019,9 @@ class ThalovantControlPlane:
             stored = snapshot.get("config")
             if not isinstance(stored, Mapping):
                 raise ThalovantAPIError("Thalovant API returned an invalid runtime configuration.")
-            body = {"config": _deep_merge(stored, config), "expected_revision": revision}
-            if personas is not None:
-                body["personas"] = dict(personas)
+            body = {"config": _deep_merge(stored, delta), "expected_revision": revision}
+            if stable_personas is not None:
+                body["personas"] = deepcopy(stable_personas)
             try:
                 return self._request("PUT", path, json=body)
             except ThalovantAPIError as exc:

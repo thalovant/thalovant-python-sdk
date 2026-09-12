@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4 — 2026-09-12
+
+- Snapshot nested configuration changes and personas before the first merge read. Concurrent caller mutation cannot change the payload between revision-conflict retries.
+- Copy the request session even when no pipeline hint is supplied.
+- Clarify that guarded configuration merging requires hubs:read and hubs:write scopes plus a paid plan.
+
 ## 0.6.3 — 2026-09-12
 
 - Prevent concurrent runtime configuration merges from losing unrelated changes. Read the configuration revision, send conditional PUT, and reread/remerge the original delta on HTTP 412, with at most three write attempts. Network failures and other statuses are not retried.
