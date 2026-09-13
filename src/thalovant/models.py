@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from .events import EVENT_AUDIO_QUEUE, MEDIA_EVENTS, ThalovantEvent
@@ -57,7 +58,12 @@ class ThalovantHealth:
 
     @property
     def ok(self) -> bool:
-        return self.connected and self.handshake_complete and self.transport_alive and not self.last_error
+        return (
+            self.connected
+            and self.handshake_complete
+            and self.transport_alive
+            and not self.last_error
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +74,19 @@ class ThalovantHealth:
             "last_error": self.last_error,
             "connection": self.connection.as_dict() if self.connection else None,
         }
+
+
+#: The substring every OVOS fallback pipeline stage carries in its id.
+FALLBACK_PIPELINE_MARK = "fallback"
+
+
+def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:
+    """Non-empty *values* in first-seen order, once each."""
+    seen: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.append(value)
+    return tuple(seen)
 
 
 @dataclass(frozen=True)
@@ -89,6 +108,46 @@ class ThalovantReply:
     @property
     def ok(self) -> bool:
         return self.handled and self.failure_event is None
+
+    @property
+    def pipeline_ids(self) -> tuple[str, ...]:
+        """The pipeline stages the hub says handled the utterance, in order.
+
+        OVOS stamps every reply message with the stage that matched
+        (``context["pipeline_id"]``: ``ovos-padatious-pipeline-plugin`` for an
+        intent, ``ovos-fallback-pipeline-plugin`` when nothing matched and a
+        fallback skill caught it). Empty on a hub that does not stamp it.
+        """
+        return _ordered_unique(
+            str(event.context.get("pipeline_id") or "") for event in self.events
+        )
+
+    @property
+    def skill_ids(self) -> tuple[str, ...]:
+        """The skills whose messages make up the reply, in order."""
+        return _ordered_unique(
+            str(event.context.get("skill_id") or "") for event in self.events
+        )
+
+    @property
+    def claimed(self) -> bool:
+        """Whether a skill claimed the utterance, rather than a fallback catching it.
+
+        The fallback stage answers what no skill matched, so a reply that only
+        it produced is the hub saying it did not understand. A client that
+        listened without a wake word treats that as the room talking, not as
+        an answer to speak or a conversation to keep open; measured on the
+        custos appliance, a speaker's tail transcribed as "Allez" earned a
+        five-second spoken reply and another open microphone, four times.
+        True on a hub that stamps no pipeline ids, so the check can never
+        silence a client against an older hub.
+        """
+        if not self.ok:
+            return False
+        stages = self.pipeline_ids
+        if not stages:
+            return True
+        return any(FALLBACK_PIPELINE_MARK not in stage for stage in stages)
 
     @property
     def lang(self) -> str | None:
@@ -125,7 +184,9 @@ class ThalovantReply:
 
         return strip_ssml(self.text)
 
-    def display_items(self, *, max_text_chars: int | None = None) -> tuple[ThalovantDisplayItem, ...]:
+    def display_items(
+        self, *, max_text_chars: int | None = None
+    ) -> tuple[ThalovantDisplayItem, ...]:
         """Aggregate UI-friendly items from the reply's events."""
 
         items: list[ThalovantDisplayItem] = []
@@ -142,11 +203,16 @@ class ThalovantReply:
             "utterances": list(self.utterances),
             "handled": self.handled,
             "ok": self.ok,
+            "claimed": self.claimed,
+            "pipeline_ids": list(self.pipeline_ids),
+            "skill_ids": list(self.skill_ids),
             "session_id": self.session_id,
             "request_id": self.request_id,
             "lang": self.lang,
             "display_items": [item.as_dict() for item in self.display_items()],
-            "failure_event": self.failure_event.as_dict() if self.failure_event else None,
+            "failure_event": self.failure_event.as_dict()
+            if self.failure_event
+            else None,
             "events": [event.as_dict() for event in self.events],
             "dropped_media": self.dropped_media,
         }
