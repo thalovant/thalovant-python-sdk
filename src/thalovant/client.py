@@ -575,7 +575,16 @@ class ThalovantClient:
             request_id=request_id,
         )
 
+        # hivemind-bus-client (through 1.1.8a1) hands every inbound BUS payload
+        # to its internal bus twice, once from `_handle_hive_protocol` and once
+        # from the protocol's `handle_bus`, the same object both times and back
+        # to back. A subscriber must not answer twice for that.
+        last_delivered: list[Any] = [None]
+
         def wrapped(raw_message: Any) -> None:
+            if raw_message is last_delivered[0]:
+                return
+            last_delivered[0] = raw_message
             event = _event_from_message(event_name, raw_message)
             if not _event_matches_context(event, expected_context):
                 return

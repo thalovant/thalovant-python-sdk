@@ -289,3 +289,24 @@ def test_custom_transport_without_token_reuses_handlers_without_duplicates():
         assert len(seen) == 1
     finally:
         sdk.close()
+
+
+def test_the_same_inbound_object_delivered_twice_is_handled_once():
+    """hivemind-bus-client emits an inbound BUS payload on its internal bus twice,
+    the same object both times; the subscriber must see it once. Two distinct
+    messages that merely look alike are two."""
+    from types import SimpleNamespace
+    transport = QueryTransport()
+    sdk = _client(transport)
+    seen = []
+    try:
+        sdk.on('custos.shadow.request', lambda event: seen.append(event.data['verb']))
+        frame = SimpleNamespace(msg_type='custos.shadow.request', data={'verb': 'once'}, context={})
+        for handler in tuple(transport.bus_handlers['custos.shadow.request']):
+            handler(frame)
+            handler(frame)
+        transport.bus('custos.shadow.request', {'verb': 'again'})
+        transport.bus('custos.shadow.request', {'verb': 'again'})
+        assert seen == ['once', 'again', 'again']
+    finally:
+        sdk.close()
