@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.10 — 2026-09-13
+
+- Serialize subscription registration and removal with reconnect restoration. Concurrent `on()` calls register once on the new session, and closing a subscription during reconnect keeps it closed. Subscription edits remain available while the transport connects.
+- Do not retain failed `on()` registrations for future reconnects.
+
 ## 0.6.9 — 2026-09-13
 
 - A subscription made with `on()` now outlives the transport session it was made on. The transports register handlers on the client object they hold, and `emit()`, `ask()` and the reconnect helper replace that object when the hub link drops, so a handler wired once went quiet at the first hiccup and nothing said so: the custos node's shadow responder received every request for twelve hours and answered none. The client keeps its live subscriptions and puts them back on every new session; a closed subscription stays closed.
