@@ -987,3 +987,10 @@ address binding on its own transport, retain the public host for TLS/SNI, and
 finish failed-attempt cleanup before returning. Transport/platform restrictions
 still apply. Python uses a serialized, scoped resolver override; avoid blocking unrelated
 resolver work inside that scope. TLS validation remains enabled.
+
+### Inbound BUS compatibility
+
+Version 0.7.2 requires `hivemind-bus-client>=1.1.9a1`, including the upstream
+fix for duplicate BUS delivery (#251/#252). WSS callbacks run once per frame
+after protocol processing. The SDK no longer suppresses events by Python
+object identity, so custom transports may reuse message objects.

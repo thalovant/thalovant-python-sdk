@@ -2,6 +2,8 @@
 
 ## 0.7.2 — 2026-09-13
 
+- Require HiveMind bus client 1.1.9a1, which delivers inbound BUS events once after protocol processing (upstream #251/#252). Remove the temporary object-identity suppression so custom transports can reuse message objects without losing events. CI tests the dependency floor and current dependency resolution.
+
 - Keep Unicode question detection consistent on Python 3.10 through 3.14, including marks absent from older interpreter Unicode databases.
 
 - Stop replaying ambiguous `HubSession.ask()` failures; callers retain responsibility for retrying actions. Serialize warm/foreground admission with shutdown and retain failed cleanup for retry.

@@ -291,10 +291,8 @@ def test_custom_transport_without_token_reuses_handlers_without_duplicates():
         sdk.close()
 
 
-def test_the_same_inbound_object_delivered_twice_is_handled_once():
-    """hivemind-bus-client emits an inbound BUS payload on its internal bus twice,
-    the same object both times; the subscriber must see it once. Two distinct
-    messages that merely look alike are two."""
+def test_custom_transport_can_reuse_a_message_object():
+    """Object identity does not identify a delivery on a custom transport."""
     from types import SimpleNamespace
     transport = QueryTransport()
     sdk = _client(transport)
@@ -307,6 +305,6 @@ def test_the_same_inbound_object_delivered_twice_is_handled_once():
             handler(frame)
         transport.bus('custos.shadow.request', {'verb': 'again'})
         transport.bus('custos.shadow.request', {'verb': 'again'})
-        assert seen == ['once', 'again', 'again']
+        assert seen == ['once', 'once', 'again', 'again']
     finally:
         sdk.close()

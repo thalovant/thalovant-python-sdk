@@ -62,3 +62,11 @@ jobs:
           parity-environment/bin/python -m pip install --upgrade pip
           parity-environment/bin/python -m pip install -e './parity/thalovant-python-sdk[dev]'
           parity-environment/bin/python parity/thalovant-python-sdk/scripts/generate-sdk-conformance.py --check
+      - name: Verify upstream BUS delivery and encrypted transport compatibility
+        shell: bash
+        run: |
+          cd parity/thalovant-python-sdk
+          "$GITHUB_WORKSPACE/parity-environment/bin/python" -m pytest -q \
+            tests/test_upstream_bus_delivery.py \
+            tests/test_subscriptions_outlive_sessions.py \
+            tests/test_noise_transports.py
