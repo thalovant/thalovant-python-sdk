@@ -72,13 +72,28 @@ def dangling(text: str, lang: str | None) -> bool:
     return bool(words) and words[-1].lower() in _words(lang, "trailing_words")
 
 
+# Unicode 15.1 QUESTION MARK scalars shared with every managed SDK. Python 3.10
+# ships an older Unicode database, so name-based dependency detection alone can
+# miss newer marks (for example U+2E54) on an otherwise supported interpreter.
+_QUESTION_MARKS_15_1 = frozenset(map(chr, (
+    0x3F, 0xBF, 0x37E, 0x55E, 0x61F, 0x1367, 0x1945, 0x2047,
+    0x2049, 0x2753, 0x2754, 0x2A7B, 0x2A7C, 0x2CFA, 0x2CFB,
+    0x2E2E, 0x2E54, 0xA60F, 0xA6F7, 0xFE16, 0xFE56, 0xFF1F,
+    0x11143, 0x1E95F, 0x1FBC4, 0xE003F,
+)))
+
+
 def asks(text: str, lang: str | None) -> bool:
     """Whether a phrase is asking something, by the language's own words.
 
-    The answer is the language package's (`thalovant_languages.asks`), the
-    same one the fleet's fallback skills use; without the package nothing is
-    a question."""
-    return _languages.asks(text, lang) if _languages is not None else False
+    Language rules come from `thalovant_languages.asks`; shared Unicode marks
+    also work on supported interpreters with older Unicode databases. Without
+    the language package nothing is a question."""
+    if _languages is None:
+        return False
+    if text.rstrip()[-1:] in _QUESTION_MARKS_15_1:
+        return True
+    return _languages.asks(text, lang)
 
 
 def as_sentence(text: str, lang: str | None = None) -> str:

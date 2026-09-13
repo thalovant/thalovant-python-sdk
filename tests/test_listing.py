@@ -210,3 +210,14 @@ def test_optional_question_categories_work_without_openers(invented, rules, ques
     assert listing.asks(question, "xq")
     assert as_sentence(question, "xq").endswith("?")
     assert as_sentence("go home", "xq") == "Go home."
+
+
+def test_question_marks_do_not_depend_on_interpreter_unicode_database(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(listing, "_languages", SimpleNamespace(asks=lambda *_: False))
+    for mark in ("\u2e54", "\U0001fbc4", "\U000e003f"):
+        assert listing.asks("hello" + mark + "  ", None)
+    assert not listing.asks("hello\U0001fbc5", None)
+    assert not listing.asks("", None)
+    monkeypatch.setattr(listing, "_languages", None)
+    assert not listing.asks("hello\u2e54", None)

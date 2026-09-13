@@ -2,6 +2,8 @@
 
 ## 0.7.2 — 2026-09-13
 
+- Keep Unicode question detection consistent on Python 3.10 through 3.14, including marks absent from older interpreter Unicode databases.
+
 - Stop replaying ambiguous `HubSession.ask()` failures; callers retain responsibility for retrying actions. Serialize warm/foreground admission with shutdown and retain failed cleanup for retry.
 - Validate cache shapes and keys, bound cache reads, use unique private atomic writes, and preserve explicit intent language order across JSON serializers. Existing version-1 caches remain readable.
 - Add executable cross-SDK question/inventory conformance and bind it to the reference contract. Gate PR/release parity against all eight SDKs and MCP, with scheduled dependency drift checks.
