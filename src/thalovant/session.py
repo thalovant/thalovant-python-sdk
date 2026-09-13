@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 from .errors import ThalovantConnectionError, ThalovantRuntimeError
 
 log = logging.getLogger("thalovant.session")
+_RESOLVER_LOCK = threading.RLock()
 
 __all__ = [
     "HubSession",
@@ -142,12 +143,16 @@ class HubSession:
         return self._retry_wait
 
     def on(self, event_name: str, handler: Callable[[Any], None]) -> None:
-        """Subscribe on the current client and on every one built after it."""
+        """Subscribe on the current client and on every one built after it.
+
+        Registered on the held client before it is remembered: a registration
+        the client refuses is not queued for every client after it.
+        """
         with self._lock:
-            self._subscriptions.append((event_name, handler))
             client = self._client
-        if client is not None:
-            client.on(event_name, handler)
+            if client is not None:
+                client.on(event_name, handler)
+            self._subscriptions.append((event_name, handler))
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -157,14 +162,22 @@ class HubSession:
                 started = self._clock()
                 try:
                     client = self._connect_fn()
+                    try:
+                        for event_name, handler in self._subscriptions:
+                            client.on(event_name, handler)
+                    except BaseException:
+                        # A client that cannot carry the subscriptions is not
+                        # kept half-wired and not leaked: closed, and counted
+                        # as a failed attempt like a connect that never opened.
+                        with contextlib.suppress(Exception):
+                            client.close()
+                        raise
                 except Exception:
                     # Back off the unattended probe; the next question still
                     # tries for itself.
                     self._retry_at = self._clock() + self._retry_wait
                     self._retry_wait = self.policy.next_wait(self._retry_wait)
                     raise
-                for event_name, handler in self._subscriptions:
-                    client.on(event_name, handler)
                 self._client = client
                 self._retry_at = 0.0
                 self._retry_wait = float(self.policy.retry_seconds)
@@ -264,13 +277,20 @@ class HubSession:
 
     def ask(self, text: str, **kwargs: Any) -> Any:
         """``client.ask`` on a live session, rebuilt once if the socket is dead."""
-        return self._call("ask", text, **kwargs)
+        return self._call("ask", True, text, **kwargs)
 
     def emit(self, event_type: str, data: Any = None, context: Any = None) -> Any:
-        """``client.emit`` on a live session, rebuilt once if the socket is dead."""
-        return self._call("emit", event_type, data, context)
+        """``client.emit`` on a live session; a dead socket is dropped, not retried.
 
-    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        An event can reach the hub before the response that says so reaches
+        the client (the HTTP path loses a response now and then), and an
+        event carries no identifier a hub could deduplicate on. The caller's
+        outbox, which keeps the envelope until it is accepted, is where a
+        retry belongs.
+        """
+        return self._call("emit", False, event_type, data, context)
+
+    def _call(self, method: str, retry: bool, *args: Any, **kwargs: Any) -> Any:
         # A socket that died since the last call is cheaper to replace now
         # than to discover by waiting out the reply timeout.
         with self._lock:
@@ -290,7 +310,7 @@ class HubSession:
                 # alive; tearing it down cost every denied request a reconnect.
                 raise
             except Exception as error:
-                if _is_dead_socket(error):
+                if _is_dead_socket(error) and retry:
                     self._drop(client)
                     return getattr(self._ensure(), method)(*args, **kwargs)
                 # Anything else, a hub timeout above all, may be a socket that
@@ -330,17 +350,21 @@ def preferred_origin(host: str, address: str):
     the hop through the tunnel is skipped. Every other host falls through to
     the real resolver.
     """
-    real = socket.getaddrinfo
+    # The resolver is process-wide, so the override is taken one block at a
+    # time: two overlapping blocks would otherwise restore each other's
+    # wrapper and leave one installed for good.
+    with _RESOLVER_LOCK:
+        real = socket.getaddrinfo
 
-    def resolve(node, port, *args, **kwargs):
-        target = address if node == host else node
-        return real(target, port, *args, **kwargs)
+        def resolve(node, port, *args, **kwargs):
+            target = address if node == host else node
+            return real(target, port, *args, **kwargs)
 
-    socket.getaddrinfo = resolve
-    try:
-        yield
-    finally:
-        socket.getaddrinfo = real
+        socket.getaddrinfo = resolve
+        try:
+            yield
+        finally:
+            socket.getaddrinfo = real
 
 
 class OriginPreference:
