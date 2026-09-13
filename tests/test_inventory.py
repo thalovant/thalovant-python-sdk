@@ -80,3 +80,57 @@ def test_titles_and_intent_names_read_the_way_a_person_says_them():
     assert strip_affix("high_low.weather", "suffix", "weather") == "high low"
     assert strip_affix("custos.status", "prefix", "custos") == "status"
     assert sorted(["intent10", "intent2", "Intent1"], key=sort_key) == ["Intent1", "intent2", "intent10"]
+
+
+
+def test_cache_rejects_keys_that_escape_its_directory(tmp_path):
+    cache = InventoryCache(tmp_path / "cache")
+    for key in ("/../../outside", "x/../../../outside", "x\\outside", "x" * 161):
+        cache.store(key, _inventory())
+        assert cache.load(key) is None
+    assert not list(tmp_path.rglob("*.json"))
+
+
+def test_cache_does_not_follow_a_predictable_scratch_symlink(tmp_path):
+    cache = InventoryCache(tmp_path / "cache")
+    cache.directory.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("keep this")
+    cache.path("safe").with_suffix(".partial").symlink_to(outside)
+    cache.store("safe", _inventory())
+    assert outside.read_text() == "keep this"
+    assert cache.load("safe") == _inventory()
+    assert cache.path("safe").stat().st_mode & 0o777 == 0o600
+
+
+def test_concurrent_cache_writers_leave_a_complete_inventory(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    cache = InventoryCache(tmp_path)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _: cache.store("shared", _inventory()), range(32)))
+    assert cache.load("shared") == _inventory()
+    assert not list(tmp_path.glob(".intents-*.partial"))
+
+
+def test_empty_affix_names_remain_empty():
+    assert strip_affix("", "suffix", "token") == ""
+    assert strip_affix("._", "prefix", "token") == "._"
+
+
+def test_corrupt_cache_shapes_are_refused_without_silent_field_loss(tmp_path):
+    import copy
+    import pytest
+    for patch in ({"cache_version": True}, {"cache_version": 1.0}, {"skills": "wrong"}, {"notes": "wrong"}):
+        raw = _inventory().as_dict() | patch
+        with pytest.raises(ValueError):
+            Inventory.from_dict(raw)
+    raw = copy.deepcopy(_inventory().as_dict())
+    del raw["skills"][0]["intents"][0]["engine"]
+    with pytest.raises(ValueError):
+        Inventory.from_dict(raw)
+    cache = InventoryCache(tmp_path)
+    cache.path("bad").write_text(json.dumps(raw))
+    assert cache.load("bad") is None
+    for ttl in (-1, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            InventoryCache(tmp_path, ttl=ttl)

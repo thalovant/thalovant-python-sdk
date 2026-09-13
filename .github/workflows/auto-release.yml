@@ -16,7 +16,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sdk-parity:
+    uses: ./.github/workflows/sdk-parity.yml
+    permissions:
+      contents: read
+    with:
+      source_ref: ${{ github.ref }}
+
   release:
+    needs: sdk-parity
     name: Release unpublished version
     runs-on: ubuntu-latest
     steps:

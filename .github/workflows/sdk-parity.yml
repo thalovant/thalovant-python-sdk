@@ -1,0 +1,64 @@
+name: SDK parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-parity:
+    name: SDK parity contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+          path: current
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Check candidate against current reference and consumer acknowledgments
+        env:
+          SDK_REPOSITORY: ${{ github.event.repository.name }}
+          GIT_TERMINAL_PROMPT: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir parity
+          case "$SDK_REPOSITORY" in
+            thalovant-python-sdk)
+              ln -s "$GITHUB_WORKSPACE/current" parity/thalovant-python-sdk
+              for repo in thalovant-node-sdk thalovant-go-sdk thalovant-rust-sdk thalovant-kotlin-sdk thalovant-dotnet-sdk thalovant-swift-sdk thalovant-embedded-c thalovant-mcp; do
+                git clone --quiet --depth 1 --branch main "https://github.com/thalovant/$repo.git" "parity/$repo"
+              done
+              python parity/thalovant-python-sdk/scripts/check-sdk-parity.py --workspace "$GITHUB_WORKSPACE/parity"
+              ;;
+            thalovant-node-sdk|thalovant-go-sdk|thalovant-rust-sdk|thalovant-kotlin-sdk|thalovant-dotnet-sdk|thalovant-swift-sdk|thalovant-embedded-c|thalovant-mcp)
+              ln -s "$GITHUB_WORKSPACE/current" "parity/$SDK_REPOSITORY"
+              git clone --quiet --depth 1 --branch main https://github.com/thalovant/thalovant-python-sdk.git parity/thalovant-python-sdk
+              python parity/thalovant-python-sdk/scripts/check-sdk-parity.py --workspace "$GITHUB_WORKSPACE/parity" --consumer "$SDK_REPOSITORY"
+              ;;
+            *) echo 'Unknown SDK repository' >&2; exit 1 ;;
+          esac
+      - name: Execute reference conformance with freshly resolved dependencies
+        if: github.event_name == 'schedule' || github.event.repository.name == 'thalovant-python-sdk'
+        shell: bash
+        run: |
+          python -m venv parity-environment
+          parity-environment/bin/python -m pip install --upgrade pip
+          parity-environment/bin/python -m pip install -e './parity/thalovant-python-sdk[dev]'
+          parity-environment/bin/python parity/thalovant-python-sdk/scripts/generate-sdk-conformance.py --check

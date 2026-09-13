@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import socket
 import threading
 import time
@@ -56,6 +57,14 @@ class HubSessionPolicy:
     #: How often the probe comes round while no session is held.
     probe_down_seconds: float = 5.0
 
+    def __post_init__(self) -> None:
+        for name in ("retry_seconds", "retry_ceiling_seconds", "probe_seconds", "probe_down_seconds"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+        if self.retry_ceiling_seconds < self.retry_seconds:
+            raise ValueError("retry ceiling must not be below the initial wait")
+
     def next_wait(self, current: float) -> float:
         return min(current * 2, self.retry_ceiling_seconds)
 
@@ -77,21 +86,15 @@ def alive(client: Any) -> bool:
     return phase not in ("closed", "error") if isinstance(phase, str) else True
 
 
-def _is_dead_socket(error: BaseException) -> bool:
-    """Whether an exception says the session's socket is gone."""
-    if isinstance(error, ConnectionError | ThalovantConnectionError):
-        return True
-    text = str(error).lower()
-    return "closed" in text or "socket" in text
-
-
 class HubSession:
     """One long-lived hub connection, reconnected only when it breaks.
 
     ``connect`` builds and connects a client (a :class:`ThalovantClient` or
     anything with ``ask``, ``emit``, ``on``, ``connection_info`` and
     ``close``). A broken connection costs one failed call: it is torn down and
-    rebuilt, and the call retried once. Subscriptions made with :meth:`on` are
+    rebuilt before the next call. An admitted call is never replayed because
+    Ask can trigger actions and correlation IDs do not promise deduplication.
+    Subscriptions made with :meth:`on` are
     wired onto every client the session builds, so a rebuild keeps them.
     """
 
@@ -107,6 +110,8 @@ class HubSession:
         self._connect_fn = connect
         self.policy = policy or HubSessionPolicy()
         self._client: Any = None
+        self._retired: Any = None
+        self._closed = False
         self._lock = threading.Lock()
         # Held for the duration of a call. The client reconnects inside ask()
         # and the transport reports not-connected meanwhile; a probe landing
@@ -149,6 +154,8 @@ class HubSession:
         the client refuses is not queued for every client after it.
         """
         with self._lock:
+            if self._closed:
+                raise ThalovantConnectionError("Hub session is closed")
             client = self._client
             if client is not None:
                 client.on(event_name, handler)
@@ -158,6 +165,9 @@ class HubSession:
 
     def _ensure(self) -> Any:
         with self._lock:
+            if self._closed:
+                raise ThalovantConnectionError("Hub session is closed")
+            self._cleanup()
             if self._client is None:
                 started = self._clock()
                 try:
@@ -169,8 +179,8 @@ class HubSession:
                         # A client that cannot carry the subscriptions is not
                         # kept half-wired and not leaked: closed, and counted
                         # as a failed attempt like a connect that never opened.
-                        with contextlib.suppress(Exception):
-                            client.close()
+                        self._retired = client
+                        self._cleanup()
                         raise
                 except Exception:
                     # Back off the unattended probe; the next question still
@@ -194,15 +204,17 @@ class HubSession:
         could not reach the hub". The utterance still asks for itself, so what
         this drops is the duplicate, not the attempt.
         """
-        if self._clock() < self._retry_at:
-            return
+        with self._lock:
+            if self._closed or self._clock() < self._retry_at:
+                return
         if not self._warming.acquire(blocking=False):
             return
 
         def _connect() -> None:
             try:
                 try:
-                    self._ensure()
+                    with self._busy:
+                        self._ensure()
                 except (TypeError, AttributeError, ImportError):
                     # A transport that cannot be *built* is a fault in the
                     # configuration or the installed SDK; it will not fix
@@ -248,6 +260,13 @@ class HubSession:
         """How long the probe loop should wait before its next look."""
         return float(self.policy.probe_seconds if self.held else self.policy.probe_down_seconds)
 
+    def _cleanup(self) -> None:
+        # Called within lifecycle admission. Failed close retains ownership;
+        # a later call must finish retirement before building another client.
+        if self._retired is not None:
+            self._retired.close()
+            self._retired = None
+
     def _drop(self, client: Any) -> None:
         """Close *client*, but only while it is still the one held.
 
@@ -261,23 +280,29 @@ class HubSession:
         with self._lock:
             if self._client is not client:
                 return
-            self._client = None
-        with contextlib.suppress(Exception):
-            client.close()
+            self._retired, self._client = client, None
+        self._cleanup()
 
     def close(self) -> None:
-        """Close the held client, if any."""
+        """Retire this session after its admitted call finishes.
+
+        A queued warm or probe cannot reopen a closed session. Create a new
+        HubSession to resume. Close may wait for an admitted call's budget.
+        """
         with self._lock:
-            client, self._client = self._client, None
-        if client is not None:
-            with contextlib.suppress(Exception):
-                client.close()
+            self._closed = True
+        with self._busy:
+            with self._lock:
+                client, self._client = self._client, None
+            if client is not None:
+                self._retired = client
+            self._cleanup()
 
     # -- calls -------------------------------------------------------------
 
     def ask(self, text: str, **kwargs: Any) -> Any:
-        """``client.ask`` on a live session, rebuilt once if the socket is dead."""
-        return self._call("ask", True, text, **kwargs)
+        """``client.ask`` on a live session, without replaying an ambiguous call."""
+        return self._call("ask", text, **kwargs)
 
     def emit(self, event_type: str, data: Any = None, context: Any = None) -> Any:
         """``client.emit`` on a live session; a dead socket is dropped, not retried.
@@ -288,35 +313,28 @@ class HubSession:
         outbox, which keeps the envelope until it is accepted, is where a
         retry belongs.
         """
-        return self._call("emit", False, event_type, data, context)
+        return self._call("emit", event_type, data, context)
 
-    def _call(self, method: str, retry: bool, *args: Any, **kwargs: Any) -> Any:
-        # A socket that died since the last call is cheaper to replace now
-        # than to discover by waiting out the reply timeout.
-        with self._lock:
-            held = self._client
-            stale = held is not None and not alive(held)
-        if stale:
-            self._drop(held)
-        # Outside the try: a connect that fails is not a stale socket, and the
-        # retry below would spend a second full handshake learning the same.
-        client = self._ensure()
+    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        # Admission includes choosing the client. A caller queued behind a
+        # failed call must not keep the retired client it observed earlier;
+        # a probe must not close a client during admission either.
         with self._busy:
+            with self._lock:
+                held = self._client
+                stale = held is not None and not alive(held)
+            if stale:
+                self._drop(held)
+            client = self._ensure()
             try:
                 return getattr(client, method)(*args, **kwargs)
             except ThalovantRuntimeError:
-                # A refusal (quota, policy, an intent that raised) arrives on a
-                # socket that just carried a message both ways, so it is
-                # alive; tearing it down cost every denied request a reconnect.
+                # A remote refusal proves a live, authenticated session.
                 raise
-            except Exception as error:
-                if _is_dead_socket(error) and retry:
-                    self._drop(client)
-                    return getattr(self._ensure(), method)(*args, **kwargs)
-                # Anything else, a hub timeout above all, may be a socket that
-                # died quietly; keeping it stranded a client on a dead session
-                # forever, so drop it and let the next call rebuild.
+            except Exception:
                 self._drop(client)
+                # No hub deduplication contract exists for Ask or Emit.
+                # A lost response cannot prove the command was not accepted.
                 raise
 
 
@@ -333,9 +351,10 @@ def hub_hostname(default_master: Any) -> str:
     text = str(default_master or "").strip()
     if not text:
         return ""
-    if "://" in text:
-        return urlsplit(text).hostname or ""
-    return text.split("/")[0].split(":")[0]
+    try:
+        return urlsplit(text if "://" in text else "wss://" + text).hostname or ""
+    except ValueError:
+        return ""
 
 
 @contextlib.contextmanager
@@ -387,6 +406,11 @@ class OriginPreference:
         cooldown_seconds: float = 300.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        for value in (handshake_seconds, cooldown_seconds):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError("origin budgets must be finite and positive")
+        self._connect_lock = threading.Lock()
+        self._retired: Any = None
         self.address = str(address or "").strip()
         self.handshake_seconds = handshake_seconds
         self.cooldown_seconds = cooldown_seconds
@@ -410,26 +434,45 @@ class OriginPreference:
 
         ``build(handshake_seconds)`` returns an unconnected client.
         """
-        if not self.address or not host or self.cooling_down:
-            client = build(handshake_seconds)
-            client.connect(timeout=connect_timeout)
+        with self._connect_lock:
+            self._cleanup()
+            if not self.address or not host or self.cooling_down:
+                return self._dial(build, handshake_seconds, connect_timeout)
+            started = self._clock()
+            try:
+                with preferred_origin(host, self.address):
+                    client = self._dial(build, self.handshake_seconds, connect_timeout)
+            except Exception as error:
+                # Failed retirement still owns a transport. Do not open a
+                # replacement until close succeeds, including on the next call.
+                if self._retired is not None:
+                    raise
+                self._quiet_until = self._clock() + self.cooldown_seconds
+                log.warning(
+                    "hub origin %s did not answer (%s); falling back to DNS for %ds",
+                    self.address, type(error).__name__, int(self.cooldown_seconds),
+                )
+                return self._dial(build, handshake_seconds, connect_timeout)
+            self._quiet_until = 0.0
+            log.info("hub via %s in %dms", self.address, int((self._clock() - started) * 1000))
             return client
-        started = self._clock()
-        client = build(self.handshake_seconds)
+
+    def _dial(self, build: Callable[[float | None], Any], handshake: float | None, timeout: float) -> Any:
+        client = build(handshake)
         try:
-            with preferred_origin(host, self.address):
-                client.connect(timeout=connect_timeout)
-        except Exception as error:
-            self._quiet_until = self._clock() + self.cooldown_seconds
-            log.warning(
-                "hub origin %s did not answer (%s); falling back to DNS for %ds",
-                self.address, type(error).__name__, int(self.cooldown_seconds),
-            )
-            with contextlib.suppress(Exception):
-                client.close()
-            client = build(handshake_seconds)
-            client.connect(timeout=connect_timeout)
+            client.connect(timeout=timeout)
             return client
-        self._quiet_until = 0.0
-        log.info("hub via %s in %dms", self.address, int((self._clock() - started) * 1000))
-        return client
+        except BaseException:
+            self._retired = client
+            self._cleanup()
+            raise
+
+    def _cleanup(self) -> None:
+        if self._retired is not None:
+            self._retired.close()
+            self._retired = None
+
+    def close(self) -> None:
+        """Retry retirement of a failed attempt; successful clients belong to the caller."""
+        with self._connect_lock:
+            self._cleanup()

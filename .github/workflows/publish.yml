@@ -21,7 +21,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sdk-parity:
+    uses: ./.github/workflows/sdk-parity.yml
+    permissions:
+      contents: read
+    with:
+      source_ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag || github.ref }}
+
   publish:
+    needs: sdk-parity
     name: Build and publish
     runs-on: ubuntu-latest
     environment:

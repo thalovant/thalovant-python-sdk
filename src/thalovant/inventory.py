@@ -13,9 +13,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import time
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -139,6 +141,7 @@ class Inventory:
                             "name": intent.name,
                             "skill_id": intent.skill_id,
                             "engine": intent.engine,
+                            "languages": list(intent.phrases),
                             "phrases": {lang: list(texts) for lang, texts in intent.phrases.items()},
                         }
                         for intent in skill.intents
@@ -156,8 +159,7 @@ class Inventory:
         different shape, and reading it optimistically would show somebody a
         listing that silently lost half its fields.
         """
-        if not isinstance(raw, dict) or raw.get("cache_version") != CACHE_VERSION:
-            raise ValueError("not a current inventory cache")
+        _validate_cache(raw)
         skills = []
         for skill in raw.get("skills") or ():
             intents = tuple(
@@ -168,7 +170,9 @@ class Inventory:
                     engine=str(intent.get("engine", "")),
                     phrases={
                         str(lang): tuple(str(text) for text in sentences)
-                        for lang, sentences in (intent.get("phrases") or {}).items()
+                        for lang in dict.fromkeys([*intent.get("languages", []), *intent["phrases"]])
+                        if lang in intent["phrases"]
+                        for sentences in [intent["phrases"][lang]]
                     },
                 )
                 for intent in (skill.get("intents") or ())
@@ -191,6 +195,35 @@ class Inventory:
         )
 
 
+def _validate_cache(raw: Any) -> None:
+    def record(value: Any, names: tuple[str, ...]) -> None:
+        if not isinstance(value, dict) or any(not isinstance(value.get(key), str) for key in names):
+            raise ValueError("invalid inventory cache record")
+    def strings(value: Any) -> None:
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError("invalid inventory cache string list")
+    record(raw, ("hub_id", "hub_name", "source", "generated_at"))
+    if type(raw.get("cache_version")) is not int or raw["cache_version"] != CACHE_VERSION:
+        raise ValueError("not a current inventory cache")
+    strings(raw.get("notes"))
+    if not isinstance(raw.get("skills"), list):
+        raise ValueError("invalid inventory cache skills")
+    for skill in raw["skills"]:
+        record(skill, ("id", "title"))
+        strings(skill.get("locales"))
+        if not isinstance(skill.get("intents"), list):
+            raise ValueError("invalid inventory cache intents")
+        for intent in skill["intents"]:
+            record(intent, ("id", "name", "skill_id", "engine"))
+            phrases = intent.get("phrases")
+            if not isinstance(phrases, dict) or any(not isinstance(tag, str) for tag in phrases):
+                raise ValueError("invalid inventory cache phrases")
+            if "languages" in intent:
+                strings(intent["languages"])
+            for texts in phrases.values():
+                strings(texts)
+
+
 def identity_host(identity_path: Path | str | None) -> str | None:
     """The hostname an identity dials, read from the one public part of the file."""
     if not identity_path:
@@ -202,7 +235,10 @@ def identity_host(identity_path: Path | str | None) -> str | None:
     master = raw.get("default_master") or "" if isinstance(raw, dict) else ""
     if not isinstance(master, str) or not master:
         return None
-    return urlparse(master).hostname
+    try:
+        return urlparse(master).hostname
+    except ValueError:
+        return None
 
 
 class InventoryCache:
@@ -215,6 +251,8 @@ class InventoryCache:
 
     def __init__(self, directory: Path | str | None = None, *, ttl: float = CACHE_TTL_SECONDS,
                  app: str = "thalovant") -> None:
+        if not math.isfinite(ttl) or ttl < 0:
+            raise ValueError("Cache TTL must be finite and nonnegative")
         if directory is None:
             root = os.environ.get("XDG_CACHE_HOME") or ""
             base = Path(root) if root else Path.home() / ".cache"
@@ -237,33 +275,45 @@ class InventoryCache:
         return f"{mode}-{readable}-{digest}"
 
     def path(self, key: str) -> Path:
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,160}", key):
+            raise ValueError("Inventory cache key must be a bounded filename component")
         return self.directory / f"intents-{key}.json"
 
     def load(self, key: str) -> Inventory | None:
         """The last listing for this key, if it is recent enough to still be true."""
-        path = self.path(key)
         try:
-            if time.time() - path.stat().st_mtime > self.ttl:
+            path = self.path(key)
+            with path.open("r", encoding="utf-8") as handle:
+                if time.time() - os.fstat(handle.fileno()).st_mtime > self.ttl:
+                    return None
+                raw = handle.read(8 * 1024 * 1024 + 1)
+            if len(raw) > 8 * 1024 * 1024:
                 return None
-            return Inventory.from_dict(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError, TypeError, AttributeError):
+            return Inventory.from_dict(json.loads(raw))
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
             return None
 
     def store(self, key: str, inventory: Inventory) -> None:
         """Store a listing for next time. Failing to is not worth an error."""
-        path = self.path(key)
+        scratch: Path | None = None
         try:
+            path = self.path(key)
             path.parent.mkdir(parents=True, exist_ok=True)
-            # Written beside and moved, so an interrupted write never leaves a
-            # half-file that the next run has to detect.
-            scratch = path.with_suffix(".partial")
-            scratch.write_text(json.dumps(inventory.as_dict()), encoding="utf-8")
-            # It names the hub and its skills: not a secret, not world-readable.
-            scratch.chmod(0o600)
+            # Unique exclusive creation starts private (0600), before writing.
+            # Writers never share a scratch inode or follow an existing symlink.
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=".intents-", suffix=".partial", delete=False) as handle:
+                scratch = Path(handle.name)
+                json.dump(inventory.as_dict(), handle)
+                handle.flush()
+                os.fsync(handle.fileno())
             scratch.replace(path)
         except (OSError, TypeError, ValueError):
-            with contextlib.suppress(OSError):
-                path.with_suffix(".partial").unlink()
+            pass
+        finally:
+            if scratch is not None:
+                with contextlib.suppress(OSError):
+                    scratch.unlink(missing_ok=True)
 
 
 def languages_present(inventory: Inventory) -> tuple[str, ...]:
@@ -321,6 +371,8 @@ def strip_affix(name: str, kind: str | None, token: str) -> str:
     if kind is None:
         return name
     parts = _tokens(name)
+    if not parts:
+        return name
     if kind == "suffix" and parts[-1] == token:
         parts = parts[:-1]
     elif kind == "prefix" and parts[0] == token:

@@ -941,3 +941,49 @@ When using `HubIntent.examples(speakable=True)`, version 0.6.2 preserves complet
 Configuration merges in 0.6.4 snapshot the caller’s config and personas before
 the first read, preserving the same payload through conflict retries. Guarded
 merges require both `hubs:read` and `hubs:write` scopes and a paid plan.
+
+## Managed sessions and inventory caches
+
+`HubSession` owns one reusable hub connection. Supply a factory that returns a
+connected client and cleans up a failed or cancelled connection attempt. Event
+subscriptions survive client replacement. Go and Rust expose a persistent event
+stream; the other managed SDKs expose subscription handles. Close the session
+when its owner shuts down; close waits for admitted operations and is terminal.
+
+Background connection attempts back off for 10, 20, 40, 80, then 120 seconds.
+Foreground calls can try immediately. Your application owns probe scheduling:
+use the reported probe delay (60 seconds while held, 5 seconds while down).
+The SDK never replays an admitted Ask or Emit after a lost response, because an
+Ask can trigger an action. A request timeout applies to the underlying operation;
+waiting for session admission and your connection factory are separate budgets.
+
+```python
+from thalovant import HubSession
+
+# connect_client returns a connected client and cleans up failed attempts.
+session = HubSession(connect_client, warm=False)
+try:
+    reply = session.ask("What is the weather?")
+finally:
+    session.close()
+```
+
+`Inventory`, `Skill`, and `Intent` provide a presentable view separate from the
+runtime's native intent inventory. Unknown catalogue locales remain unknown;
+phrases observed for a language do not prove catalogue support. Examples choose
+the closest supported locale. A nonpositive limit returns the raw phrase pool
+(Rust uses zero for its unsigned limit). Cache JSON includes explicit intent
+language order so serialization cannot change the default example language.
+
+`InventoryCache` is optional, defaults to a one-hour TTL, and returns a miss for
+invalid, expired, or unreadable data. Writes use private, unique scratch files
+and atomic replacement. POSIX cache files are owner-readable/writable; Windows
+uses the user's directory ACLs. Cache keys separate mode and identity path.
+Never use inventory caches to store credentials.
+
+`OriginPreference` gives a preferred address its own short handshake budget and
+cools it down after a failure. In non-Python SDKs the factory must implement the
+address binding on its own transport, retain the public host for TLS/SNI, and
+finish failed-attempt cleanup before returning. Transport/platform restrictions
+still apply. Python uses a serialized, scoped resolver override; avoid blocking unrelated
+resolver work inside that scope. TLS validation remains enabled.

@@ -38,36 +38,20 @@ def test_a_dead_session_is_read_from_the_public_connection_info():
     assert not alive(None)
 
 
-def test_the_ask_goes_through_the_client_and_retries_once_on_a_dead_socket():
+def test_an_ambiguous_ask_is_not_replayed_and_the_next_call_rebuilds():
     calls = []
-
-    class Client:
-        def __init__(self, fail_once):
-            self.fail_once = fail_once
-
-        def connection_info(self):
-            return SimpleNamespace(phase="ready")
-
-        def ask(self, text, **kwargs):
-            calls.append((self, text, kwargs))
-            if self.fail_once:
-                self.fail_once = False
-                raise ConnectionError("socket closed")
-            return SimpleNamespace(text="ok")
-
-        def on(self, name, handler):
-            pass
-
-        def close(self):
-            pass
-
-    clients = [Client(fail_once=True), Client(fail_once=False)]
+    def accepted_then_lost(text, **kwargs):
+        calls.append(text)
+        raise ConnectionError("socket closed after remote acceptance")
+    first, second = _client(ask=accepted_then_lost), _client()
+    clients = [first, second]
     session = _session(lambda: clients.pop(0))
-    reply = session.ask("what time is it", lang="fr-fr", pipeline=["converse"])
-    assert reply.text == "ok"
-    assert [call[1] for call in calls] == ["what time is it", "what time is it"]
-    assert calls[1][2] == {"lang": "fr-fr", "pipeline": ["converse"]}
-    assert calls[0][0] is not calls[1][0], "the dead client was replaced, not retried"
+    with pytest.raises(ConnectionError):
+        session.ask("install a skill")
+    assert calls == ["install a skill"] and second.asks == []
+    assert first.closed == 1 and not session.held
+    assert session.ask("status").text == "ok"
+    assert second.asks == [("status", {})]
 
 
 def test_a_hub_blip_is_retried_within_seconds_not_minutes():
@@ -270,3 +254,138 @@ def test_a_session_survives_a_connect_that_cannot_be_built(caplog):
     with pytest.raises(TypeError):
         session._ensure()
     assert session.retry_at > 0, "even a wiring fault backs off the probe"
+
+
+@pytest.mark.parametrize("kwargs", [dict(retry_seconds=0), dict(probe_seconds=-1),
+    dict(retry_ceiling_seconds=float("inf")), dict(probe_down_seconds=float("nan")),
+    dict(retry_seconds=20, retry_ceiling_seconds=10)])
+def test_policy_rejects_unbounded_or_busy_loop_values(kwargs):
+    with pytest.raises(ValueError):
+        HubSessionPolicy(**kwargs)
+
+
+def test_closed_session_cannot_be_reopened_by_a_queued_warm_or_probe():
+    client = _client()
+    session = _session(lambda: client)
+    session.ask("hi")
+    session.close()
+    session.warm()
+    session.probe()
+    assert not session.held and client.closed == 1
+    with pytest.raises(Exception, match="Hub session is closed"):
+        session.ask("again")
+    with pytest.raises(Exception, match="Hub session is closed"):
+        session.on("event", lambda _: None)
+
+
+def test_close_waits_for_the_admitted_call_without_dropping_its_client():
+    entered, release, closing = threading.Event(), threading.Event(), threading.Event()
+    client = _client()
+    def ask(text, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        assert client.closed == 0
+        return "done"
+    client.ask = ask
+    session = _session(lambda: client)
+    replies = []
+    caller = threading.Thread(target=lambda: replies.append(session.ask("hi")))
+    caller.start()
+    assert entered.wait(5)
+    def close():
+        closing.set()
+        session.close()
+    closer = threading.Thread(target=close)
+    closer.start()
+    assert closing.wait(5)
+    release.set()
+    caller.join(5); closer.join(5)
+    assert not caller.is_alive() and not closer.is_alive()
+    assert replies == ["done"] and client.closed == 1 and not session.held
+
+
+def test_failed_cleanup_retains_the_old_client_before_another_connect():
+    attempts = []
+    old = _client(ask=lambda *_a, **_k: (_ for _ in ()).throw(ConnectionError("lost response")))
+    closes = []
+    def close():
+        closes.append(None)
+        if len(closes) < 3:
+            raise ConnectionError("cleanup refused")
+    old.close = close
+    fresh = _client()
+    def connect():
+        attempts.append(None)
+        return old if len(attempts) == 1 else fresh
+    session = _session(connect)
+    with pytest.raises(ConnectionError):
+        session.ask("action")
+    with pytest.raises(ConnectionError):
+        session.ask("status")
+    assert len(attempts) == 1, "failed retirement cannot authorize a replacement"
+    assert session.ask("status").text == "ok"
+    assert len(attempts) == 2 and len(closes) == 3
+    session.close()
+
+
+def test_shutdown_rejects_new_subscriptions_before_the_active_call_finishes():
+    entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+    client = _client()
+    client.ask = lambda *_a, **_k: entered.set() or release.wait(5)
+    session = _session(lambda: client)
+    real = session._busy
+    class Admission:
+        def __enter__(self):
+            if threading.current_thread().name == "session-closer":
+                waiting.set()
+            real.acquire()
+        def __exit__(self, *_args):
+            real.release()
+    session._busy = Admission()
+    caller = threading.Thread(target=lambda: session.ask("active"))
+    closer = threading.Thread(target=session.close, name="session-closer")
+    try:
+        caller.start(); assert entered.wait(5)
+        closer.start(); assert waiting.wait(5)
+        with pytest.raises(Exception, match="Hub session is closed"):
+            session.on("new", lambda *_: None)
+        assert client.closed == 0
+    finally:
+        release.set(); caller.join(5); closer.join(5)
+    assert client.closed == 1
+
+
+@pytest.mark.parametrize("address", ["", "127.0.0.1"])
+def test_origin_public_failures_retire_clients_and_failed_cleanup_blocks_replacement(address):
+    origin = OriginPreference(address)
+    old = _client()
+    old.connect = lambda **_: (_ for _ in ()).throw(ConnectionError("failed public dial"))
+    attempts, closes = [], []
+    def close():
+        closes.append(None)
+        if len(closes) < 3:
+            raise OSError("retirement pending")
+    old.close = close
+    def build(_handshake):
+        attempts.append(None)
+        return old
+    with pytest.raises(OSError):
+        origin.connect(build, host="hub.invalid", connect_timeout=1)
+    with pytest.raises(OSError):
+        origin.connect(build, host="hub.invalid", connect_timeout=1)
+    assert len(attempts) == 1
+    origin.close()
+    assert len(closes) == 3
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_origin_rejects_unbounded_or_busy_loop_budgets(value):
+    with pytest.raises(ValueError):
+        OriginPreference("127.0.0.1", handshake_seconds=value)
+    with pytest.raises(ValueError):
+        OriginPreference("127.0.0.1", cooldown_seconds=value)
+
+
+def test_hub_hostname_handles_ipv6_and_invalid_urls():
+    assert hub_hostname("[::1]:443/path") == "::1"
+    assert hub_hostname("wss://[broken") == ""

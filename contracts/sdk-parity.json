@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "reference": {
+    "files": {
+      "src/thalovant/__init__.py": "585af65eb5da6da4597cb2adf391b0b488704ea59a96c56bca82fba6e109aadf",
+      "src/thalovant/_http_runtime.py": "d7ad4a25cad5616d858909a00c445ab137d17df6d7e713e404372154a60eef8b",
+      "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
+      "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
+      "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
+      "src/thalovant/client.py": "eab665b52fd402ce3cbe144e3d049d2df3b0974002de5306b728c783191be438",
+      "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
+      "src/thalovant/control.py": "4bb222e87ded8cda7da300227261eaff7efe28580e4433bd129d19e9a146e855",
+      "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
+      "src/thalovant/errors.py": "f96c12b3af0847250f2ebcc047955699c64dd1440261f0e9899601cfd2e44d56",
+      "src/thalovant/events.py": "c2d3eda0ae924fa419a7fc873bd96ef2f0ac99fd152801774af46ed042218f22",
+      "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
+      "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
+      "src/thalovant/inventory.py": "8c1f378826ace68725042363f340046b0a8ddf3dfebc5208952011d150f489f5",
+      "src/thalovant/listing.py": "113ddf20ac8014a17be453341c59e45182c286685c7e09fc29c21f7caf649c0f",
+      "src/thalovant/models.py": "dd999a8fc8c9c282296b375a79f29354d014e15e2b46f1a176cf1071848d0e33",
+      "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
+      "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
+      "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
+      "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
+      "src/thalovant/transport.py": "7d0f721d53c441c266d6b1f09d8f85e04273d547cb40cd7eca398d8d969f7269"
+    },
+    "dependencies": {
+      "requires-python": ">=3.10",
+      "dependencies": [
+        "PyYAML>=6.0.2",
+        "cryptography>=50.0.0",
+        "hivemind-bus-client>=1.1.1a1",
+        "ovos-spec-tools[langcodes]>=1.10.5a1",
+        "paho-mqtt>=2.1.0",
+        "poorman-handshake>=2.0.0a3",
+        "requests>=2.33.0"
+      ],
+      "extras": {
+        "listing": [
+          "thalovant-languages>=0.3.0"
+        ]
+      }
+    },
+    "conformance": {
+      "inventory-vectors.json": "25fa4fcc868c7f4d14e20255a08ac71dc591e6d2c59d2d1ca072bf6b9143dd89",
+      "question-vectors.json": "a1f503fbf7573b80312f4a52265745976ac486008faf014bbcf15f508d79bb3d"
+    }
+  },
+  "capabilities": {
+    "runtime": {
+      "description": "Runtime messages, correlation, lifecycle, Noise and inventory queries within each supported transport tier",
+      "files": [
+        "src/thalovant/__init__.py",
+        "src/thalovant/agent.py",
+        "src/thalovant/client.py",
+        "src/thalovant/context.py",
+        "src/thalovant/conversation.py",
+        "src/thalovant/errors.py",
+        "src/thalovant/events.py",
+        "src/thalovant/intents.py",
+        "src/thalovant/models.py",
+        "src/thalovant/protocols.py",
+        "src/thalovant/rich.py",
+        "src/thalovant/subscriptions.py",
+        "src/thalovant/transport.py",
+        "src/thalovant/_http_runtime.py",
+        "src/thalovant/_noise_runtime.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        }
+      }
+    },
+    "control": {
+      "description": "Public control-plane operations, provisioning, skills and runtime lifecycle",
+      "files": [
+        "src/thalovant/control.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client."
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        }
+      }
+    },
+    "identity": {
+      "description": "Secure client identity and credential handling within the host storage model",
+      "files": [
+        "src/thalovant/identity.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "Caller owns credential storage; C consumes supplied keys and credentials."
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        }
+      }
+    },
+    "listing": {
+      "description": "Locale selection, illustrative examples, sentence rendering and question detection",
+      "files": [
+        "src/thalovant/listing.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "C does not bundle the managed locale renderer or Unicode language tables."
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        }
+      }
+    },
+    "inventory": {
+      "description": "Presentable skill inventory, locale knowledge, serialization, cache and display helpers",
+      "files": [
+        "src/thalovant/inventory.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "C has no managed inventory object model or filesystem cache; callers own parsing and storage."
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        }
+      }
+    },
+    "session": {
+      "description": "Managed hub session, reconnect policy, liveness probes, subscriptions and optional origin preference",
+      "files": [
+        "src/thalovant/session.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "Caller owns network connections, scheduling and callback lifetime; C does not manage hub sessions."
+        },
+        "thalovant-mcp": {
+          "status": "not-applicable",
+          "reason": "MCP runtime connections and identity leases are scoped to a tool invocation; persistent sockets and origin overrides are not exposed."
+        }
+      }
+    },
+    "cli": {
+      "description": "Python command line interface",
+      "files": [
+        "src/thalovant/cli.py"
+      ],
+      "scope": {
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-go-sdk": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-rust-sdk": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-dotnet-sdk": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-swift-sdk": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        },
+        "thalovant-mcp": {
+          "status": "not-applicable",
+          "reason": "Python command line entry point; consumers expose idiomatic language APIs or MCP tools."
+        }
+      }
+    }
+  }
+}
