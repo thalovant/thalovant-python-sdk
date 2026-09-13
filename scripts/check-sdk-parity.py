@@ -161,14 +161,14 @@ def validate_consumer(reference_manifest, root, repo):
                 raise ValueError(f"{repo}/{name}: tests must be separate from implementation")
 
 
-def check(reference, workspace=None):
+def check(reference, workspace=None, consumer=None):
     errors = []
     try:
         manifest = validate_reference(reference)
     except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
         return [str(error)]
     if workspace is not None:
-        for repo in REPOSITORIES:
+        for repo in ([consumer] if consumer else REPOSITORIES):
             # The producer has its own frozen reference plus executable tests.
             if repo == "thalovant-python-sdk":
                 continue
@@ -184,17 +184,20 @@ def main():
     parser.add_argument("--reference", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--workspace", type=Path,
                         help="Require acceptance from all consumers; omitted only for local producer checks")
+    parser.add_argument("--consumer", choices=REPOSITORIES[1:], help="Validate one consumer during additive rollout; producer/release coordination uses the whole workspace")
     parser.add_argument("--snapshot", action="store_true", help="Print candidate snapshot; never updates acceptance")
     args = parser.parse_args()
     if args.snapshot:
         print(json.dumps(snapshot(args.reference), indent=2, sort_keys=True))
         return 0
-    errors = check(args.reference, args.workspace)
+    if args.consumer and args.workspace is None:
+        parser.error("--consumer requires --workspace")
+    errors = check(args.reference, args.workspace, args.consumer)
     for error in errors:
         print("SDK parity: " + error, file=sys.stderr)
     if errors:
         return 1
-    print("SDK parity reference" + (" and all consumer acceptance records" if args.workspace else "") + " verified")
+    print("SDK parity reference" + (" and " + (args.consumer or "all consumers") + " acceptance records" if args.workspace else "") + " verified")
     return 0
 
 
