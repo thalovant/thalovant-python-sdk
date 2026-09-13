@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 — 2026-09-13
+
+- `HubSession`: a subscription the client refuses is not queued for every client after it, and a fresh client that cannot carry the subscriptions is closed and counted as a failed attempt rather than leaked half-wired. `emit()` no longer retries after a dead socket: an event can reach the hub before the response does and carries nothing a hub could deduplicate on, so the caller's outbox owns the retry; the dead socket is still dropped. `preferred_origin` takes the process-wide resolver one block at a time, so two overlapping blocks cannot restore each other's wrapper.
+
 ## 0.7.0 — 2026-09-13
 
 - `thalovant.session.HubSession` keeps one long-lived hub session by the policy the appliance measured: a client rebuilt when it breaks and the call retried once, an unattended retry ladder from ten seconds to two minutes, a liveness probe every minute while held and every five seconds while not, and subscriptions made with `on()` wired onto every client the session builds. `OriginPreference` tries one address (a LAN origin) before the public path with its own handshake budget and a five-minute cooldown after a failure; `preferred_origin` and `hub_hostname` come with it. Moved from the voice satellite and the custos connector, which each kept a copy and each got a detail wrong once.

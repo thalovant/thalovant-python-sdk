@@ -153,13 +153,66 @@ def test_subscriptions_are_wired_on_every_client_the_session_builds():
     assert second.asks == [("again", {})]
 
 
-def test_emit_shares_the_ask_policy():
+def test_emit_drops_a_dead_socket_but_never_publishes_twice():
+    """An event can reach the hub before the response that says so reaches
+    the client, and carries nothing a hub could deduplicate on; the caller's
+    outbox owns the retry. The dead socket is still dropped."""
     dead = _client(emit=lambda *a, **k: (_ for _ in ()).throw(ConnectionError("closed")))
     live = _client()
     clients = [dead, live]
     session = _session(lambda: clients.pop(0))
-    session.emit("custos.shadow.event", {"seq": 1})
-    assert dead.closed == 1 and live.emits == [("custos.shadow.event", {"seq": 1})]
+    with pytest.raises(ConnectionError):
+        session.emit("custos.shadow.event", {"seq": 1})
+    assert dead.closed == 1 and not session.held
+    session.emit("custos.shadow.event", {"seq": 2})
+    assert live.emits == [("custos.shadow.event", {"seq": 2})]
+
+
+def test_a_subscription_the_client_refuses_is_not_queued_and_a_bad_client_is_not_kept():
+    refusing = _client(on=lambda name, handler: (_ for _ in ()).throw(RuntimeError("no such event")))
+    session = _session(lambda: refusing)
+    session._ensure()
+    with pytest.raises(RuntimeError):
+        session.on("custos.shadow.request", lambda event: None)
+    assert session._subscriptions == [], "a refused registration is not replayed on every client after"
+    # and a replay that fails on a fresh client closes it and backs off
+    session = _session(lambda: refusing)
+    session._subscriptions.append(("custos.shadow.request", lambda event: None))
+    with pytest.raises(RuntimeError):
+        session._ensure()
+    assert refusing.closed == 1 and not session.held and session.retry_at > 0
+
+
+def test_overlapping_origin_blocks_leave_the_resolver_as_it_was():
+    import threading
+    real = socket.getaddrinfo
+    inside = threading.Event()
+    release = threading.Event()
+
+    def first():
+        with preferred_origin("hub.example.invalid", "127.0.0.1"):
+            inside.set()
+            release.wait(5)
+
+    worker = threading.Thread(target=first, daemon=True)
+    worker.start()
+    assert inside.wait(5)
+    # the second block waits for the first rather than stacking a wrapper
+    with_second = []
+
+    def second():
+        with preferred_origin("hub.example.invalid", "127.0.0.2"):
+            with_second.append(socket.getaddrinfo("hub.example.invalid", 443)[0][4][0])
+
+    other = threading.Thread(target=second, daemon=True)
+    other.start()
+    other.join(0.3)
+    assert other.is_alive(), "the second block is queued behind the first"
+    release.set()
+    worker.join(5)
+    other.join(5)
+    assert with_second == ["127.0.0.2"]
+    assert socket.getaddrinfo is real
 
 
 def test_a_stale_client_is_replaced_before_the_call_not_after_the_timeout():
