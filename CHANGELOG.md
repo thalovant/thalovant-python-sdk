@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.12 — 2026-09-13
+
+- A subscription made with `on()` is handed each inbound message once. hivemind-bus-client (through 1.1.8a1) emits every inbound BUS payload on its internal bus twice, once directly and once through the protocol's `handle_bus`, the same object both times: with one client and one subscription the custos node still answered every shadow request twice. The wrapper now drops a delivery whose object is the one it just handled.
+
 ## 0.6.11 — 2026-09-13
 
 - Serialize subscription registration and removal with reconnect restoration. Concurrent `on()` calls register once on the new session, and closing a subscription during reconnect keeps it closed. Subscription edits remain available while the transport connects.
