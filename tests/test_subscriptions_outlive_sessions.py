@@ -167,8 +167,9 @@ def test_failed_registration_does_not_create_a_future_subscription():
 
 
 @pytest.mark.parametrize("close_pending", [False, True])
-def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pending):
-    class PausedConnectTransport(SessionSwappingTransport):
+@pytest.mark.parametrize("preserve_session", [False, True])
+def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pending, preserve_session):
+    class PausedConnectTransport(SelfHealingTransport):
         def __init__(self):
             super().__init__()
             self.connecting = threading.Event()
@@ -183,6 +184,7 @@ def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pen
     transport = PausedConnectTransport()
     sdk = _client(transport)
     seen = []
+    existing = sdk.on("existing", lambda event: seen.append(event))
     adding = threading.Event()
     release_add = threading.Event()
     original_add = sdk._add_subscription
@@ -197,9 +199,12 @@ def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pen
         added = workers.submit(sdk.on, "event", lambda event: seen.append(event))
         try:
             assert adding.wait(5)
-            transport.connected = False
+            sdk._connected = False
+            if not preserve_session:
+                transport.connected = False
             reconnect = workers.submit(sdk.connect)
             assert transport.connecting.wait(5)
+            existing.close()
             release_add.set()
             subscription = added.result(timeout=5)
             if close_pending:
@@ -211,6 +216,72 @@ def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pen
     try:
         transport.bus("event")
         assert len(seen) == (0 if close_pending else 1)
+        transport.bus("existing")
+        assert len(seen) == (0 if close_pending else 1)
         subscription.close()
+    finally:
+        sdk.close()
+
+
+class SelfHealingTransport(QueryTransport):
+    """The library reopened the socket by itself: connect() finds the session
+    open, keeps what is registered on it, and reports the same token."""
+
+    def __init__(self):
+        super().__init__()
+        self.generation = 0
+
+    def connect(self):
+        self.dials += 1
+        if self.connected:
+            return
+        self.connected = True
+        self.generation += 1
+        self.bus_handlers = {}
+
+    def session_token(self):
+        return self.generation
+
+
+def test_a_session_found_already_open_keeps_one_handler_per_subscription():
+    transport = SelfHealingTransport()
+    sdk = _client(transport)
+    seen = []
+    try:
+        sdk.on('custos.shadow.request', lambda event: seen.append(event.data['verb']))
+        # a connect that timed out leaves the client believing it is down
+        # (`cancel()`), while the transport finishes opening on its own
+        sdk._connected = False
+        sdk.emit('custos.shadow.event', {'seq': 1})
+        assert transport.dials == 2 and transport.generation == 1
+        transport.bus('custos.shadow.request', {'verb': 'once'})
+        assert seen == ['once']
+        assert len(transport.bus_handlers['custos.shadow.request']) == 1
+        # and a session this client opens itself gets it back, still once
+        transport.connected = False
+        sdk.emit('custos.shadow.event', {'seq': 2})
+        assert transport.generation == 2
+        transport.bus('custos.shadow.request', {'verb': 'again'})
+        assert seen == ['once', 'again']
+        assert len(transport.bus_handlers['custos.shadow.request']) == 1
+    finally:
+        sdk.close()
+
+
+def test_custom_transport_without_token_reuses_handlers_without_duplicates():
+    transport = QueryTransport()
+    sdk = _client(transport)
+    seen = []
+    try:
+        subscription = sdk.on("event", lambda event: seen.append(event))
+        sdk._connected = False
+        sdk.connect()
+        transport.bus("event")
+        assert len(seen) == 1
+        subscription.close()
+        sdk._connected = False
+        sdk.connect()
+        transport.bus("event")
+        assert len(seen) == 1
     finally:
         sdk.close()

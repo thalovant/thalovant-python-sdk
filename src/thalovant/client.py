@@ -236,6 +236,8 @@ class ThalovantClient:
         # object it holds, and a reconnect replaces that object.
         self._subscriptions_lock = threading.Lock()
         self._subscription_session_ready = False
+        self._subscription_session_token: Any = None
+        self._bound_subscriptions: dict[Callable[[Any], None], str] = {}
         self._event_subscriptions: list[tuple[str, Callable[[Any], None]]] = []
         self._closing = 0
         self._closed_event = threading.Event()
@@ -1442,6 +1444,7 @@ class ThalovantClient:
             if self._subscription_session_ready:
                 # Commit the subscription only after registration succeeds.
                 self._transport.on_mycroft(event_name, handler)
+                self._bound_subscriptions[handler] = event_name
             self._event_subscriptions.append((event_name, handler))
 
     def _remove_subscription(
@@ -1458,18 +1461,45 @@ class ThalovantClient:
                     self._transport.remove_mycroft(event_name, handler)
                 except ThalovantConnectionError:
                     pass
+                self._bound_subscriptions.pop(handler, None)
 
     def _reapply_subscriptions(self) -> None:
-        """Bind live subscriptions once to the newly opened transport session.
+        """Reconcile live listeners with the connected transport session.
 
-        Registry edits and transport registration share a lock. While the
-        session is being replaced, additions remain pending and removals touch
-        only the registry; after this handoff, they update the active session.
+        Session tokens preserve existing bindings when the library reconnects
+        its own socket. Registry edits during connection remain pending until
+        this locked handoff can reconcile additions and removals exactly once.
         """
+        token = self._session_token()
         with self._subscriptions_lock:
+            if token is None or token != self._subscription_session_token:
+                self._bound_subscriptions.clear()
+            live = {handler for _, handler in self._event_subscriptions}
+            for handler, event_name in tuple(self._bound_subscriptions.items()):
+                if handler not in live:
+                    try:
+                        self._transport.remove_mycroft(event_name, handler)
+                    except ThalovantConnectionError:
+                        pass
+                    del self._bound_subscriptions[handler]
             for event_name, handler in self._event_subscriptions:
+                if handler in self._bound_subscriptions:
+                    continue
+                if token is None:
+                    # Legacy custom transports have no session token. Replace
+                    # any existing registration before adding it again.
+                    try:
+                        self._transport.remove_mycroft(event_name, handler)
+                    except (ThalovantConnectionError, KeyError, ValueError):
+                        pass
                 self._transport.on_mycroft(event_name, handler)
+                self._bound_subscriptions[handler] = event_name
+            self._subscription_session_token = token
             self._subscription_session_ready = True
+
+    def _session_token(self) -> Any:
+        probe = getattr(self._transport, "session_token", None)
+        return probe() if callable(probe) else None
 
     def _doctor_identity(self) -> str:
         self.identity.as_dict(include_secrets=False)

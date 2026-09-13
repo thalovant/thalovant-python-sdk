@@ -1,9 +1,13 @@
 # Changelog
 
-## 0.6.10 — 2026-09-13
+## 0.6.11 — 2026-09-13
 
 - Serialize subscription registration and removal with reconnect restoration. Concurrent `on()` calls register once on the new session, and closing a subscription during reconnect keeps it closed. Subscription edits remain available while the transport connects.
 - Do not retain failed `on()` registrations for future reconnects.
+
+## 0.6.10 — 2026-09-13
+
+- 0.6.9 put a client's subscriptions back on every connect that was not a reuse, and a connect that found the session already reopened by the library registered them a second time: on the flapping hub link of 2026-09-13 the custos node answered each shadow request twice within minutes of deploying. The transports now expose a session token that changes only when a new session is opened, the client re-registers only then, and re-registering removes the handler first.
 
 ## 0.6.9 — 2026-09-13
 
