@@ -230,6 +230,12 @@ class ThalovantClient:
         self._connection_lock = threading.Lock()
         self._connection_state = threading.RLock()
         self._connection_generation = 0
+        # Every live `on()` subscription, so a transport session opened by
+        # a transparent reconnect (inside emit(), ask(), _with_reconnect())
+        # gets them back: the transport registers handlers on the client
+        # object it holds, and a reconnect replaces that object.
+        self._subscriptions_lock = threading.Lock()
+        self._event_subscriptions: list[tuple[str, Callable[[Any], None]]] = []
         self._closing = 0
         self._closed_event = threading.Event()
         self._closed_event.set()
@@ -383,6 +389,7 @@ class ThalovantClient:
                     if not reuse_connection:
                         self._transport.connect()
                         transport_completed = True
+                        self._reapply_subscriptions()
                     while not cancelled.is_set():
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
@@ -568,7 +575,7 @@ class ThalovantClient:
                 return
             handler(event)
 
-        self._transport.on_mycroft(event_name, wrapped)
+        self._add_subscription(event_name, wrapped)
         return ThalovantSubscription(self, event_name, wrapped)
 
     def wait_for_event(
@@ -1422,13 +1429,36 @@ class ThalovantClient:
             }
         return merged
 
+    def _add_subscription(
+        self, event_name: str, handler: Callable[[Any], None]
+    ) -> None:
+        with self._subscriptions_lock:
+            self._event_subscriptions.append((event_name, handler))
+        self._transport.on_mycroft(event_name, handler)
+
     def _remove_subscription(
         self, event_name: str, handler: Callable[[Any], None]
     ) -> None:
+        with self._subscriptions_lock:
+            self._event_subscriptions = [
+                entry for entry in self._event_subscriptions if entry[1] is not handler
+            ]
         try:
             self._transport.remove_mycroft(event_name, handler)
         except ThalovantConnectionError:
             pass
+
+    def _reapply_subscriptions(self) -> None:
+        """Register every live subscription on the transport session just opened.
+
+        Handlers live on the transport's client object, and a reconnect
+        replaces that object; without this, a subscription made with `on()`
+        went quiet after the first transparent reconnect, and nothing said so.
+        """
+        with self._subscriptions_lock:
+            entries = tuple(self._event_subscriptions)
+        for event_name, handler in entries:
+            self._transport.on_mycroft(event_name, handler)
 
     def _doctor_identity(self) -> str:
         self.identity.as_dict(include_secrets=False)
