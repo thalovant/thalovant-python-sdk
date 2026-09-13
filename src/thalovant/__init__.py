@@ -3,6 +3,19 @@
 from ._version import __version__
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
+from .inventory import (
+    Intent,
+    Inventory,
+    InventoryCache,
+    Skill,
+    common_affix,
+    friendly_title,
+    humanize,
+    languages_present,
+    sort_key,
+    strip_affix,
+)
+from .session import HubSession, HubSessionPolicy, OriginPreference, hub_hostname, preferred_origin
 from .control import (
     BootstrapIdentityResult,
     DEFAULT_CONTROL_API_URL,
@@ -74,6 +87,21 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
 __all__ = [
+    "HubSession",
+    "HubSessionPolicy",
+    "OriginPreference",
+    "hub_hostname",
+    "preferred_origin",
+    "Intent",
+    "Inventory",
+    "InventoryCache",
+    "Skill",
+    "common_affix",
+    "friendly_title",
+    "humanize",
+    "languages_present",
+    "sort_key",
+    "strip_affix",
     "AsyncThalovantAgent",
     "AsyncThalovantClient",
     "AsyncThalovantConversation",

@@ -19,7 +19,6 @@ as a defect and so does a Spanish question closed with a full stop.
 from __future__ import annotations
 
 import re
-from functools import lru_cache
 from typing import Iterable
 
 try:
@@ -73,25 +72,13 @@ def dangling(text: str, lang: str | None) -> bool:
     return bool(words) and words[-1].lower() in _words(lang, "trailing_words")
 
 
-@lru_cache(maxsize=16)
-def _question_pattern(lang: str | None) -> tuple[re.Pattern[str], ...]:
-    patterns = language_data(lang).get("question_patterns") or ()
-    return tuple(re.compile(str(pattern), re.IGNORECASE) for pattern in patterns)
-
-
 def asks(text: str, lang: str | None) -> bool:
-    """Whether a registered phrase is asking something, by the language's
-    own ``question_openers``, ``question_words_anywhere`` and
-    ``question_patterns``."""
-    if any(pattern.search(text) for pattern in _question_pattern(lang)):
-        return True
-    words = [word.strip(",;:!?.’'\"()").lower() for word in text.split()]
-    words = [word for word in words if word]
-    if not words:
-        return False
-    if words[0] in _words(lang, "question_openers"):
-        return True
-    return bool(_words(lang, "question_words_anywhere").intersection(words))
+    """Whether a phrase is asking something, by the language's own words.
+
+    The answer is the language package's (`thalovant_languages.asks`), the
+    same one the fleet's fallback skills use; without the package nothing is
+    a question."""
+    return _languages.asks(text, lang) if _languages is not None else False
 
 
 def as_sentence(text: str, lang: str | None = None) -> str:
