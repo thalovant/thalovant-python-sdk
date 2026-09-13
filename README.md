@@ -686,6 +686,8 @@ async ask, query, event wait, or listener removes its handlers and retires any
 active connection/write it owns; a queued caller cannot close another caller's
 session. Transport status checks run outside the waiting caller's thread.
 
+Live `on()` subscriptions survive reconnects. Call `subscription.close()` to remove them permanently; concurrent registration and removal are serialized with session restoration.
+
 `wait_for_event(timeout=...)` and `listen(timeout=...)` include connection and
 subscription setup in the deadline. A listener without a timeout uses the normal
 connect budget and can then listen indefinitely. Both sync and async listeners

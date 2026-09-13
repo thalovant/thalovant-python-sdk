@@ -235,6 +235,9 @@ class ThalovantClient:
         # gets them back: the transport registers handlers on the client
         # object it holds, and a reconnect replaces that object.
         self._subscriptions_lock = threading.Lock()
+        self._subscription_session_ready = False
+        self._subscription_session_token: Any = None
+        self._bound_subscriptions: dict[Callable[[Any], None], str] = {}
         self._event_subscriptions: list[tuple[str, Callable[[Any], None]]] = []
         self._closing = 0
         self._closed_event = threading.Event()
@@ -387,13 +390,14 @@ class ThalovantClient:
                 transport_completed = reuse_connection
                 try:
                     if not reuse_connection:
-                        token = self._session_token()
+                        # Stop binding new listeners to a session being replaced.
+                        # Do not hold this lock during network I/O: subscriptions
+                        # can still be closed while a connection is pending.
+                        with self._subscriptions_lock:
+                            self._subscription_session_ready = False
                         self._transport.connect()
                         transport_completed = True
-                        # only a session this call opened needs the subscriptions
-                        # back; one the library reopened by itself still has them
-                        if token is None or self._session_token() != token:
-                            self._reapply_subscriptions()
+                        self._reapply_subscriptions()
                     while not cancelled.is_set():
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
@@ -1437,38 +1441,68 @@ class ThalovantClient:
         self, event_name: str, handler: Callable[[Any], None]
     ) -> None:
         with self._subscriptions_lock:
+            if self._subscription_session_ready:
+                # Commit the subscription only after registration succeeds.
+                self._transport.on_mycroft(event_name, handler)
+                self._bound_subscriptions[handler] = event_name
             self._event_subscriptions.append((event_name, handler))
-        self._transport.on_mycroft(event_name, handler)
 
     def _remove_subscription(
         self, event_name: str, handler: Callable[[Any], None]
     ) -> None:
         with self._subscriptions_lock:
+            if not any(entry[1] is handler for entry in self._event_subscriptions):
+                return
             self._event_subscriptions = [
                 entry for entry in self._event_subscriptions if entry[1] is not handler
             ]
-        try:
-            self._transport.remove_mycroft(event_name, handler)
-        except ThalovantConnectionError:
-            pass
+            if self._subscription_session_ready:
+                try:
+                    self._transport.remove_mycroft(event_name, handler)
+                except ThalovantConnectionError:
+                    pass
+                self._bound_subscriptions.pop(handler, None)
 
     def _reapply_subscriptions(self) -> None:
-        """Register every live subscription on the transport session just opened.
+        """Reconcile live listeners with the connected transport session.
 
-        Handlers live on the transport's client object, and a reconnect
-        replaces that object; without this, a subscription made with `on()`
-        went quiet after the first transparent reconnect, and nothing said so.
+        Session tokens preserve existing bindings when the library reconnects
+        its own socket. Registry edits during connection remain pending until
+        this locked handoff can reconcile additions and removals exactly once.
         """
+        token = self._session_token()
         with self._subscriptions_lock:
-            entries = tuple(self._event_subscriptions)
-        for event_name, handler in entries:
-            # remove first: registering a handler the session already holds
-            # would have it called once per registration
-            try:
-                self._transport.remove_mycroft(event_name, handler)
-            except Exception:
-                pass
-            self._transport.on_mycroft(event_name, handler)
+            if token is not None and token != self._subscription_session_token:
+                self._bound_subscriptions.clear()
+            live = {handler for _, handler in self._event_subscriptions}
+            for handler, event_name in tuple(self._bound_subscriptions.items()):
+                if handler not in live:
+                    try:
+                        self._transport.remove_mycroft(event_name, handler)
+                    except ThalovantConnectionError:
+                        pass
+                    except (KeyError, ValueError):
+                        if token is not None:
+                            raise
+                    del self._bound_subscriptions[handler]
+            if token is None:
+                # Retire pending removals before forgetting old bindings: a
+                # legacy transport may have kept the same session alive.
+                self._bound_subscriptions.clear()
+            for event_name, handler in self._event_subscriptions:
+                if handler in self._bound_subscriptions:
+                    continue
+                if token is None:
+                    # Legacy custom transports have no session token. Replace
+                    # any existing registration before adding it again.
+                    try:
+                        self._transport.remove_mycroft(event_name, handler)
+                    except (ThalovantConnectionError, KeyError, ValueError):
+                        pass
+                self._transport.on_mycroft(event_name, handler)
+                self._bound_subscriptions[handler] = event_name
+            self._subscription_session_token = token
+            self._subscription_session_ready = True
 
     def _session_token(self) -> Any:
         probe = getattr(self._transport, "session_token", None)

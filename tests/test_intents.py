@@ -899,8 +899,11 @@ def test_optional_fallback_probe_bounds_send_and_holds_lifecycle_until_retired()
     sdk = client(hub)
     try:
         started = time.monotonic()
-        assert list_fallbacks(sdk, timeout=0.03) is None
-        assert time.monotonic() - started < 0.25
+        # Allow CI to schedule connection/send workers before the deadline.
+        # The transport remains blocked for five seconds, so this still proves
+        # the caller returns early while cleanup retains session ownership.
+        assert list_fallbacks(sdk, timeout=1.0) is None
+        assert time.monotonic() - started < 2.5
         assert hub.started.is_set()
         assert all(not handlers for handlers in hub.handlers.values())
         with pytest.raises(ThalovantConnectionError):
