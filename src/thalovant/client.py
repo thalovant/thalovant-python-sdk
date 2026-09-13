@@ -387,9 +387,13 @@ class ThalovantClient:
                 transport_completed = reuse_connection
                 try:
                     if not reuse_connection:
+                        token = self._session_token()
                         self._transport.connect()
                         transport_completed = True
-                        self._reapply_subscriptions()
+                        # only a session this call opened needs the subscriptions
+                        # back; one the library reopened by itself still has them
+                        if token is None or self._session_token() != token:
+                            self._reapply_subscriptions()
                     while not cancelled.is_set():
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
@@ -1458,7 +1462,17 @@ class ThalovantClient:
         with self._subscriptions_lock:
             entries = tuple(self._event_subscriptions)
         for event_name, handler in entries:
+            # remove first: registering a handler the session already holds
+            # would have it called once per registration
+            try:
+                self._transport.remove_mycroft(event_name, handler)
+            except Exception:
+                pass
             self._transport.on_mycroft(event_name, handler)
+
+    def _session_token(self) -> Any:
+        probe = getattr(self._transport, "session_token", None)
+        return probe() if callable(probe) else None
 
     def _doctor_identity(self) -> str:
         self.identity.as_dict(include_secrets=False)
