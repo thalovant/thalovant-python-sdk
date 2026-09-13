@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
     with:
-      source_ref: ${{ github.ref }}
+      source_ref: ${{ github.sha }}
 
   release:
     needs: sdk-parity
