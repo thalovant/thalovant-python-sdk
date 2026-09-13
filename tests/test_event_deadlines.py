@@ -173,18 +173,40 @@ def test_async_cancellation_removes_active_reply_or_event_listeners(name):
 
 
 @pytest.mark.parametrize('limit', [1, 3, 256])
-def test_listen_overflow_is_explicit_and_retires_subscription(limit):
+def test_listen_overflow_is_explicit_and_retires_subscription(limit, monkeypatch):
+    """A producer that outruns the consumer by one event overflows the buffer.
+
+    The flood runs on the setup thread while the caller's thread is already
+    draining the queue, so with a large buffer the consumer could take an
+    event before the last one lands and no overflow would occur: the
+    release job saw exactly that twice at 256. The consumer is held until
+    the flood is over, which is the situation the bound exists for -- a
+    consumer slower than the hub -- rather than a race with it.
+    """
+    import queue as queue_module
+
+    from thalovant import client as client_module
+
+    flooded = threading.Event()
+
     class Flood(QueryTransport):
         def on_mycroft(self, name, handler):
             super().on_mycroft(name, handler)
             for i in range(limit + 1):
                 self.bus(name, {'index': i})
+            flooded.set()
 
+    class HeldQueue(queue_module.Queue):
+        def get(self, block=True, timeout=None):
+            flooded.wait(5)
+            return super().get(block, timeout)
+
+    monkeypatch.setattr(client_module.queue, 'Queue', HeldQueue)
     transport = Flood()
     sdk = client(transport)
     try:
         with pytest.raises(ThalovantRuntimeError, match='overflow'):
-            list(sdk.listen('event', timeout=1, max_buffered_events=limit))
+            list(sdk.listen('event', timeout=5, max_buffered_events=limit))
         assert not any(transport.bus_handlers.values())
     finally:
         sdk.close()
