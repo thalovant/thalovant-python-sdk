@@ -14,6 +14,32 @@ from pathlib import Path
 import unicodedata
 
 from thalovant import Intent, Inventory, InventoryCache, Skill, listing
+from thalovant.events import ThalovantEvent
+from thalovant.models import ThalovantReply
+
+
+def reply_claim_vectors():
+    cases=[
+     ('legacy',True,False,[{}]),('empty',True,False,[]),('unhandled',False,False,[{}]),('failed',True,True,[{'pipeline_id':'intent'}]),
+     ('intent',True,False,[{'pipeline_id':'ovos-padatious-pipeline-plugin','skill_id':'weather'}]),
+     ('fallback',True,False,[{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'}]),
+     ('fallback-then-converse',True,False,[{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'first'},{'pipeline_id':'ovos-converse-pipeline-plugin','skill_id':'second'}]),
+     ('ordered-duplicates',True,False,[{'pipeline_id':'z-stage','skill_id':'z-skill'},{'pipeline_id':'a-stage','skill_id':'a-skill'},{'pipeline_id':'z-stage','skill_id':'z-skill'}]),
+     ('empty-stamps',True,False,[{'pipeline_id':'','skill_id':''},{'pipeline_id':None,'skill_id':None}]),
+     ('malformed-stamps',True,False,[{'pipeline_id':True,'skill_id':123},{'pipeline_id':['fallback'],'skill_id':{'id':'x'}}]),
+     ('malformed-plus-fallback',True,False,[{'pipeline_id':123},{'pipeline_id':'fallback','skill_id':'real'}]),
+     ('case-sensitive-stage',True,False,[{'pipeline_id':'FALLBACK','skill_id':'Skill'},{'pipeline_id':'fallback','skill_id':'skill'}]),
+     ('substring',True,False,[{'pipeline_id':'prefix-fallback-suffix'}]),
+     ('whitespace-preserved',True,False,[{'pipeline_id':' stage ','skill_id':' skill '}]),
+     ('unicode',True,False,[{'pipeline_id':'段階','skill_id':'技能'},{'pipeline_id':'段階','skill_id':'技能'}]),
+     ('failed-without-stamps',True,True,[{}]),
+    ]
+    rows=[]
+    for name,handled,failed,contexts in cases:
+     events=tuple(ThalovantEvent('speak',{'utterance':'reply'},context,None) for context in contexts)
+     reply=ThalovantReply(text='reply',handled=handled,events=events,failure_event=ThalovantEvent('failure',{}, {},None) if failed else None)
+     rows.append({'name':name,'handled':handled,'failed':failed,'contexts':contexts,'expected':{'pipeline_ids':list(reply.pipeline_ids),'skill_ids':list(reply.skill_ids),'claimed':reply.claimed}})
+    return {"schema_version": 1, "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication.", "cases": rows}
 
 
 def vectors():
@@ -39,7 +65,7 @@ def vectors():
         {"language": lang, "limit": limit, "expected": list(inventory.intents[0].examples(lang, limit))}
         for lang, limit in queries
     ], "speaks": [{"language": lang, "expected": inventory.skills[0].speaks(lang)} for lang in ["en-gb", "fr", "de"]]}
-    return {"question-vectors.json": question, "inventory-vectors.json": inventory_vectors}
+    return {"question-vectors.json": question, "inventory-vectors.json": inventory_vectors, "reply-claim-vectors.json": reply_claim_vectors()}
 
 
 def check(directory):
@@ -56,6 +82,15 @@ def check(directory):
     for row in data["speaks"]:
         assert inventory.skills[0].speaks(row["language"]) == row["expected"], row
     assert inventory.skills[1].speaks("en") is None
+
+    claims = json.loads((directory / "reply-claim-vectors.json").read_text())
+    for row in claims["cases"]:
+        reply = ThalovantReply(text="reply", handled=row["handled"],
+            events=tuple(ThalovantEvent("speak", {}, context, None) for context in row["contexts"]),
+            failure_event=ThalovantEvent("failure", {}, {}, None) if row["failed"] else None)
+        assert list(reply.pipeline_ids) == row["expected"]["pipeline_ids"], row["name"]
+        assert list(reply.skill_ids) == row["expected"]["skill_ids"], row["name"]
+        assert reply.claimed == row["expected"]["claimed"], row["name"]
 
 
 if __name__ == "__main__":

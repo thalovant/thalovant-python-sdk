@@ -108,3 +108,15 @@ def test_the_dictionary_form_carries_the_claim():
     assert d["claimed"] is True
     assert d["pipeline_ids"] == ["ovos-adapt-pipeline-plugin"]
     assert d["skill_ids"] == ["hello.skill"]
+
+
+def test_non_string_stamps_do_not_turn_a_fallback_into_a_claim():
+    reply = ThalovantReply(text="fallback text", handled=True, events=(
+        ThalovantEvent("speak", {}, {"pipeline_id": 123, "skill_id": ["forged"]}, None),
+        _event("speak", "fallback", "real.skill"),
+    ))
+    assert reply.pipeline_ids == ("fallback",)
+    assert reply.skill_ids == ("real.skill",)
+    assert reply.claimed is False
+    assert reply.text == "fallback text"
+    assert reply.ok is True

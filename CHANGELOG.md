@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.7.2 — 2026-09-13
+## 0.7.3 — 2026-09-13
+
+- Preserve the reply claim, pipeline and skill metadata added by PR75; ignore malformed non-string stamps consistently across SDKs and bind shared reply-claim vectors to the automated contract.
 
 - Require HiveMind bus client 1.1.9a1, which delivers inbound BUS events once after protocol processing (upstream #251/#252). Remove the temporary object-identity suppression so custom transports can reuse message objects without losing events. CI tests the dependency floor and current dependency resolution.
 
@@ -9,6 +11,10 @@
 - Stop replaying ambiguous `HubSession.ask()` failures; callers retain responsibility for retrying actions. Serialize warm/foreground admission with shutdown and retain failed cleanup for retry.
 - Validate cache shapes and keys, bound cache reads, use unique private atomic writes, and preserve explicit intent language order across JSON serializers. Existing version-1 caches remain readable.
 - Add executable cross-SDK question/inventory conformance and bind it to the reference contract. Gate PR/release parity against all eight SDKs and MCP, with scheduled dependency drift checks.
+
+## 0.7.2 — 2026-09-13
+
+- Add advisory reply claim status and ordered pipeline/skill identifiers for callers that distinguish intent matches from fallback answers.
 
 ## 0.7.1 — 2026-09-13
 

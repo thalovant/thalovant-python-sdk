@@ -1,0 +1,323 @@
+{
+  "schema_version": 1,
+  "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication.",
+  "cases": [
+    {
+      "name": "legacy",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {}
+      ],
+      "expected": {
+        "pipeline_ids": [],
+        "skill_ids": [],
+        "claimed": true
+      }
+    },
+    {
+      "name": "empty",
+      "handled": true,
+      "failed": false,
+      "contexts": [],
+      "expected": {
+        "pipeline_ids": [],
+        "skill_ids": [],
+        "claimed": true
+      }
+    },
+    {
+      "name": "unhandled",
+      "handled": false,
+      "failed": false,
+      "contexts": [
+        {}
+      ],
+      "expected": {
+        "pipeline_ids": [],
+        "skill_ids": [],
+        "claimed": false
+      }
+    },
+    {
+      "name": "failed",
+      "handled": true,
+      "failed": true,
+      "contexts": [
+        {
+          "pipeline_id": "intent"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "intent"
+        ],
+        "skill_ids": [],
+        "claimed": false
+      }
+    },
+    {
+      "name": "intent",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "ovos-padatious-pipeline-plugin",
+          "skill_id": "weather"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "ovos-padatious-pipeline-plugin"
+        ],
+        "skill_ids": [
+          "weather"
+        ],
+        "claimed": true
+      }
+    },
+    {
+      "name": "fallback",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "ovos-fallback-pipeline-plugin",
+          "skill_id": "fallback.skill"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "ovos-fallback-pipeline-plugin"
+        ],
+        "skill_ids": [
+          "fallback.skill"
+        ],
+        "claimed": false
+      }
+    },
+    {
+      "name": "fallback-then-converse",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "ovos-fallback-pipeline-plugin",
+          "skill_id": "first"
+        },
+        {
+          "pipeline_id": "ovos-converse-pipeline-plugin",
+          "skill_id": "second"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "ovos-fallback-pipeline-plugin",
+          "ovos-converse-pipeline-plugin"
+        ],
+        "skill_ids": [
+          "first",
+          "second"
+        ],
+        "claimed": true
+      }
+    },
+    {
+      "name": "ordered-duplicates",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "z-stage",
+          "skill_id": "z-skill"
+        },
+        {
+          "pipeline_id": "a-stage",
+          "skill_id": "a-skill"
+        },
+        {
+          "pipeline_id": "z-stage",
+          "skill_id": "z-skill"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "z-stage",
+          "a-stage"
+        ],
+        "skill_ids": [
+          "z-skill",
+          "a-skill"
+        ],
+        "claimed": true
+      }
+    },
+    {
+      "name": "empty-stamps",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "",
+          "skill_id": ""
+        },
+        {
+          "pipeline_id": null,
+          "skill_id": null
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [],
+        "skill_ids": [],
+        "claimed": true
+      }
+    },
+    {
+      "name": "malformed-stamps",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": true,
+          "skill_id": 123
+        },
+        {
+          "pipeline_id": [
+            "fallback"
+          ],
+          "skill_id": {
+            "id": "x"
+          }
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [],
+        "skill_ids": [],
+        "claimed": true
+      }
+    },
+    {
+      "name": "malformed-plus-fallback",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": 123
+        },
+        {
+          "pipeline_id": "fallback",
+          "skill_id": "real"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "fallback"
+        ],
+        "skill_ids": [
+          "real"
+        ],
+        "claimed": false
+      }
+    },
+    {
+      "name": "case-sensitive-stage",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "FALLBACK",
+          "skill_id": "Skill"
+        },
+        {
+          "pipeline_id": "fallback",
+          "skill_id": "skill"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "FALLBACK",
+          "fallback"
+        ],
+        "skill_ids": [
+          "Skill",
+          "skill"
+        ],
+        "claimed": true
+      }
+    },
+    {
+      "name": "substring",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "prefix-fallback-suffix"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "prefix-fallback-suffix"
+        ],
+        "skill_ids": [],
+        "claimed": false
+      }
+    },
+    {
+      "name": "whitespace-preserved",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": " stage ",
+          "skill_id": " skill "
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          " stage "
+        ],
+        "skill_ids": [
+          " skill "
+        ],
+        "claimed": true
+      }
+    },
+    {
+      "name": "unicode",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "段階",
+          "skill_id": "技能"
+        },
+        {
+          "pipeline_id": "段階",
+          "skill_id": "技能"
+        }
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "段階"
+        ],
+        "skill_ids": [
+          "技能"
+        ],
+        "claimed": true
+      }
+    },
+    {
+      "name": "failed-without-stamps",
+      "handled": true,
+      "failed": true,
+      "contexts": [
+        {}
+      ],
+      "expected": {
+        "pipeline_ids": [],
+        "skill_ids": [],
+        "claimed": false
+      }
+    }
+  ]
+}

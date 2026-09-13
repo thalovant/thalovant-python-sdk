@@ -519,6 +519,7 @@ Fields and helpers:
 - `handled`
 - `ok`
 - `claimed` — whether a skill claimed the utterance rather than a fallback catching it; False for a failed or unhandled reply, True on a hub that stamps no pipeline ids
+- Metadata IDs include nonempty strings only; malformed stamps are ignored. Claim status is advisory and does not authenticate a peer.
 - `pipeline_ids` — the pipeline stages the hub stamped on the reply (`context["pipeline_id"]`), in order, once each
 - `skill_ids` — the skills whose messages make up the reply, in order, once each
 - `session_id`
