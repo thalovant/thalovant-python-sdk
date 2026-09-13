@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.3 — 2026-09-13
+## 0.7.4 — 2026-09-13
 
 - Preserve the reply claim, pipeline and skill metadata added by PR75; ignore malformed non-string stamps consistently across SDKs and bind shared reply-claim vectors to the automated contract.
 
@@ -11,6 +11,10 @@
 - Stop replaying ambiguous `HubSession.ask()` failures; callers retain responsibility for retrying actions. Serialize warm/foreground admission with shutdown and retain failed cleanup for retry.
 - Validate cache shapes and keys, bound cache reads, use unique private atomic writes, and preserve explicit intent language order across JSON serializers. Existing version-1 caches remain readable.
 - Add executable cross-SDK question/inventory conformance and bind it to the reference contract. Gate PR/release parity against all eight SDKs and MCP, with scheduled dependency drift checks.
+
+## 0.7.3
+
+- Synchronize the listen overflow regression with completion of the producer flood (PR #76).
 
 ## 0.7.2 — 2026-09-13
 
