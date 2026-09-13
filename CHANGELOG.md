@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.9 — 2026-09-13
+
+- A subscription made with `on()` now outlives the transport session it was made on. The transports register handlers on the client object they hold, and `emit()`, `ask()` and the reconnect helper replace that object when the hub link drops, so a handler wired once went quiet at the first hiccup and nothing said so: the custos node's shadow responder received every request for twelve hours and answered none. The client keeps its live subscriptions and puts them back on every new session; a closed subscription stays closed.
+
 ## 0.6.8 — 2026-09-12
 
 - The listing reads `thalovant-languages` 0.2.0, which derives 270 languages from Universal Dependencies, CLDR and Unicode instead of describing two by hand. A Spanish or German phrase is now set with its own question mark; a language nothing describes still prints bare.
