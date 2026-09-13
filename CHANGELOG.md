@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10 — 2026-09-13
+
+- 0.6.9 put a client's subscriptions back on every connect that was not a reuse, and a connect that found the session already reopened by the library registered them a second time: on the flapping hub link of 2026-09-13 the custos node answered each shadow request twice within minutes of deploying. The transports now expose a session token that changes only when a new session is opened, the client re-registers only then, and re-registering removes the handler first.
+
 ## 0.6.9 — 2026-09-13
 
 - A subscription made with `on()` now outlives the transport session it was made on. The transports register handlers on the client object they hold, and `emit()`, `ask()` and the reconnect helper replace that object when the hub link drops, so a handler wired once went quiet at the first hiccup and nothing said so: the custos node's shadow responder received every request for twelve hours and answered none. The client keeps its live subscriptions and puts them back on every new session; a closed subscription stays closed.

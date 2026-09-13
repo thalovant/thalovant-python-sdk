@@ -56,3 +56,48 @@ def test_a_closed_subscription_stays_closed_across_a_reconnect():
         assert seen == [] and not transport.bus_handlers.get('custos.shadow.request')
     finally:
         sdk.close()
+
+
+class SelfHealingTransport(QueryTransport):
+    """The library reopened the socket by itself: connect() finds the session
+    open, keeps what is registered on it, and reports the same token."""
+
+    def __init__(self):
+        super().__init__()
+        self.generation = 0
+
+    def connect(self):
+        self.dials += 1
+        if self.connected:
+            return
+        self.connected = True
+        self.generation += 1
+        self.bus_handlers = {}
+
+    def session_token(self):
+        return self.generation
+
+
+def test_a_session_found_already_open_keeps_one_handler_per_subscription():
+    transport = SelfHealingTransport()
+    sdk = _client(transport)
+    seen = []
+    try:
+        sdk.on('custos.shadow.request', lambda event: seen.append(event.data['verb']))
+        # a connect that timed out leaves the client believing it is down
+        # (`cancel()`), while the transport finishes opening on its own
+        sdk._connected = False
+        sdk.emit('custos.shadow.event', {'seq': 1})
+        assert transport.dials == 2 and transport.generation == 1
+        transport.bus('custos.shadow.request', {'verb': 'once'})
+        assert seen == ['once']
+        assert len(transport.bus_handlers['custos.shadow.request']) == 1
+        # and a session this client opens itself gets it back, still once
+        transport.connected = False
+        sdk.emit('custos.shadow.event', {'seq': 2})
+        assert transport.generation == 2
+        transport.bus('custos.shadow.request', {'verb': 'again'})
+        assert seen == ['once', 'again']
+        assert len(transport.bus_handlers['custos.shadow.request']) == 1
+    finally:
+        sdk.close()

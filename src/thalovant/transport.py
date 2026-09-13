@@ -97,6 +97,17 @@ class _ConnectionLifecycle:
         with self._lifecycle_lock:
             return self._client is client
 
+    def session_token(self) -> int:
+        """A value that changes exactly when a new underlying session is opened.
+
+        The client re-registers its subscriptions on a new session and leaves a
+        session it finds already open alone: the library reconnects on its own
+        after a dropped socket, and registering again there would answer every
+        event twice.
+        """
+        with self._lifecycle_lock:
+            return self._generation
+
     def _reserve_connection(self) -> tuple[int, Any]:
         with self._lifecycle_lock:
             if self._connecting or self._closing:
