@@ -74,7 +74,7 @@ def snapshot(reference):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         normalized = normalized_tree(WithoutDocumentation().visit(tree))
-        files[str(path.relative_to(reference))] = digest(normalized)
+        files[path.relative_to(reference).as_posix()] = digest(normalized)
     if not files:
         raise ValueError("Python source tree is missing")
     project = tomllib.loads((reference / "pyproject.toml").read_text(encoding="utf-8"))["project"]
@@ -96,7 +96,7 @@ def file_hash(root, name):
         raise ValueError("Evidence must be a regular repository file")
     if not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
         raise ValueError(f"Missing or escaping evidence file: {name}")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
 def validate_reference(reference):

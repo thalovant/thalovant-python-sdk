@@ -97,3 +97,22 @@ def test_empty_version_specific_ast_fields_do_not_change_digest():
     second.body[0]._fields = (*second.body[0]._fields, "future_optional_field")
     second.body[0].future_optional_field = []
     assert parity.normalized_tree(first) == parity.normalized_tree(second)
+
+
+
+def test_snapshot_paths_are_portable_to_windows(monkeypatch):
+    from pathlib import PureWindowsPath
+    original = Path.relative_to
+    def windows_relative(path, *args, **kwargs):
+        result = original(path, *args, **kwargs)
+        return PureWindowsPath(*result.parts)
+    monkeypatch.setattr(Path, "relative_to", windows_relative)
+    assert parity.snapshot(ROOT) == json.loads((ROOT / parity.MANIFEST).read_text())["reference"]
+
+
+def test_evidence_hashes_ignore_checkout_line_endings(tmp_path):
+    path = tmp_path / "source.txt"
+    path.write_bytes(b"one\ntwo\n")
+    expected = parity.file_hash(tmp_path, "source.txt")
+    path.write_bytes(b"one\r\ntwo\r\n")
+    assert parity.file_hash(tmp_path, "source.txt") == expected
