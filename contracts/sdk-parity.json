@@ -1,11 +1,35 @@
 {
   "schema_version": 1,
   "reference": {
+    "files": {
+      "src/thalovant/__init__.py": "585af65eb5da6da4597cb2adf391b0b488704ea59a96c56bca82fba6e109aadf",
+      "src/thalovant/_http_runtime.py": "d7ad4a25cad5616d858909a00c445ab137d17df6d7e713e404372154a60eef8b",
+      "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
+      "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
+      "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
+      "src/thalovant/client.py": "a95a24c0ecf33b5f1c3bdd7315a4d47996435bc1d17fca89c9f757339bc4e967",
+      "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
+      "src/thalovant/control.py": "4bb222e87ded8cda7da300227261eaff7efe28580e4433bd129d19e9a146e855",
+      "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
+      "src/thalovant/errors.py": "f96c12b3af0847250f2ebcc047955699c64dd1440261f0e9899601cfd2e44d56",
+      "src/thalovant/events.py": "c2d3eda0ae924fa419a7fc873bd96ef2f0ac99fd152801774af46ed042218f22",
+      "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
+      "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
+      "src/thalovant/inventory.py": "8c849842eeecda1823703d22ad2dbfe849f5fa0569ecc267d93d0b9f60ebb11a",
+      "src/thalovant/listing.py": "bb98804a949ce6769a618b0fca52750be8fa3c47111c49bc8bc7ed0f37583da0",
+      "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
+      "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
+      "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
+      "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
+      "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
+      "src/thalovant/transport.py": "7d0f721d53c441c266d6b1f09d8f85e04273d547cb40cd7eca398d8d969f7269"
+    },
     "dependencies": {
+      "requires-python": ">=3.10",
       "dependencies": [
         "PyYAML>=6.0.2",
         "cryptography>=50.0.0",
-        "hivemind-bus-client>=1.1.1a1",
+        "hivemind-bus-client>=1.1.9a1",
         "ovos-spec-tools[langcodes]>=1.10.5a1",
         "paho-mqtt>=2.1.0",
         "poorman-handshake>=2.0.0a3",
@@ -15,31 +39,12 @@
         "listing": [
           "thalovant-languages>=0.3.0"
         ]
-      },
-      "requires-python": ">=3.10"
+      }
     },
-    "files": {
-      "src/thalovant/__init__.py": "585af65eb5da6da4597cb2adf391b0b488704ea59a96c56bca82fba6e109aadf",
-      "src/thalovant/_http_runtime.py": "d7ad4a25cad5616d858909a00c445ab137d17df6d7e713e404372154a60eef8b",
-      "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
-      "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
-      "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "eab665b52fd402ce3cbe144e3d049d2df3b0974002de5306b728c783191be438",
-      "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "4bb222e87ded8cda7da300227261eaff7efe28580e4433bd129d19e9a146e855",
-      "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "f96c12b3af0847250f2ebcc047955699c64dd1440261f0e9899601cfd2e44d56",
-      "src/thalovant/events.py": "c2d3eda0ae924fa419a7fc873bd96ef2f0ac99fd152801774af46ed042218f22",
-      "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
-      "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
-      "src/thalovant/inventory.py": "87c643560ff1378e037446b6f604471a9e69ea1850c9aa4ce07f1c560756173d",
-      "src/thalovant/listing.py": "113ddf20ac8014a17be453341c59e45182c286685c7e09fc29c21f7caf649c0f",
-      "src/thalovant/models.py": "5258dcfb83e838533315ca60d8d10cebacdd0604c3923c87cc4453089d543faf",
-      "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
-      "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
-      "src/thalovant/session.py": "04ef9ff4558b1abad496bd66433b7313fbeebac4115c2401dc6ad934c7cab401",
-      "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "7d0f721d53c441c266d6b1f09d8f85e04273d547cb40cd7eca398d8d969f7269"
+    "conformance": {
+      "inventory-vectors.json": "8bc3147ce295d5e90ace2a05738671990ffc5d154751d8e5a91f893850c512bb",
+      "question-vectors.json": "a1f503fbf7573b80312f4a52265745976ac486008faf014bbcf15f508d79bb3d",
+      "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     }
   },
   "capabilities": {

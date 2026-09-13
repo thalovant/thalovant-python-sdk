@@ -23,9 +23,26 @@ hashes. A missing consumer, stale digest, removed test or changed evidence fails
 closed. A consumer can accept both the current and candidate digests during a
 coordinated additive rollout; merge compatible consumers before the producer.
 
-This initial change installs the producer guard. Consumer records and the
-cross-repository PR/release workflow are being introduced in the coordinated
-0.7 feature rollout. The standalone guard does not yet claim fleet parity.
+PR, main-branch, and release workflows run the coordination gate. Publishing
+jobs depend on its success. Every six hours a fresh environment resolves the
+Python dependencies and executes committed public behavior vectors, so an
+upstream language-package change is visible even without a Python source edit.
+
+`python scripts/generate-sdk-conformance.py --check` executes the committed
+question/inventory cases. Without `--check`, it regenerates candidate vectors
+for review. Copy reviewed vectors to each managed SDK's fixture directory and
+run each language's native suite. Regeneration never approves consumer evidence.
+The reference snapshot includes the vectors, so a changed expected result creates
+a new consumer obligation.
+
+For a feature rollout, keep both the current and proposed reference digests in
+consumer records, merge and publish compatible consumers first, and activate the
+producer only after its full cross-repository gate passes. SDK-specific protocol
+limits remain explicit; C retains caller-owned buffers/networking and MCP keeps
+per-tool identity leases. Never invent a feature solely to fill a matrix cell.
+
 Hashes establish review obligations; each language's normal CI and executable
 reference cases still have to prove behavior. Never refresh hashes merely to
-make a failing check green.
+make a failing check green. Rust's private unit suites may be colocated with the
+implementation: record the complete tested module as test evidence alongside
+its public exports/delegates, so changes to either invalidate acceptance.

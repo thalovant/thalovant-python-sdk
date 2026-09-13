@@ -26,9 +26,11 @@ def reference(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("change", ["new_api", "private_behavior", "new_module", "dependency"])
+@pytest.mark.parametrize("change", ["new_api", "private_behavior", "new_module", "dependency", "conformance"])
 def test_unacknowledged_reference_changes_fail(reference, change):
-    if change == "new_module":
+    if change == "conformance":
+        (reference / "contracts/conformance/question-vectors.json").write_text('{"cases": []}')
+    elif change == "new_module":
         (reference / "src/thalovant/new_feature.py").write_text("ENABLED = True\n")
     elif change == "dependency":
         path = reference / "pyproject.toml"

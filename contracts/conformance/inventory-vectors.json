@@ -1,0 +1,102 @@
+{
+  "source": {
+    "thalovant": "0.7.2",
+    "thalovant-languages": "0.3.0",
+    "unicode_version": "15.1.0"
+  },
+  "cache_key": "hub-local-8bf294c3",
+  "inventory": {
+    "cache_version": 1,
+    "generated_at": "2026-09-13T00:00:00Z",
+    "hub_id": "hub",
+    "hub_name": "Kitchen",
+    "notes": [],
+    "skills": [
+      {
+        "id": "weather",
+        "intents": [
+          {
+            "engine": "padatious",
+            "id": "weather.now",
+            "languages": [
+              "fr-fr",
+              "en-us"
+            ],
+            "name": "weather.now",
+            "phrases": {
+              "en-us": [
+                "weather in",
+                "what is the weather"
+              ],
+              "fr-fr": [
+                "m\u00e9t\u00e9o"
+              ]
+            },
+            "skill_id": "weather"
+          }
+        ],
+        "locales": [
+          "en-us"
+        ],
+        "title": "Weather"
+      },
+      {
+        "id": "unknown",
+        "intents": [],
+        "locales": [],
+        "title": "Unknown"
+      }
+    ],
+    "source": "hub"
+  },
+  "examples": [
+    {
+      "language": null,
+      "limit": 0,
+      "expected": [
+        "m\u00e9t\u00e9o"
+      ]
+    },
+    {
+      "language": "en-gb",
+      "limit": 0,
+      "expected": [
+        "weather in",
+        "what is the weather"
+      ]
+    },
+    {
+      "language": "en-gb",
+      "limit": 1,
+      "expected": [
+        "what is the weather"
+      ]
+    },
+    {
+      "language": "fr-ca",
+      "limit": 2,
+      "expected": [
+        "m\u00e9t\u00e9o"
+      ]
+    },
+    {
+      "language": "de",
+      "limit": 3,
+      "expected": []
+    }
+  ],
+  "speaks": [
+    {
+      "language": "en-gb",
+      "expected": true
+    },
+    {
+      "language": "fr",
+      "expected": false
+    },
+    {
+      "language": "de",
+      "expected": false
+    }
+  ]
+}

@@ -40,9 +40,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Exercise minimum security-fixed HTTP and crypto versions
+      - name: Exercise minimum supported HiveMind, HTTP and crypto versions
         if: matrix.python-version == '3.10'
-        run: python -m pip install 'requests==2.33.0' 'cryptography==50.0.0'
+        run: python -m pip install 'hivemind-bus-client==1.1.9a1' 'requests==2.33.0' 'cryptography==50.0.0'
 
       - name: Run tests
         run: python -m pytest -q

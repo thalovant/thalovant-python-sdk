@@ -1,0 +1,1409 @@
+{
+  "source": {
+    "thalovant": "0.7.2",
+    "thalovant-languages": "0.3.0",
+    "unicode_version": "15.1.0"
+  },
+  "cases": [
+    {
+      "text": "",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "weather in",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello!",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": null,
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": null,
+      "expected": false
+    },
+    {
+      "text": "",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "weather in",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "hello!",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": "en",
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": "en",
+      "expected": false
+    },
+    {
+      "text": "",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "weather in",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello!",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": "fr-CA",
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": "fr-CA",
+      "expected": false
+    },
+    {
+      "text": "",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "weather in",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "hello!",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": "ar",
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": "ar",
+      "expected": false
+    },
+    {
+      "text": "",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "weather in",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "hello!",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": "xq",
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": "xq",
+      "expected": false
+    },
+    {
+      "text": "",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "weather in",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "hello!",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": "ja",
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": "ja",
+      "expected": false
+    },
+    {
+      "text": "",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "  ",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "go home",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "is it ready",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "weather in",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "ai je besoin d une veste",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "y a t il de la neige",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello!",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "?hello",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "hello?  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u00bf  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u037e  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u055e  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u061f  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u1367  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u1945  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2047  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2049  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2753  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2754  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7b  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2a7c  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfa  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2cfb  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e2e  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\u2e54  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ua60f  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ua6f7  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe16  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ufe56  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\uff1f  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ud804\udd43  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83a\udd5f  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ud83e\udfc4  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\udb40\udc3f  ",
+      "lang": "",
+      "expected": true
+    },
+    {
+      "text": "hello\ud801\udc41",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "hello\ud804\udd44",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83a\udd60",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "hello\ud83e\udfc5",
+      "lang": "",
+      "expected": false
+    },
+    {
+      "text": "hello\udb40\udc40",
+      "lang": "",
+      "expected": false
+    }
+  ]
+}

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.4 — 2026-09-13
+
+- Preserve the reply claim, pipeline and skill metadata added by PR75; ignore malformed non-string stamps consistently across SDKs and bind shared reply-claim vectors to the automated contract.
+
+- Require HiveMind bus client 1.1.9a1, which delivers inbound BUS events once after protocol processing (upstream #251/#252). Remove the temporary object-identity suppression so custom transports can reuse message objects without losing events. CI tests the dependency floor and current dependency resolution.
+
+- Keep Unicode question detection consistent on Python 3.10 through 3.14, including marks absent from older interpreter Unicode databases.
+
+- Stop replaying ambiguous `HubSession.ask()` failures; callers retain responsibility for retrying actions. Serialize warm/foreground admission with shutdown and retain failed cleanup for retry.
+- Validate cache shapes and keys, bound cache reads, use unique private atomic writes, and preserve explicit intent language order across JSON serializers. Existing version-1 caches remain readable.
+- Add executable cross-SDK question/inventory conformance and bind it to the reference contract. Gate PR/release parity against all eight SDKs and MCP, with scheduled dependency drift checks.
+
+## 0.7.3
+
+- Synchronize the listen overflow regression with completion of the producer flood (PR #76).
+
+## 0.7.2 — 2026-09-13
+
+- Add advisory reply claim status and ordered pipeline/skill identifiers for callers that distinguish intent matches from fallback answers.
+
 ## 0.7.1 — 2026-09-13
 
 - `HubSession`: a subscription the client refuses is not queued for every client after it, and a fresh client that cannot carry the subscriptions is closed and counted as a failed attempt rather than leaked half-wired. `emit()` no longer retries after a dead socket: an event can reach the hub before the response does and carries nothing a hub could deduplicate on, so the caller's outbox owns the retry; the dead socket is still dropped. `preferred_origin` takes the process-wide resolver one block at a time, so two overlapping blocks cannot restore each other's wrapper.

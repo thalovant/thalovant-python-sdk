@@ -83,7 +83,8 @@ def snapshot(reference):
                     "dependencies": sorted(project.get("dependencies", [])),
                     "extras": {k: sorted(v) for k, v in project.get("optional-dependencies", {}).items()
                                if k not in {"dev", "docs", "publish"}}}
-    return {"files": files, "dependencies": dependencies}
+    conformance = {path.name: digest(read(path)) for path in sorted((reference / "contracts/conformance").glob("*.json"))}
+    return {"files": files, "dependencies": dependencies, "conformance": conformance}
 
 
 def read(path):
@@ -110,6 +111,8 @@ def validate_reference(reference):
                          if before.get(k) != actual["files"].get(k))
         if manifest.get("reference", {}).get("dependencies") != actual["dependencies"]:
             changed.append("pyproject.toml runtime requirements")
+        if manifest.get("reference", {}).get("conformance") != actual["conformance"]:
+            changed.append("public conformance vectors")
         raise ValueError("Unreviewed Python SDK change: " + ", ".join(changed) +
                          ". Update the reference contract and every consumer impact record; "
                          "port applicable behavior and run its conformance tests before release.")

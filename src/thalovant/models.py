@@ -80,11 +80,11 @@ class ThalovantHealth:
 FALLBACK_PIPELINE_MARK = "fallback"
 
 
-def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:
+def _ordered_unique(values: Iterable[object]) -> tuple[str, ...]:
     """Non-empty *values* in first-seen order, once each."""
     seen: list[str] = []
     for value in values:
-        if value and value not in seen:
+        if isinstance(value, str) and value and value not in seen:
             seen.append(value)
     return tuple(seen)
 
@@ -119,14 +119,14 @@ class ThalovantReply:
         fallback skill caught it). Empty on a hub that does not stamp it.
         """
         return _ordered_unique(
-            str(event.context.get("pipeline_id") or "") for event in self.events
+            event.context.get("pipeline_id") for event in self.events
         )
 
     @property
     def skill_ids(self) -> tuple[str, ...]:
         """The skills whose messages make up the reply, in order."""
         return _ordered_unique(
-            str(event.context.get("skill_id") or "") for event in self.events
+            event.context.get("skill_id") for event in self.events
         )
 
     @property
