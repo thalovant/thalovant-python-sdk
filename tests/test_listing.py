@@ -21,10 +21,8 @@ from thalovant import HubIntent, as_sentence, listing, speakable
 def _installed_data(monkeypatch):
     monkeypatch.delenv(thalovant_languages.ENV_OVERRIDE, raising=False)
     thalovant_languages.refresh()
-    listing._question_pattern.cache_clear()
     yield
     thalovant_languages.refresh()
-    listing._question_pattern.cache_clear()
 
 
 @pytest.fixture
@@ -46,7 +44,6 @@ def invented(tmp_path, monkeypatch):
         encoding="utf-8")
     monkeypatch.setenv(thalovant_languages.ENV_OVERRIDE, str(tree))
     thalovant_languages.refresh()
-    listing._question_pattern.cache_clear()
     return tree
 
 
@@ -176,7 +173,6 @@ def test_a_language_invented_as_a_file_gets_its_rules(invented):
 
 def test_without_the_languages_package_lines_are_bare_and_slots_keep_their_names(monkeypatch):
     monkeypatch.setattr(listing, "_languages", None)
-    listing._question_pattern.cache_clear()
     assert not listing.available()
     assert as_sentence("do i need a jacket", "en-US") == "Do i need a jacket"
     assert as_sentence("quelle heure est-il?", "fr") == "Quelle heure est-il?"

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 — 2026-09-13
+
+- `thalovant.session.HubSession` keeps one long-lived hub session by the policy the appliance measured: a client rebuilt when it breaks and the call retried once, an unattended retry ladder from ten seconds to two minutes, a liveness probe every minute while held and every five seconds while not, and subscriptions made with `on()` wired onto every client the session builds. `OriginPreference` tries one address (a LAN origin) before the public path with its own handshake budget and a five-minute cooldown after a failure; `preferred_origin` and `hub_hostname` come with it. Moved from the voice satellite and the custos connector, which each kept a copy and each got a detail wrong once.
+- `thalovant.inventory`: the presentable skill inventory (`Inventory`, `Skill`, `Intent` with per-language examples), its on-disk cache (`InventoryCache`, an hour, atomic writes, 0600), and the listing helpers `friendly_title`, `humanize`, `common_affix`, `strip_affix`, `sort_key`, `languages_present`. Moved from the voice satellite's listing.
+- `thalovant.listing.asks` is the language package's `asks` (thalovant-languages 0.3.0), the same answer the fleet's fallback skills use; the SDK no longer carries its own copy.
+
 ## 0.6.12 — 2026-09-13
 
 - A subscription made with `on()` is handed each inbound message once. hivemind-bus-client (through 1.1.8a1) emits every inbound BUS payload on its internal bus twice, once directly and once through the protocol's `handle_bus`, the same object both times: with one client and one subscription the custos node still answered every shadow request twice. The wrapper now drops a delivery whose object is the one it just handled.
