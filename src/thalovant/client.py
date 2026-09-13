@@ -1472,7 +1472,7 @@ class ThalovantClient:
         """
         token = self._session_token()
         with self._subscriptions_lock:
-            if token is None or token != self._subscription_session_token:
+            if token is not None and token != self._subscription_session_token:
                 self._bound_subscriptions.clear()
             live = {handler for _, handler in self._event_subscriptions}
             for handler, event_name in tuple(self._bound_subscriptions.items()):
@@ -1481,7 +1481,14 @@ class ThalovantClient:
                         self._transport.remove_mycroft(event_name, handler)
                     except ThalovantConnectionError:
                         pass
+                    except (KeyError, ValueError):
+                        if token is not None:
+                            raise
                     del self._bound_subscriptions[handler]
+            if token is None:
+                # Retire pending removals before forgetting old bindings: a
+                # legacy transport may have kept the same session alive.
+                self._bound_subscriptions.clear()
             for event_name, handler in self._event_subscriptions:
                 if handler in self._bound_subscriptions:
                     continue

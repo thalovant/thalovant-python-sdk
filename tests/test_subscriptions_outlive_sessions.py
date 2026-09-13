@@ -168,8 +168,12 @@ def test_failed_registration_does_not_create_a_future_subscription():
 
 @pytest.mark.parametrize("close_pending", [False, True])
 @pytest.mark.parametrize("preserve_session", [False, True])
-def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pending, preserve_session):
+@pytest.mark.parametrize("use_token", [False, True])
+def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pending, preserve_session, use_token):
     class PausedConnectTransport(SelfHealingTransport):
+        def session_token(self):
+            return super().session_token() if use_token else None
+
         def __init__(self):
             super().__init__()
             self.connecting = threading.Event()
