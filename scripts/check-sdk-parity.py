@@ -53,13 +53,27 @@ class WithoutDocumentation(ast.NodeTransformer):
         return node
 
 
+def normalized_tree(value):
+    """Stable across AST field additions and ast.dump formatting versions."""
+    if isinstance(value, ast.AST):
+        return {"node": type(value).__name__, "fields": {
+            key: normalized_tree(item) for key, item in ast.iter_fields(value)
+            if item is not None and item != []
+        }}
+    if isinstance(value, list):
+        return [normalized_tree(item) for item in value]
+    if isinstance(value, (bytes, complex)) or value is Ellipsis:
+        return {"literal_type": type(value).__name__, "value": repr(value)}
+    return value
+
+
 def snapshot(reference):
     files = {}
     for path in sorted((reference / "src/thalovant").rglob("*.py")):
         if path.name == "_version.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        normalized = ast.dump(WithoutDocumentation().visit(tree), include_attributes=False)
+        normalized = normalized_tree(WithoutDocumentation().visit(tree))
         files[str(path.relative_to(reference))] = digest(normalized)
     if not files:
         raise ValueError("Python source tree is missing")

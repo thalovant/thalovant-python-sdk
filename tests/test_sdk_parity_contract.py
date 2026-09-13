@@ -88,3 +88,12 @@ def test_evidence_cannot_escape_checkout(tmp_path):
     (tmp_path / "link").symlink_to(ROOT / "pyproject.toml")
     with pytest.raises(ValueError):
         parity.file_hash(tmp_path, "link")
+
+
+def test_empty_version_specific_ast_fields_do_not_change_digest():
+    import ast
+    first = ast.parse("def example(): return b'bytes'")
+    second = ast.parse("def example(): return b'bytes'")
+    second.body[0]._fields = (*second.body[0]._fields, "future_optional_field")
+    second.body[0].future_optional_field = []
+    assert parity.normalized_tree(first) == parity.normalized_tree(second)
