@@ -288,20 +288,20 @@
       "failed": false,
       "contexts": [
         {
-          "pipeline_id": "段階",
-          "skill_id": "技能"
+          "pipeline_id": "\u6bb5\u968e",
+          "skill_id": "\u6280\u80fd"
         },
         {
-          "pipeline_id": "段階",
-          "skill_id": "技能"
+          "pipeline_id": "\u6bb5\u968e",
+          "skill_id": "\u6280\u80fd"
         }
       ],
       "expected": {
         "pipeline_ids": [
-          "段階"
+          "\u6bb5\u968e"
         ],
         "skill_ids": [
-          "技能"
+          "\u6280\u80fd"
         ],
         "claimed": true
       }
