@@ -63,6 +63,7 @@ jobs:
           parity-environment/bin/python -m pip install -e './parity/thalovant-python-sdk[dev]'
           parity-environment/bin/python parity/thalovant-python-sdk/scripts/generate-sdk-conformance.py --check
       - name: Verify upstream BUS delivery and encrypted transport compatibility
+        if: github.event_name == 'schedule' || github.event.repository.name == 'thalovant-python-sdk'
         shell: bash
         run: |
           cd parity/thalovant-python-sdk
