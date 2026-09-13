@@ -236,7 +236,7 @@ def identity_host(identity_path: Path | str | None) -> str | None:
     if not isinstance(master, str) or not master:
         return None
     try:
-        return urlparse(master).hostname
+        return urlparse(master if "://" in master else "wss://" + master).hostname
     except ValueError:
         return None
 
@@ -269,8 +269,8 @@ class InventoryCache:
         same host or to none.
         """
         identity_text = str(identity or "")
-        host = identity_host(Path(identity_text)) if identity_text else None
-        digest = hashlib.sha256(f"{mode}|{identity_text}".encode()).hexdigest()[:8]
+        host = (identity_host(Path(identity_text)) if identity_text else None) or "local"
+        digest = hashlib.sha256(f"{mode}|{identity_text}|{host}".encode()).hexdigest()[:8]
         readable = re.sub(r"[^A-Za-z0-9._-]", "-", host or "local")[:40]
         return f"{mode}-{readable}-{digest}"
 

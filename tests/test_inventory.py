@@ -134,3 +134,13 @@ def test_corrupt_cache_shapes_are_refused_without_silent_field_loss(tmp_path):
     for ttl in (-1, float("inf"), float("nan")):
         with pytest.raises(ValueError):
             InventoryCache(tmp_path, ttl=ttl)
+
+
+def test_cache_keys_normalize_hosts_and_hash_the_full_hostname(tmp_path):
+    identity = tmp_path / "identity.json"
+    first, second = "a" * 40 + "one.example", "a" * 40 + "two.example"
+    identity.write_text(json.dumps({"default_master": first}))
+    assert identity_host(identity) == first
+    key = InventoryCache.key("hub", identity)
+    identity.write_text(json.dumps({"default_master": second}))
+    assert InventoryCache.key("hub", identity) != key

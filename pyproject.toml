@@ -98,7 +98,7 @@ docs = [
 packages = ["src/thalovant"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "LICENSE", "README.md", "mkdocs.yml", "pyproject.toml"]
+include = ["src", "tests", "docs", "contracts", "scripts", "LICENSE", "README.md", "mkdocs.yml", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

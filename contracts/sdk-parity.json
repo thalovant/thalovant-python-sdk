@@ -15,7 +15,7 @@
       "src/thalovant/events.py": "c2d3eda0ae924fa419a7fc873bd96ef2f0ac99fd152801774af46ed042218f22",
       "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
       "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
-      "src/thalovant/inventory.py": "8c1f378826ace68725042363f340046b0a8ddf3dfebc5208952011d150f489f5",
+      "src/thalovant/inventory.py": "8c849842eeecda1823703d22ad2dbfe849f5fa0569ecc267d93d0b9f60ebb11a",
       "src/thalovant/listing.py": "113ddf20ac8014a17be453341c59e45182c286685c7e09fc29c21f7caf649c0f",
       "src/thalovant/models.py": "dd999a8fc8c9c282296b375a79f29354d014e15e2b46f1a176cf1071848d0e33",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
@@ -42,7 +42,7 @@
       }
     },
     "conformance": {
-      "inventory-vectors.json": "25fa4fcc868c7f4d14e20255a08ac71dc591e6d2c59d2d1ca072bf6b9143dd89",
+      "inventory-vectors.json": "8bc3147ce295d5e90ace2a05738671990ffc5d154751d8e5a91f893850c512bb",
       "question-vectors.json": "a1f503fbf7573b80312f4a52265745976ac486008faf014bbcf15f508d79bb3d"
     }
   },

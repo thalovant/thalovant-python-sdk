@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import unicodedata
 
-from thalovant import Intent, Inventory, Skill, listing
+from thalovant import Intent, Inventory, InventoryCache, Skill, listing
 
 
 def vectors():
@@ -35,7 +35,7 @@ def vectors():
     # list must preserve omitted-language behavior across every decoder.
     raw = json.loads(json.dumps(inventory.as_dict(), sort_keys=True))
     queries = [(None, 0), ("en-gb", 0), ("en-gb", 1), ("fr-ca", 2), ("de", 3)]
-    inventory_vectors = {"source": source, "inventory": raw, "examples": [
+    inventory_vectors = {"source": source, "cache_key": InventoryCache.key("hub", None), "inventory": raw, "examples": [
         {"language": lang, "limit": limit, "expected": list(inventory.intents[0].examples(lang, limit))}
         for lang, limit in queries
     ], "speaks": [{"language": lang, "expected": inventory.skills[0].speaks(lang)} for lang in ["en-gb", "fr", "de"]]}
@@ -49,6 +49,7 @@ def check(directory):
     for row in question["cases"]:
         assert listing.asks(row["text"], row["lang"]) == row["expected"], row
     data = json.loads((directory / "inventory-vectors.json").read_text())
+    assert InventoryCache.key("hub", None) == data["cache_key"]
     inventory = Inventory.from_dict(data["inventory"])
     for row in data["examples"]:
         assert list(inventory.intents[0].examples(row["language"], row["limit"])) == row["expected"], row

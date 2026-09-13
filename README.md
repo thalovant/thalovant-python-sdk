@@ -978,7 +978,7 @@ language order so serialization cannot change the default example language.
 `InventoryCache` is optional, defaults to a one-hour TTL, and returns a miss for
 invalid, expired, or unreadable data. Writes use private, unique scratch files
 and atomic replacement. POSIX cache files are owner-readable/writable; Windows
-uses the user's directory ACLs. Cache keys separate mode and identity path.
+uses the user's directory ACLs. Cache keys separate mode, identity path, and the full normalized hub hostname.
 Never use inventory caches to store credentials.
 
 `OriginPreference` gives a preferred address its own short handshake budget and
