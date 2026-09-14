@@ -28,7 +28,8 @@
       "requires-python": ">=3.10",
       "dependencies": [
         "PyYAML>=6.0.2",
-        "cryptography>=50.0.0",
+        "cryptography>=48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+        "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
         "hivemind-bus-client>=1.1.9a1",
         "ovos-spec-tools[langcodes]>=1.10.5a1",
         "paho-mqtt>=2.1.0",

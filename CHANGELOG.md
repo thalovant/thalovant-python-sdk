@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.5 — 2026-09-14
+
+- Install on Intel Macs again: the cryptography floor stays at 50.0.0 everywhere a 50.x wheel exists and admits 48.0.1, the last release with x86_64 macOS wheels, on `darwin`/`x86_64` only. GHSA-g6cj-pr64-35w5 concerns PKCS#7 EnvelopedData decryption, which nothing in the SDK or the hub-client tree calls.
+
 ## 0.7.4 — 2026-09-13
 
 - Preserve the reply claim, pipeline and skill metadata added by PR75; ignore malformed non-string stamps consistently across SDKs and bind shared reply-claim vectors to the automated contract.
