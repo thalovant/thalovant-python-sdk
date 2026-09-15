@@ -474,7 +474,6 @@ class ThalovantControlPlane:
 
         self._require_secure_token_exchange()
         payload = {
-            "grant_type": "authorization_code",
             "code": code,
             "code_verifier": verifier,
             "client_id": client_id,

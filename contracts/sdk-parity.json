@@ -308,7 +308,7 @@
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
       "src/thalovant/client.py": "a95a24c0ecf33b5f1c3bdd7315a4d47996435bc1d17fca89c9f757339bc4e967",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "c366521c5de6f53772fdd0cfdb359df3cdc808fdbe629dd7052972693ed25a79",
+      "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "f96c12b3af0847250f2ebcc047955699c64dd1440261f0e9899601cfd2e44d56",
       "src/thalovant/events.py": "c2d3eda0ae924fa419a7fc873bd96ef2f0ac99fd152801774af46ed042218f22",
