@@ -44,9 +44,11 @@
       }
     },
     "control": {
-      "description": "Public control-plane operations, provisioning, skills and runtime lifecycle",
+      "description": "Public control-plane operations, provisioning, skills and runtime lifecycle, including the sign-in grants and the readable naming of what they return",
       "files": [
-        "src/thalovant/control.py"
+        "src/thalovant/control.py",
+        "src/thalovant/hubs.py",
+        "src/thalovant/native_auth.py"
       ],
       "scope": {
         "thalovant-dotnet-sdk": {
@@ -172,44 +174,6 @@
         },
         "thalovant-mcp": {
           "status": "required"
-        },
-        "thalovant-node-sdk": {
-          "status": "required"
-        },
-        "thalovant-python-sdk": {
-          "status": "required"
-        },
-        "thalovant-rust-sdk": {
-          "status": "required"
-        },
-        "thalovant-swift-sdk": {
-          "status": "required"
-        }
-      }
-    },
-    "native_auth": {
-      "description": "Authorization-code sign-in with PKCE for a client that can open a browser, and the readable name of a hub",
-      "files": [
-        "src/thalovant/native_auth.py",
-        "src/thalovant/hubs.py"
-      ],
-      "scope": {
-        "thalovant-dotnet-sdk": {
-          "status": "required"
-        },
-        "thalovant-embedded-c": {
-          "reason": "A caller-buffer wire library with no HTTP client and no browser to open; the device grant is the input-constrained path and this is the device it was written for.",
-          "status": "not-applicable"
-        },
-        "thalovant-go-sdk": {
-          "status": "required"
-        },
-        "thalovant-kotlin-sdk": {
-          "status": "required"
-        },
-        "thalovant-mcp": {
-          "reason": "An MCP server is not an interactive client: nobody is sitting at it to approve a browser prompt, and it is handed a token rather than obtaining one.",
-          "status": "not-applicable"
         },
         "thalovant-node-sdk": {
           "status": "required"
