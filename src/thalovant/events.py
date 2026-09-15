@@ -249,6 +249,57 @@ def _context_with_correlation(
     return context
 
 
+#: Session fields a client carries from one turn of a conversation to the next.
+#:
+#: A hub keeps nothing for a *named* session: OVOS-SESSION-2 §2.2 makes the
+#: orchestrator stateless for those, so "the carrier is the whole snapshot" and
+#: whatever the last turn built is discarded the moment it ends. Conversational
+#: state therefore survives only because the client sends it back. Without
+#: ``converse_handlers`` the converse pipeline has no skill to poll and every
+#: follow-up -- "encore un", "another one" -- falls past it to the fallback.
+#:
+#: An allow-list, not a deny-list: a hub field nobody here has considered must
+#: not start replaying itself into later turns. Two groups are deliberately
+#: absent. The caller's own per-turn settings (``lang``, ``pipeline``,
+#: ``site_id``, the formats) -- a satellite decides the language per utterance
+#: from what it heard, and a remembered one would silently outrank it. And the
+#: live device flags (``is_speaking``, ``is_recording``), which describe a
+#: moment that has passed by the time the next turn is sent.
+CONVERSATION_SESSION_FIELDS = (
+    # what converse polls (OVOS-CONVERSE-1 §2.1) -- the follow-up itself
+    "converse_handlers",
+    # dispatch recency, read by the stop cascade (OVOS-PIPELINE-1 §7.1)
+    "active_handlers",
+    # the legacy [skill_id, ts] projection of active_handlers; a hub that
+    # predates the spec fields reads this one, and a newer one ignores it in
+    # favour of active_handlers, so carrying both costs nothing
+    "active_skills",
+    # set_context()/remove_context() -- the conversational context proper
+    "context",
+    # get_response() bookkeeping
+    "utterance_states",
+    "response_mode",
+)
+
+
+def carry_conversation(
+    previous: dict[str, Any] | None,
+    session: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fill the conversation fields of ``session`` from the hub's last reply.
+
+    This turn's own values win: a field the caller set is never overwritten,
+    only one it left out is taken from the turn before.
+    """
+
+    carried = dict(session or {})
+    for field in CONVERSATION_SESSION_FIELDS:
+        value = (previous or {}).get(field)
+        if value and field not in carried:
+            carried[field] = value
+    return carried
+
+
 def _event_matches_context(
     event: ThalovantEvent,
     expected_context: dict[str, Any] | None,
