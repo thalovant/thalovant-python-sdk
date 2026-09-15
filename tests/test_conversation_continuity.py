@@ -212,3 +212,20 @@ def test_a_caller_that_declares_no_session_still_continues():
     client.ask("Encore un", lang="fr-FR")
 
     assert transport.sent_sessions[1]["converse_handlers"]
+
+
+def test_a_top_level_session_id_names_the_same_conversation():
+    # A session id is accepted in three places: the ask() argument, the
+    # context's session, and a top-level context["session_id"]. The turn is
+    # filed under whatever the request resolves to, so the lookup has to
+    # resolve it the same way or a top-level caller stores under one key and
+    # reads under another -- carrying nothing, silently.
+    transport = HubTransport([HubTurn(session=_fart_handlers())])
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0,
+                             empty_reply_wait_seconds=0)
+
+    client.ask("Fais un prout", lang="fr-FR", context={"session_id": "kitchen"})
+    client.ask("Encore un", lang="fr-FR", context={"session_id": "kitchen"})
+
+    assert list(client._conversations) == ["kitchen"]
+    assert transport.sent_sessions[1]["converse_handlers"]

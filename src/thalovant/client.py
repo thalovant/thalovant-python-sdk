@@ -969,7 +969,14 @@ class ThalovantClient:
         """Put the last turn's conversation state back into this turn."""
 
         session = _session_from_context(context)
-        session_id = session_id or session.get("session_id") or None
+        # Resolved exactly as the storing side resolves it. A session id is
+        # accepted in three places -- this argument, `context["session"]`, and
+        # a top-level `context["session_id"]` -- and the turn is filed under
+        # whatever `_session_id_from_context` makes of the request. Reading
+        # only the nested one here filed a top-level caller's turn under
+        # "kitchen" and looked it up under None, so the carry never happened
+        # and nothing said why.
+        session_id = session_id or _session_id_from_context(context) or None
         with self._conversations_lock:
             previous = self._conversations.get(session_id)
             if previous is not None:

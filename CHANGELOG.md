@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.8 — 2026-09-15
+
+- Resolve the conversation key the same way on both sides of the carry. A session id is accepted in three places -- the `ask()` argument, `context["session"]`, and a top-level `context["session_id"]` -- and a turn is filed under whatever the request resolves to, but the lookup read only the nested one. A caller using the top-level shape stored its turn under that id and looked it up under `None`, so 0.7.7's carry never happened for it and nothing said why.
+
 ## 0.7.7 — 2026-09-15
 
 - Carry a conversation between turns. A hub keeps nothing for a *named* session -- OVOS-SESSION-2 §2.2 makes the orchestrator stateless for those, so the carrier a client sends is the whole snapshot and everything the last turn activated is discarded the moment it ends. `ask()` now keeps the session the hub returns on `ovos.utterance.handled` and sends it with the next utterance in that session, so the converse pipeline has a skill to poll and a follow-up reaches whoever answered before. Measured against production (ovos-core v1.3.0): "Fais un prout" was claimed by the fart skill and "Encore un" a minute later was not -- it reached the fallback, because the converse list arrived empty; sending the session back makes the same utterance come back as `skill.converse.response` from the fart skill. Only conversation state travels (`CONVERSATION_SESSION_FIELDS`): the caller's own per-turn settings are never overridden by a remembered one -- a satellite that decides the language per utterance keeps deciding it -- and live device flags are not replayed.
