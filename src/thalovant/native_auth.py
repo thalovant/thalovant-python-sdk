@@ -83,6 +83,28 @@ def is_thalovant_url(url: str) -> bool:
     return host == "thalovant.com" or host.endswith(".thalovant.com")
 
 
+def _require_safe_dashboard(url: str) -> None:
+    """The authorization request carries the challenge, scopes and state.
+
+    A caller may point this at their own dashboard -- a self-hosted control
+    plane is a real thing -- but not at a cleartext one, and not at one whose
+    address reads as a different host than it resolves to. Loopback is allowed
+    because it never leaves the machine.
+    """
+
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.username or parts.password:
+        raise ValueError("dashboard_url must not carry credentials.")
+    if parts.scheme.lower() == "https":
+        return
+    if parts.scheme.lower() == "http" and host in {"localhost", "127.0.0.1", "::1"}:
+        return
+    raise ValueError(
+        f"dashboard_url must be https (or a loopback address while developing), not {url!r}."
+    )
+
+
 @dataclass(frozen=True)
 class NativeSignIn:
     """One sign-in attempt in progress.
@@ -97,6 +119,9 @@ class NativeSignIn:
     state: str
     #: Never send this to the browser. Exchanged with the code, once.
     verifier: str
+    #: The redirect this attempt asked for. A callback that arrives at some
+    #: other address is not this attempt's, however good its state looks.
+    redirect_uri: str
 
     def code_from(self, redirect: str) -> str | None:
         """The authorization code out of the redirect, or ``None`` when it is
@@ -109,10 +134,19 @@ class NativeSignIn:
         success.
         """
 
-        query = urlsplit(redirect).query
-        if not query:
+        parts = urlsplit(redirect)
+        if not parts.query:
             return None
-        found = dict(parse_qsl(query, keep_blank_values=True))
+        # The callback has to arrive where this attempt asked it to. State
+        # proves the answer belongs to this request; the address proves it came
+        # back to the app that made it, and not to some other page that was
+        # handed the same query string.
+        wanted = urlsplit(self.redirect_uri)
+        if (parts.scheme.lower(), (parts.hostname or "").lower(), parts.path.rstrip("/")) != (
+            wanted.scheme.lower(), (wanted.hostname or "").lower(), wanted.path.rstrip("/")
+        ):
+            return None
+        found = dict(parse_qsl(parts.query, keep_blank_values=True))
         if found.get("state") != self.state:
             return None
         # A refusal that also carries a code is still a refusal. Checking only
@@ -142,6 +176,7 @@ def begin_native_sign_in(
         raise ValueError("client_id is required to start a sign-in.")
     if not redirect_uri.strip():
         raise ValueError("redirect_uri is required to start a sign-in.")
+    _require_safe_dashboard(dashboard_url)
     verifier = new_verifier()
     state = _base64url(secrets.token_bytes(24))
     query = urlencode(
@@ -161,4 +196,5 @@ def begin_native_sign_in(
         authorization_url=f"{dashboard_url.rstrip('/')}/authorize?{query}",
         state=state,
         verifier=verifier,
+        redirect_uri=redirect_uri,
     )

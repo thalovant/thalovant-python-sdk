@@ -318,7 +318,7 @@
       "src/thalovant/inventory.py": "8c849842eeecda1823703d22ad2dbfe849f5fa0569ecc267d93d0b9f60ebb11a",
       "src/thalovant/listing.py": "bb98804a949ce6769a618b0fca52750be8fa3c47111c49bc8bc7ed0f37583da0",
       "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
-      "src/thalovant/native_auth.py": "8899ddcf1c3ca8bc499178da1c13c420ef2f9512b758fac8a68becc82f604619",
+      "src/thalovant/native_auth.py": "301ab0cea613fda25da90cc9a3d9983104e75f8222927a7806b7d5aa30997f93",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
       "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",

@@ -136,3 +136,29 @@ def test_the_token_exchange_refuses_cleartext_and_allows_loopback() -> None:
             local._require_secure_token_exchange()
         except ThalovantAPIError as error:  # pragma: no cover - a failure here is the point
             raise AssertionError(f"loopback was refused: {error}") from error
+
+
+def test_a_callback_arriving_somewhere_else_is_refused() -> None:
+    # CodeRabbit: state proves the answer belongs to this request; it does not
+    # prove the answer came back to the app that made it. A page handed the
+    # same query string at another address is not this attempt's callback.
+    begun = begin_native_sign_in(client_id="app", redirect_uri="app://auth")
+    assert begun.code_from(f"app://auth?code=abc&state={begun.state}") == "abc"
+    assert begun.code_from(f"app://elsewhere?code=abc&state={begun.state}") is None
+    assert begun.code_from(f"https://evil.test/auth?code=abc&state={begun.state}") is None
+
+
+def test_a_dashboard_that_is_not_safe_to_hand_the_request_to_is_refused() -> None:
+    # The authorization request carries the challenge, the scopes and the state.
+    for bad in (
+        "http://dash.example.test",
+        "https://evil.test@dash.thalovant.com",
+        "ftp://dash.thalovant.com",
+    ):
+        with pytest.raises(ValueError):
+            begin_native_sign_in(client_id="app", redirect_uri="app://auth", dashboard_url=bad)
+    # A self-hosted https dashboard is a real thing, and loopback never leaves
+    # the machine.
+    for good in ("https://dash.example.test", "http://localhost:9000", "http://127.0.0.1:9000"):
+        begun = begin_native_sign_in(client_id="app", redirect_uri="app://auth", dashboard_url=good)
+        assert begun.authorization_url.startswith(good)
