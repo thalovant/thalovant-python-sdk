@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from contextlib import contextmanager
 import math
 from pathlib import Path
@@ -21,7 +22,9 @@ from .errors import (
 )
 from .context import request_context
 from .events import (
+    CONVERSATION_SESSION_FIELDS,
     EVENT_AUDIO_QUEUE,
+    carry_conversation,
     MAX_AUDIO_CLIP_BYTES,
     MAX_REPLY_MEDIA_BYTES,
     EVENT_INTENT_FAILURE,
@@ -43,6 +46,7 @@ from .events import (
     _new_request_id,
     _new_session_id,
     _runtime_bus_context,
+    _session_from_context,
     _session_id_from_context,
     _utterance_payload,
 )
@@ -234,6 +238,14 @@ class ThalovantClient:
         # a transparent reconnect (inside emit(), ask(), _with_reconnect())
         # gets them back: the transport registers handlers on the client
         # object it holds, and a reconnect replaces that object.
+        # The conversation each session id is in the middle of. A hub is
+        # stateless for a named session, so what the last turn activated comes
+        # back on ovos.utterance.handled and has to be sent again with the next
+        # utterance or it is gone -- see CONVERSATION_SESSION_FIELDS. Bounded:
+        # a long-lived client that is handed a fresh session id per turn must
+        # not accumulate one entry per turn forever.
+        self._conversations_lock = threading.Lock()
+        self._conversations: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._subscriptions_lock = threading.Lock()
         self._subscription_session_ready = False
         self._subscription_session_token: Any = None
@@ -920,6 +932,51 @@ class ThalovantClient:
             session_id=session_id, request_id=request_id,
         )
 
+    #: How many concurrent conversations one client remembers. A satellite
+    #: runs a single session for its whole life; the cap only bounds a caller
+    #: that mints session ids faster than it retires them.
+    MAX_REMEMBERED_CONVERSATIONS = 32
+
+    def _remember_conversation(self, session: dict[str, Any] | None) -> None:
+        """Keep the session a hub returned, to send with the next utterance."""
+
+        session_id = (session or {}).get("session_id")
+        if not session_id:
+            return
+        kept = {field: session[field] for field in CONVERSATION_SESSION_FIELDS
+                if session.get(field)}
+        with self._conversations_lock:
+            self._conversations.pop(session_id, None)
+            if not kept:
+                # The turn ended with nothing to carry -- a skill deactivated,
+                # a context cleared. Forgetting is the state, not an absence
+                # of one: leaving the old entry would resurrect it.
+                return
+            self._conversations[session_id] = kept
+            while len(self._conversations) > self.MAX_REMEMBERED_CONVERSATIONS:
+                self._conversations.popitem(last=False)
+
+    def _continue_conversation(self, context: dict[str, Any] | None,
+                               session_id: str | None) -> dict[str, Any] | None:
+        """Put the last turn's conversation state back into this turn."""
+
+        session = _session_from_context(context)
+        session_id = session_id or session.get("session_id")
+        if not session_id:
+            return context
+        with self._conversations_lock:
+            previous = self._conversations.get(session_id)
+            if previous is not None:
+                # Most recently used: a client juggling more conversations than
+                # the cap should evict the one nobody is speaking in.
+                self._conversations.move_to_end(session_id)
+        carried = carry_conversation(previous, session)
+        if carried == session:
+            return context
+        continued = dict(context or {})
+        continued["session"] = carried
+        return continued
+
     def _ask(
         self, text: str, *, timeout: float = 12.0, lang: str = "en-us",
         context: dict[str, Any] | None = None, session_id: str | None = None,
@@ -946,7 +1003,8 @@ class ThalovantClient:
 
         request_id = request_id or _new_request_id()
         request_context = _context_with_correlation(
-            self._context_with_identity_metadata(context),
+            self._continue_conversation(
+                self._context_with_identity_metadata(context), session_id),
             session_id=session_id,
             site_id=self.identity.site_id,
             lang=lang,
@@ -1200,6 +1258,16 @@ class ThalovantClient:
             nonlocal failure_event, soft_failure_event, terminal
             nonlocal empty_deadline, settle_deadline, dropped_media, media_chars
             with state:
+                # The end of the turn is the one place a hub states what the
+                # conversation now is, and it keeps none of it for a named
+                # session (OVOS-SESSION-2 §2.2). This is the copy that has to
+                # travel with the next utterance or converse has nobody to
+                # poll. Kept ahead of every gate below: whether this reply is
+                # still being collected, already settled or already failed
+                # says nothing about what the next one will need.
+                if (not direct and getattr(message, "name", None) == EVENT_UTTERANCE_HANDLED
+                        and message.request_id == request_id):
+                    self._remember_conversation(_session_from_context(message.context))
                 if terminal:
                     return
                 now = time.monotonic()

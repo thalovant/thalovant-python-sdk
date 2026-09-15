@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.7 — 2026-09-15
+
+- Carry a conversation between turns. A hub keeps nothing for a *named* session -- OVOS-SESSION-2 §2.2 makes the orchestrator stateless for those, so the carrier a client sends is the whole snapshot and everything the last turn activated is discarded the moment it ends. `ask()` now keeps the session the hub returns on `ovos.utterance.handled` and sends it with the next utterance in that session, so the converse pipeline has a skill to poll and a follow-up reaches whoever answered before. Measured against production (ovos-core v1.3.0): "Fais un prout" was claimed by the fart skill and "Encore un" a minute later was not -- it reached the fallback, because the converse list arrived empty; sending the session back makes the same utterance come back as `skill.converse.response` from the fart skill. Only conversation state travels (`CONVERSATION_SESSION_FIELDS`): the caller's own per-turn settings are never overridden by a remembered one -- a satellite that decides the language per utterance keeps deciding it -- and live device flags are not replayed.
+
 ## 0.7.5 — 2026-09-14
 
 - Install on Intel Macs again: the cryptography floor stays at 50.0.0 everywhere a 50.x wheel exists and admits 48.0.1, the last release with x86_64 macOS wheels, on `darwin`/`x86_64` only. GHSA-g6cj-pr64-35w5 concerns PKCS#7 EnvelopedData decryption, which nothing in the SDK or the hub-client tree calls.
