@@ -154,6 +154,9 @@ def test_a_dashboard_that_is_not_safe_to_hand_the_request_to_is_refused() -> Non
         "http://dash.example.test",
         "https://evil.test@dash.thalovant.com",
         "ftp://dash.thalovant.com",
+        # A fragment puts every parameter somewhere a browser never sends.
+        "https://dash.example.test#section",
+        "https://dash.example.test?next=/x",
     ):
         with pytest.raises(ValueError):
             begin_native_sign_in(client_id="app", redirect_uri="app://auth", dashboard_url=bad)

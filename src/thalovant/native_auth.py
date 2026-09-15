@@ -96,6 +96,13 @@ def _require_safe_dashboard(url: str) -> None:
     host = (parts.hostname or "").lower()
     if parts.username or parts.password:
         raise ValueError("dashboard_url must not carry credentials.")
+    # A query or a fragment breaks the address this builds. "<dash>#x" becomes
+    # "<dash>#x/authorize?client_id=..." -- every parameter lands in the
+    # fragment, which a browser never sends, so the authorize endpoint receives
+    # nothing and says nothing. A query mangles the path the same way. A plain
+    # path is fine: "<dash>/app" gives "<dash>/app/authorize".
+    if parts.query or parts.fragment:
+        raise ValueError("dashboard_url must not carry a query or a fragment.")
     if parts.scheme.lower() == "https":
         return
     if parts.scheme.lower() == "http" and host in {"localhost", "127.0.0.1", "::1"}:
