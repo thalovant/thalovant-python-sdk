@@ -28,6 +28,14 @@ from .control import (
     OperationStatus,
     ThalovantControlPlane,
 )
+from .native_auth import (
+    DEFAULT_NATIVE_SCOPES,
+    NativeSignIn,
+    begin_native_sign_in,
+    challenge_for,
+    is_thalovant_url,
+    new_verifier,
+)
 from .context import build_client_context, build_location, request_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
@@ -87,6 +95,12 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
 __all__ = [
+    "DEFAULT_NATIVE_SCOPES",
+    "NativeSignIn",
+    "begin_native_sign_in",
+    "challenge_for",
+    "is_thalovant_url",
+    "new_verifier",
     "HubSession",
     "HubSessionPolicy",
     "OriginPreference",
