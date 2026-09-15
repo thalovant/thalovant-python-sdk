@@ -426,6 +426,66 @@ class ThalovantControlPlane:
         self.access_token = access_token
         return token
 
+    def _require_secure_token_exchange(self) -> None:
+        """Refuse to put an authorization code and its verifier on the wire in
+        cleartext.
+
+        ``api_url`` accepts an ``http`` scheme -- a self-hosted or local
+        control plane may legitimately be served that way -- and ``_request``
+        hands whatever it is given to requests without looking. Every other
+        call that would leak over http leaks a bearer token the caller already
+        holds; this one leaks the two secrets that are about to become one, and
+        a code is exchangeable by whoever sees it first.
+
+        Loopback is allowed: a request that never leaves the machine has no
+        cleartext to observe, and that is how the control plane is run while
+        somebody is working on it.
+        """
+
+        parts = urlsplit(self.api_url)
+        if parts.scheme.lower() == "https":
+            return
+        if (parts.hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+            return
+        raise ThalovantAPIError(
+            "Refusing to send an authorization code and PKCE verifier in cleartext to "
+            f"{parts.hostname or self.api_url}. Use https, or a loopback address while developing."
+        )
+
+    def complete_native_sign_in(
+        self,
+        code: str,
+        verifier: str,
+        client_id: str,
+        redirect_uri: str,
+    ) -> dict[str, Any]:
+        """Exchange an authorization code for a scoped access token and store it.
+
+        The other half of :func:`thalovant.native_auth.begin_native_sign_in`.
+        The verifier is sent here and nowhere else; it never entered the
+        browser, which is what makes an intercepted code useless to whoever
+        intercepted it.
+
+        A code presented twice revokes the token the first exchange minted
+        (RFC 9700), so retrying a failed exchange with the same code destroys
+        the token it is trying to obtain. Start again from
+        ``begin_native_sign_in`` instead.
+        """
+
+        self._require_secure_token_exchange()
+        payload = {
+            "code": code,
+            "code_verifier": verifier,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+        }
+        token = self._request("POST", "/v1/auth/native/token", json=payload, auth=False)
+        access_token = token.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise ThalovantAPIError("Thalovant API token response did not include access_token.")
+        self.access_token = access_token
+        return token
+
     def login_with_browser(
         self,
         *,
