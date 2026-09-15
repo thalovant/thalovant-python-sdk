@@ -105,6 +105,8 @@ def test_a_thalovant_url_is_recognised_by_scheme_and_host() -> None:
     assert not is_thalovant_url("http://dash.thalovant.com")
     # The one that matters: a lookalike host ending in the same letters.
     assert not is_thalovant_url("https://dash.thalovant.com.evil.test")
+    # A host that passes, reached through credentials that read as another.
+    assert not is_thalovant_url("https://evil.test@dash.thalovant.com")
     assert not is_thalovant_url("https://notthalovant.com")
     assert not is_thalovant_url("nonsense")
 

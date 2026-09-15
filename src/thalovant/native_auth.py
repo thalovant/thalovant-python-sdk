@@ -74,6 +74,11 @@ def is_thalovant_url(url: str) -> bool:
     parts = urlsplit(url)
     if parts.scheme.lower() != "https":
         return False
+    # Reject embedded credentials: ``https://evil.test@dash.thalovant.com/``
+    # has a host that passes, and a URL somebody is about to be sent to should
+    # not read as one host and resolve to another.
+    if parts.username or parts.password:
+        return False
     host = (parts.hostname or "").lower()
     return host == "thalovant.com" or host.endswith(".thalovant.com")
 
