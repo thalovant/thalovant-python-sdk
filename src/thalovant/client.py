@@ -937,14 +937,22 @@ class ThalovantClient:
     #: that mints session ids faster than it retires them.
     MAX_REMEMBERED_CONVERSATIONS = 32
 
-    def _remember_conversation(self, session: dict[str, Any] | None) -> None:
-        """Keep the session a hub returned, to send with the next utterance."""
+    def _remember_conversation(self, session_id: str | None,
+                               session: dict[str, Any] | None) -> None:
+        """Keep the session a hub returned, to send with the next utterance.
 
-        session_id = (session or {}).get("session_id")
-        if not session_id:
-            return
+        Keyed on the id the *request* used, never the one the reply carries.
+        A hub is free to answer under an id of its own -- it NATs a declared
+        one to a per-connection identity (HIVEMIND-BRIDGE-1 §4) and undoes
+        that on the way out, and older hubs substituted a uuid outright. The
+        next turn can only look this up by the id it is about to send, so
+        that is what it is filed under. ``None`` keys the conversation of a
+        caller that declares no id and lets the connection's own session
+        stand; no real session id can collide with it.
+        """
+
         kept = {field: session[field] for field in CONVERSATION_SESSION_FIELDS
-                if session.get(field)}
+                if (session or {}).get(field)}
         with self._conversations_lock:
             self._conversations.pop(session_id, None)
             if not kept:
@@ -961,9 +969,7 @@ class ThalovantClient:
         """Put the last turn's conversation state back into this turn."""
 
         session = _session_from_context(context)
-        session_id = session_id or session.get("session_id")
-        if not session_id:
-            return context
+        session_id = session_id or session.get("session_id") or None
         with self._conversations_lock:
             previous = self._conversations.get(session_id)
             if previous is not None:
@@ -1267,7 +1273,8 @@ class ThalovantClient:
                 # says nothing about what the next one will need.
                 if (not direct and getattr(message, "name", None) == EVENT_UTTERANCE_HANDLED
                         and message.request_id == request_id):
-                    self._remember_conversation(_session_from_context(message.context))
+                    self._remember_conversation(
+                        session_id, _session_from_context(message.context))
                 if terminal:
                     return
                 now = time.monotonic()

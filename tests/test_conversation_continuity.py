@@ -180,3 +180,35 @@ def test_only_the_conversation_fields_travel():
         {"session_id": "sat-1"},
     )
     assert set(carried) == {"session_id", *CONVERSATION_SESSION_FIELDS}
+
+
+def test_a_hub_that_answers_under_its_own_id_still_continues():
+    # A hub is free to answer under an id of its own: HiveMind NATs a declared
+    # session to a per-connection identity and undoes it on the way out, and
+    # older hubs substituted a uuid outright. The next turn can only look the
+    # conversation up by the id it is about to send.
+    transport = HubTransport([
+        HubTurn(session={"session_id": "71048b7f-e7b0-4360", **_fart_handlers()}),
+    ])
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0,
+                             empty_reply_wait_seconds=0)
+
+    client.ask("Fais un prout", lang="fr-FR", session_id="sat-1")
+    client.ask("Encore un", lang="fr-FR", session_id="sat-1")
+
+    assert transport.sent_sessions[1]["session_id"] == "sat-1"
+    assert transport.sent_sessions[1]["converse_handlers"]
+
+
+def test_a_caller_that_declares_no_session_still_continues():
+    # Without a declared id the hub keeps the connection's own session, which
+    # is stable for the life of the connection -- so there is a conversation
+    # to carry even though neither side named it.
+    transport = HubTransport([HubTurn(session=_fart_handlers())])
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0,
+                             empty_reply_wait_seconds=0)
+
+    client.ask("Fais un prout", lang="fr-FR")
+    client.ask("Encore un", lang="fr-FR")
+
+    assert transport.sent_sessions[1]["converse_handlers"]
