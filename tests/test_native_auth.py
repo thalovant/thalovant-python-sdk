@@ -107,3 +107,30 @@ def test_a_thalovant_url_is_recognised_by_scheme_and_host() -> None:
     assert not is_thalovant_url("https://dash.thalovant.com.evil.test")
     assert not is_thalovant_url("https://notthalovant.com")
     assert not is_thalovant_url("nonsense")
+
+
+def test_a_refusal_that_also_carries_a_code_is_still_a_refusal() -> None:
+    # CodeRabbit caught this: checking only for a missing code accepted
+    # `error=access_denied&code=...` and would have started an exchange on a
+    # code the authorization server had just declined to issue.
+    begun = begin_native_sign_in(client_id="app", redirect_uri="app://auth")
+    assert begun.code_from(f"app://auth?error=access_denied&code=abc&state={begun.state}") is None
+    assert begun.code_from(f"app://auth?code=abc&error=server_error&state={begun.state}") is None
+
+
+def test_the_token_exchange_refuses_cleartext_and_allows_loopback() -> None:
+    from thalovant.control import ThalovantControlPlane
+    from thalovant.errors import ThalovantAPIError
+
+    plane = ThalovantControlPlane(api_url="http://control.example.test")
+    with pytest.raises(ThalovantAPIError, match="cleartext"):
+        plane.complete_native_sign_in("code", "verifier", "app", "app://auth")
+    assert plane.access_token is None
+
+    # Loopback has no cleartext to observe, and is how the API is run locally.
+    for host in ("http://localhost:8080", "http://127.0.0.1:8080"):
+        local = ThalovantControlPlane(api_url=host)
+        try:
+            local._require_secure_token_exchange()
+        except ThalovantAPIError as error:  # pragma: no cover - a failure here is the point
+            raise AssertionError(f"loopback was refused: {error}") from error

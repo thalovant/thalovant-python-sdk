@@ -98,7 +98,8 @@ class NativeSignIn:
         not an answer to this attempt.
 
         ``None`` rather than an exception on a state mismatch, a missing code,
-        or an ``error=`` response: all three mean "do not continue", and a
+        or an ``error=`` response -- including one that also carries a code:
+        all of those mean "do not continue", and a
         caller that handles them alike cannot accidentally treat one of them as
         success.
         """
@@ -108,6 +109,11 @@ class NativeSignIn:
             return None
         found = dict(parse_qsl(query, keep_blank_values=True))
         if found.get("state") != self.state:
+            return None
+        # A refusal that also carries a code is still a refusal. Checking only
+        # for a missing code accepted that pair and would have started an
+        # exchange on a code the server had just declined to issue.
+        if "error" in found:
             return None
         code = found.get("code") or ""
         return code or None

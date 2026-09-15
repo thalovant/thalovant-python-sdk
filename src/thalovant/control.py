@@ -426,6 +426,32 @@ class ThalovantControlPlane:
         self.access_token = access_token
         return token
 
+    def _require_secure_token_exchange(self) -> None:
+        """Refuse to put an authorization code and its verifier on the wire in
+        cleartext.
+
+        ``api_url`` accepts an ``http`` scheme -- a self-hosted or local
+        control plane may legitimately be served that way -- and ``_request``
+        hands whatever it is given to requests without looking. Every other
+        call that would leak over http leaks a bearer token the caller already
+        holds; this one leaks the two secrets that are about to become one, and
+        a code is exchangeable by whoever sees it first.
+
+        Loopback is allowed: a request that never leaves the machine has no
+        cleartext to observe, and that is how the control plane is run while
+        somebody is working on it.
+        """
+
+        parts = urlsplit(self.api_url)
+        if parts.scheme.lower() == "https":
+            return
+        if (parts.hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+            return
+        raise ThalovantAPIError(
+            "Refusing to send an authorization code and PKCE verifier in cleartext to "
+            f"{parts.hostname or self.api_url}. Use https, or a loopback address while developing."
+        )
+
     def complete_native_sign_in(
         self,
         code: str,
@@ -446,6 +472,7 @@ class ThalovantControlPlane:
         ``begin_native_sign_in`` instead.
         """
 
+        self._require_secure_token_exchange()
         payload = {
             "grant_type": "authorization_code",
             "code": code,
