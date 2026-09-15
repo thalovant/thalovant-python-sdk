@@ -28,6 +28,7 @@ from .control import (
     OperationStatus,
     ThalovantControlPlane,
 )
+from .hubs import hub_display_name
 from .native_auth import (
     DEFAULT_NATIVE_SCOPES,
     NativeSignIn,
@@ -95,6 +96,7 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
 __all__ = [
+    "hub_display_name",
     "DEFAULT_NATIVE_SCOPES",
     "NativeSignIn",
     "begin_native_sign_in",
