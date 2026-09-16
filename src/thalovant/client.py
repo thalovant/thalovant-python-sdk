@@ -1082,6 +1082,9 @@ class ThalovantClient:
     #: runs a single session for its whole life; the cap only bounds a caller
     #: that mints session ids faster than it retires them.
     MAX_REMEMBERED_CONVERSATIONS = 32
+    #: Aliases kept for one conversation. A hub that re-translates the
+    #: session id every turn would otherwise grow one group forever.
+    MAX_CONVERSATION_ALIASES = 8
 
     def _remember_conversation(self, session_id: str | None,
                                session: dict[str, Any] | None) -> None:
@@ -1126,6 +1129,15 @@ class ThalovantClient:
             # entries they aged and were evicted separately, so a caller using
             # the evicted alias lost the carry while one using its partner kept
             # it -- and the bound counted aliases rather than conversations.
+            # A hub free to answer under a fresh translated id (BRIDGE-1 §4)
+            # contributes a new alias every turn, and the group counts once,
+            # so MAX_REMEMBERED_CONVERSATIONS bounded conversations but not
+            # names: one group could grow without limit and every rewrite got
+            # slower. `keys` is ordered this turn's ids first, then the ones
+            # inherited from groups it absorbed, so dropping from the tail
+            # discards the stalest aliases and keeps the id the next turn is
+            # actually going to send.
+            del keys[self.MAX_CONVERSATION_ALIASES:]
             group = tuple(keys)
             for key in keys:
                 self._conversations[key] = (group, kept)
@@ -1411,6 +1423,10 @@ class ThalovantClient:
         # file it under the id the caller is handed. A list because the handler
         # runs on the transport thread and rebinding a local would not carry.
         handled_session: list[dict[str, Any]] = []
+        # Filled in below, just before the reply is handed back, so a
+        # handled event arriving inside the grace window can file the
+        # carry under the id the caller actually holds.
+        returned_session_id: list[str | None] = [None]
         dropped_media = 0
         media_chars = 0
         registered: list[tuple[str, Callable[[Any], None]]] = []
@@ -1475,6 +1491,13 @@ class ThalovantClient:
                     keys = [session_id]
                     if answered_with and answered_with != session_id:
                         keys.append(answered_with)
+                    # Arriving late -- inside the grace window, after the reply
+                    # was handed back -- this is the only chance to file under
+                    # the id the caller was given. The reply-side aliasing below
+                    # has already run and cannot see this event.
+                    returned = returned_session_id[0]
+                    if returned and returned not in keys:
+                        keys.append(returned)
                     handled_session[:] = [(keys, carried)]
                     self._remember_conversation(keys, carried)
                 if terminal:
@@ -1655,6 +1678,7 @@ class ThalovantClient:
             # the next ask() with it sent no carried state at all. Re-filed as
             # one group, so the whole conversation keeps a single place in the
             # bound however many names reach it.
+            returned_session_id[0] = reply_session_id
             if handled_session and reply_session_id:
                 keys, carried = handled_session[0]
                 if reply_session_id not in keys:

@@ -185,7 +185,9 @@ def consumer(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "testdata").mkdir()
     (tmp_path / "src/code.txt").write_text("implementation")
-    (tmp_path / "tests/test.txt").write_text("loads shared-vectors.json and runs every case")
+    # A loader call, not prose: naming the vector in a comment is no longer
+    # evidence that a test runs it.
+    (tmp_path / "tests/test.txt").write_text('for case in load("shared-vectors.json"): run(case)')
     (tmp_path / "testdata/shared-vectors.json").write_text(json.dumps(vectors, indent=2))
     acceptance = {"schema_version": 1, "reference_digests": [parity.digest(contract["reference"])],
                   "capabilities": {"feature": {
@@ -243,3 +245,29 @@ def test_naming_a_test_that_never_reads_the_vectors_is_not_enough(consumer):
     path.write_text(json.dumps(acceptance))
     with pytest.raises(ValueError, match="no test names"):
         parity.validate_consumer(contract, root, "consumer", [])
+
+
+def test_a_vector_named_only_in_a_comment_is_not_evidence():
+    """The check said a test "has to be run against them, not merely declared"
+    while accepting the name anywhere in the file -- a comment satisfied it.
+
+    It still cannot prove execution; only a recorded conformance result could,
+    and consumers do not produce one yet. This closes the comment gap.
+    """
+    names_vector = parity.names_vector
+    for text in (
+        "// see binary-vectors.json for the cases\nassert(1);",
+        "# binary-vectors.json describes these\nassert x",
+        "/* binary-vectors.json */\nassert(1);",
+        "const unused = 1;  // binary-vectors.json\n",
+    ):
+        assert not names_vector(text, "binary-vectors"), text
+
+    for text in (
+        'const v = load("binary-vectors.json");',
+        'let v = include_str!("../contracts/conformance/binary-vectors.json");',
+        'vectors("binary-vectors")',
+        # A URL's // must not be mistaken for a comment and eat the rest.
+        'let u = "https://example.com//x"; load("binary-vectors.json")',
+    ):
+        assert names_vector(text, "binary-vectors"), text

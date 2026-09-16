@@ -14,6 +14,7 @@ import argparse
 import ast
 import hashlib
 import json
+import re
 from pathlib import Path
 import sys
 import tomllib
@@ -100,6 +101,29 @@ def file_hash(root, name):
     return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
+def names_vector(text, stem):
+    """True when a test actually *names* ``stem`` as a resource it loads.
+
+    A bare substring search over the file accepted a vector named only in a
+    comment or an unused constant -- the check reported that a test runs the
+    vectors while proving nothing more than that somebody typed the name. So
+    strip comments first, then require the name inside a quoted string, which
+    is the shape every loader call has across these languages:
+    ``load("binary-vectors.json")``, ``vectors("binary-vectors")``,
+    ``include_str!("../contracts/.../binary-vectors.json")``.
+
+    It still cannot prove the test *executed* the vectors -- only a recorded
+    conformance result can, and consumers do not produce one yet. It closes
+    the gap that a comment satisfied the gate.
+    """
+
+    without_comments = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    without_comments = re.sub(r"(?m)^\s*(?://|#)[^\n]*$", " ", without_comments)
+    without_comments = re.sub(r"(?<![:\w])//[^\n\"']*$", " ", without_comments, flags=re.M)
+    quoted = re.findall(r"\"([^\"\n]*)\"|'([^'\n]*)'", without_comments)
+    return any(stem in (a or b) for a, b in quoted)
+
+
 def read_text(root, path):
     """A consumer file's text, for checking that a test reads what it claims.
 
@@ -156,7 +180,8 @@ def validate_reference(reference):
                     f"Capability {name} names conformance vectors but no test "
                     f"that runs them; the reference owes the same evidence it "
                     f"asks every consumer for")
-            if not any(Path(vector).stem in read_text(reference, path) for path in tests):
+            if not any(names_vector(read_text(reference, path), Path(vector).stem)
+                       for path in tests):
                 raise ValueError(
                     f"Capability {name}: no reference test reads {vector}")
         for path in capability.get("tests", []):
@@ -295,7 +320,8 @@ def validate_consumer(reference_manifest, root, repo, planned):
             # resource without one. Requiring the exact string made the rule a
             # test of naming conventions rather than of what the test reads.
             named = Path(where).stem
-            if not any(named in read_text(root, path) for path in entry.get("tests", {})):
+            if not any(names_vector(read_text(root, path), named)
+                       for path in entry.get("tests", {})):
                 raise ValueError(
                     f"{repo}/{name}: no test names {named}; the capability's "
                     f"behaviour is defined by those vectors and has to be run "
