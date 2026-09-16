@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2 — 2026-09-16
+
+- Deliver every binary payload type, not two of six. `hivemind-bus-client` surfaces `TTS_AUDIO` and `FILE` and logs "Ignoring received untyped binary data" for the other four, so `RAW_AUDIO`, `NUMPY_IMAGE`, `STT_AUDIO_TRANSCRIBE` and `STT_AUDIO_HANDLE` reached no subscriber. `on_binary()` now sees all of them, and a payload type nobody has named yet arrives rather than disappearing.
+- Bound `cryptography` below 49.0.0 on Intel macOS. The comment beside the marker already said x86_64 wheels stop after 48.0.1; the constraint did not enforce it, so a resolver could pick 49.x or 50.x -- `macosx_11_0_arm64` only -- and fall back to an sdist needing a Rust toolchain no desktop has.
+- Make the parity contract ask the reference for the evidence it asks of every consumer. A capability that names conformance vectors must name a test here that reads them, every vector file must belong to a capability, and a consumer declares where it keeps each vector so its copy is pinned to this one. Naming a test was enough before, which is how `binary` shipped answering two of the six payload types its own vectors describe with every gate green.
+- Let a reference and its consumers roll out in either order. A consumer can only ever have signed a digest already published here, so demanding the candidate's deadlocked every reference change against nine repositories. A previously published digest is now a rollout state: printed on every run, refused by `--release`, which the release and publish workflows now actually pass.
+
 ## 0.8.1 — 2026-09-16
 
 - Run an `async def` subscriber passed to `AsyncThalovantClient.on_hive()` or `on_binary()` on the loop it subscribed from. The transport calls subscribers on its own receive thread, so an async handler invoked there returned a coroutine nobody awaited: it never ran, and the only sign was a warning at interpreter exit. `on()` has always hopped back to the loop; these two now do the same.

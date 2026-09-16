@@ -1,5 +1,50 @@
 {
   "capabilities": {
+    "binary": {
+      "description": "Receiving binary frames: speech a hub rendered, and files",
+      "files": [
+        "src/thalovant/events.py",
+        "src/thalovant/transport.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "src/wire.c decodes JSON frames, not WIRE-1 bitstrings, so there is no bit reader to extend; the type-code table already knows bin=12. The real blocker is zlib: the encoder chooses per frame whether to compress the metadata, and taking a compression dependency into a -std=c99 -pedantic microcontroller target is a decision about this SDK's footprint rather than about parity. The clip itself is never compressed, so a decoder that refused compressed metadata would still deliver audio.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_conformance_vectors.py",
+        "tests/test_public_conformance.py"
+      ],
+      "vectors": [
+        "binary-vectors.json",
+        "binary-frames.json"
+      ]
+    },
     "cli": {
       "description": "Python command line interface",
       "files": [
@@ -81,6 +126,49 @@
         }
       }
     },
+    "conversation": {
+      "description": "Carrying a conversation between the turns of a named session, which a hub keeps nothing of",
+      "files": [
+        "src/thalovant/events.py",
+        "src/thalovant/client.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "thalovant_ask_request takes a session_id string, not a session, and builds {\"session\":{\"session_id\":...}} itself -- there is nowhere to put converse_handlers and nothing to carry it into. Applicable the day the C API accepts an opaque session object; the carry itself is a pure function and would port directly.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_conformance_vectors.py"
+      ],
+      "vectors": [
+        "conversation-vectors.json"
+      ]
+    },
     "identity": {
       "description": "Secure client identity and credential handling within the host storage model",
       "files": [
@@ -151,7 +239,13 @@
         "thalovant-swift-sdk": {
           "status": "required"
         }
-      }
+      },
+      "tests": [
+        "tests/test_public_conformance.py"
+      ],
+      "vectors": [
+        "inventory-vectors.json"
+      ]
     },
     "listing": {
       "description": "Locale selection, illustrative examples, sentence rendering and question detection",
@@ -187,7 +281,57 @@
         "thalovant-swift-sdk": {
           "status": "required"
         }
-      }
+      },
+      "tests": [
+        "tests/test_public_conformance.py"
+      ],
+      "vectors": [
+        "question-vectors.json"
+      ]
+    },
+    "mesh": {
+      "description": "The hive's own frame kinds: broadcast, propagate, escalate, intercom, rendezvous",
+      "files": [
+        "src/thalovant/events.py",
+        "src/thalovant/client.py",
+        "src/thalovant/transport.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "C exposes the wire types but not a subscription API; the caller polls and dispatches its own frames, so there is no on_hive for this SDK to own. Sending is a different matter and would port.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_conformance_vectors.py"
+      ],
+      "vectors": [
+        "mesh-vectors.json"
+      ]
     },
     "runtime": {
       "description": "Runtime messages, correlation, lifecycle, Noise and inventory queries within each supported transport tier",
@@ -236,7 +380,13 @@
         "thalovant-swift-sdk": {
           "status": "required"
         }
-      }
+      },
+      "tests": [
+        "tests/test_public_conformance.py"
+      ],
+      "vectors": [
+        "reply-claim-vectors.json"
+      ]
     },
     "session": {
       "description": "Managed hub session, reconnect policy, liveness probes, subscriptions and optional origin preference",
@@ -278,14 +428,18 @@
   },
   "reference": {
     "conformance": {
-      "inventory-vectors.json": "8bc3147ce295d5e90ace2a05738671990ffc5d154751d8e5a91f893850c512bb",
-      "question-vectors.json": "a1f503fbf7573b80312f4a52265745976ac486008faf014bbcf15f508d79bb3d",
+      "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
+      "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
+      "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
+      "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
+      "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
+      "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
       "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     },
     "dependencies": {
       "dependencies": [
         "PyYAML>=6.0.2",
-        "cryptography>=48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+        "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
         "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
         "hivemind-bus-client>=1.1.9a1",
         "ovos-spec-tools[langcodes]>=1.10.5a1",
@@ -306,7 +460,7 @@
       "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
       "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "03c3561eb7a9bec771b22813a4c232fb24a322bce9f752fb7f530c6e186ebcd7",
+      "src/thalovant/client.py": "b54c1fb30a8d13e6658073bdf3d6b9cb6c934c84063a8e1926aca03684fc0f15",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
@@ -323,8 +477,36 @@
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
       "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "6084ed0ce749e1ef1e0b9fcbc111fb2ccdf46ce70c1603d85be76292efc64c26"
+      "src/thalovant/transport.py": "b44a44ad046afe1d397d9b8aaa1feacedf4fad38dcfc49130724663a3a570859"
     }
   },
+  "reference_history": [
+    "1133ac83dca463a5b7c69c980d1b5db46a1314d08151b31508982ad1cf41b6c6",
+    "c13f62bf0c5ff9a8b06808542f89481f961e7c4e24af13928055598b76e2550c",
+    "2440dd10059c468ca5012a3e4e9e057c9bd2df7ef442eba1d5dcdeb4afb3eafd",
+    "4f17f2e999105c5629defd1c1ea71a197ecf725a9b559ff7b3bf9932638645bd",
+    "676e935e66330f8614d6c23cccddd48e1c4577c3af761775f18e1ea0128b8007",
+    "8b71292c815a4b7219be7b1a7a5d01e9500faaa23e7c97c6a48683fc0411e1d0",
+    "e1a17c218e70eb278e4a06161314076269c6d7f3fd24afc522711e1eedb2c2e8",
+    "c1b37fdf37eba918c14fcbd234d02a4c80ffd6a72a55c3db5566cd8ed59e7a5b",
+    "c18d57ee45159a53773222e64586c9d36769ebc55475d1a283dc483296bb9107",
+    "d02b21380724ae606673f1b7e74b57f7962c2dea1b0640fe642856c2f2be97e2",
+    "8c8c6d952c7d86633eb65eee20415f06ee114389b3cd5efc138e59a858ffdbab",
+    "20cc677bf3ca8d61c32f0f2d3fbf6562899cf83f951685d57a2bdd10e8d30a45",
+    "9ef680aa6e5dd5519ade3954b16ac14219117df45a87ca7112dca961fad7486d",
+    "c4973d48241c9f14e0aaf6aab6b4b1c7e798b81099d0c5783079af7b4a138392",
+    "a6fe69439f14c75a2cf37d14a2d2ad1e2426639def8e1757a738a3ec6683af17",
+    "8669034d6987af946303913780cce419efaff2a9181de7d46fbffe7092d7be9e",
+    "c0d883e69ee7fa301c6e4c1b1a5c433ed290d63f79a3e6b397fdb0a988d111fa",
+    "49bab2a8922b69b5cd886e7acadf217cdaa78bd94bfb48374e2f4b1cde85dfc0",
+    "9af92bcafd77385cd7c9cfede859eeb3586f65d0b24c9dbff36352089e94821c",
+    "04d252a2faf88f76d6d85080dda3aa8045d57467b8fdb847efae90fe29823ecf",
+    "fb3f0011032b091372ade4adc6f9d84e479f321725b1b318abf4b8f7356d2aaf",
+    "c2e0f3682c162a82cf8da88b07385db4d967953008ffefaf62872744bb5718ab",
+    "acd7dbfc6352150b4a61e49280e09b6580c3287b935635ad7fe5e4b5929f945b",
+    "ed8b30df32ee8b385608cee8ebda39ccb04eb5079b73e8ccc23dca0c48d62449",
+    "083b2da8b256cd970b3050218d8d51f13e7355633913d086c9f4147d8790165b",
+    "1e8b76b34b755207bb754e5f4c7364334f14476dee70fce1d2687bfdc1545f30"
+  ],
   "schema_version": 1
 }

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thalovant"
-version = "0.8.1"
+version = "0.8.2"
 description = "Python SDK and CLI for direct Thalovant hub data-plane clients and agents"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Thalovant" }]
@@ -55,7 +55,11 @@ dependencies = [
     # called by nothing in this SDK or the hub-client tree beneath it (Noise
     # uses X25519 and ChaCha20-Poly1305 only). Without this line the SDK, and
     # every satellite on it, cannot be installed on an Intel Mac at all.
-    "cryptography>=48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # The upper bound is the half that does the work: 48.0.1 ships
+    # macosx_10_9_universal2, 49.0.0 and everything after it ship
+    # macosx_11_0_arm64 alone, so an open range resolves to a version with no
+    # wheel for this machine and falls back to the sdist it cannot build.
+    "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [project.urls]

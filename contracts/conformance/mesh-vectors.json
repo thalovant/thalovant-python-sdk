@@ -1,0 +1,122 @@
+{
+  "source": "thalovant-python-sdk/src/thalovant/events.py HIVE_KINDS; client on_hive/propagate/escalate/broadcast",
+  "contract": "A hub is a hive, not a star. Five frame kinds belong to the mesh and a client may subscribe to all of them. query and cascade are the client's own request/response traffic and ask() owns them, so subscribing to one must be refused rather than silently never firing. A mesh frame is nested: the hub reads message.payload as a HiveMessage of its own and re-stamps the route on it before forwarding, so a flat frame loses the route.",
+  "kinds": [
+    "broadcast",
+    "propagate",
+    "escalate",
+    "intercom",
+    "rendezvous"
+  ],
+  "refused_kinds": [
+    "query",
+    "cascade",
+    "bus",
+    "hello",
+    "shake",
+    "binary"
+  ],
+  "envelope": {
+    "msg_type": "<kind>",
+    "payload": {
+      "msg_type": "bus",
+      "payload": {
+        "type": "<event type>",
+        "data": {},
+        "context": {}
+      }
+    }
+  },
+  "grants": {
+    "broadcast": "admin standing and can_broadcast; a hub disconnects a client that lacks either, it does not answer with an error",
+    "propagate": "can_propagate, on by default and revocable",
+    "escalate": "can_escalate, on by default and revocable",
+    "note": "a hub's HELLO carries its public key, peer name and node id, and nothing about what the client may do, so no client can check before sending"
+  },
+  "cases": [
+    {
+      "name": "broadcast is subscribable",
+      "kind": "broadcast",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "propagate is subscribable",
+      "kind": "propagate",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "escalate is subscribable",
+      "kind": "escalate",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "intercom is subscribable",
+      "kind": "intercom",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "rendezvous is subscribable",
+      "kind": "rendezvous",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "the client's own query traffic is refused",
+      "kind": "query",
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "name": "the client's own cascade traffic is refused",
+      "kind": "cascade",
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "name": "a bus subscription is not a hive subscription",
+      "kind": "bus",
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "name": "a misspelled kind is refused rather than never firing",
+      "kind": "broadcasts",
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "name": "hello is refused: a handshake is the hub's business, not a subscription",
+      "kind": "hello",
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "name": "shake is refused: a handshake is the hub's business, not a subscription",
+      "kind": "shake",
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "name": "binary is refused: binary frames arrive through on_binary, which carries the payload type",
+      "kind": "binary",
+      "expected": {
+        "accepted": false
+      }
+    }
+  ]
+}

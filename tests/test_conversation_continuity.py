@@ -15,6 +15,8 @@ fart skill instead.
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -229,3 +231,185 @@ def test_a_top_level_session_id_names_the_same_conversation():
 
     assert list(client._conversations) == ["kitchen"]
     assert transport.sent_sessions[1]["converse_handlers"]
+
+
+class NattingHubTransport(HubTransport):
+    """A hub that answers under an id of its own, as HiveMind NATs one.
+
+    HIVEMIND-BRIDGE-1 §4 maps a declared id to a per-connection identity and
+    undoes it outbound; older hubs substituted a uuid outright.
+    """
+
+    def __init__(self, turns: list[HubTurn], answered_with: str):
+        super().__init__(turns)
+        self.answered_with = answered_with
+
+    def emit_event(self, event_type, data, context):
+        self.emitted.append((event_type, data, context))
+        self.sent_sessions.append(dict(context.get("session") or {}))
+        turn = self.turns.pop(0) if self.turns else HubTurn(session={})
+        reply_context = dict(context)
+        reply_context["session"] = {
+            **(context.get("session") or {}), **turn.session,
+            "session_id": self.answered_with,
+        }
+        for handler in self.handlers.get("speak", []):
+            handler(FakeMessage({"utterance": "Pfffft."}, context=reply_context))
+        for handler in self.handlers.get("ovos.utterance.handled", []):
+            handler(FakeMessage({}, context=reply_context))
+
+
+def test_the_carry_survives_whichever_session_id_the_caller_sends_back():
+    """`reply.session_id` is the hub's, and a caller may well send it back.
+
+    It is the first non-empty *event* session id, so when a hub answers under
+    an id of its own the reply hands the caller an id the carry used to be
+    filed under nothing. Both are remembered now: the request's, which is what
+    a satellite reuses, and the hub's, which is what `reply.session_id` offers.
+    """
+
+    transport = NattingHubTransport([HubTurn(session=_fart_handlers())],
+                                    answered_with="hub-namespace:sat-1")
+    client = ThalovantClient(identity(), transport=transport)
+
+    reply = client.ask("Fais un prout", session_id="sat-1")
+    assert reply.session_id == "hub-namespace:sat-1"
+
+    # The caller does the natural thing with what the reply handed back.
+    client.ask("Encore un", session_id=reply.session_id)
+    carried = transport.sent_sessions[-1]
+    assert carried.get("converse_handlers"), carried
+
+    # And the satellite's path -- reusing its own id -- still works.
+    transport.turns.append(HubTurn(session=_fart_handlers()))
+    client.ask("Encore un", session_id="sat-1")
+    assert transport.sent_sessions[-1].get("converse_handlers"), transport.sent_sessions[-1]
+
+
+class SplitIdHubTransport(HubTransport):
+    """A hub whose speak and handled events disagree about the session id.
+
+    `ThalovantReply.session_id` is the first non-blank id from *any* event, so
+    the id the caller is handed comes from the speak here -- not from the
+    handled event the carry is read out of.
+    """
+
+    def __init__(self, turns: list[HubTurn], speak_id: str, handled_id: str | None):
+        super().__init__(turns)
+        self.speak_id = speak_id
+        self.handled_id = handled_id
+
+    def emit_event(self, event_type, data, context):
+        self.emitted.append((event_type, data, context))
+        self.sent_sessions.append(dict(context.get("session") or {}))
+        turn = self.turns.pop(0) if self.turns else HubTurn(session={})
+        base = {**(context.get("session") or {}), **turn.session}
+        for handler in self.handlers.get("speak", []):
+            handler(FakeMessage({"utterance": "Pfffft."},
+                                context={**context, "session": {**base, "session_id": self.speak_id}}))
+        handled = dict(base)
+        if self.handled_id is None:
+            handled.pop("session_id", None)
+        else:
+            handled["session_id"] = self.handled_id
+        for handler in self.handlers.get("ovos.utterance.handled", []):
+            handler(FakeMessage({}, context={**context, "session": handled}))
+
+
+def test_the_carry_is_filed_under_the_id_the_reply_actually_returns():
+    """The speak decides `reply.session_id`; the handled event decides the carry.
+
+    Filing only under the handled event's id returned an id nothing was filed
+    under whenever the two disagreed, and the next turn sent no carried state.
+    """
+
+    for handled_id in ("hub-handled", None):
+        transport = SplitIdHubTransport([HubTurn(session=_fart_handlers())],
+                                        speak_id="hub-speak", handled_id=handled_id)
+        client = ThalovantClient(identity(), transport=transport)
+
+        reply = client.ask("Fais un prout", session_id="sat-1")
+        assert reply.session_id == "hub-speak", (handled_id, reply.session_id)
+
+        transport.turns.append(HubTurn(session=_fart_handlers()))
+        client.ask("Encore un", session_id=reply.session_id)
+        carried = transport.sent_sessions[-1]
+        assert carried.get("converse_handlers"), (handled_id, carried)
+
+
+def test_a_translated_conversation_holds_one_place_in_the_bound():
+    """Two ids reaching one conversation are one entry, evicted together.
+
+    Filed separately they aged and were evicted separately, so a caller using
+    the evicted alias lost the carry while one using its partner kept it -- and
+    the bound counted names rather than conversations, so a NAT-translated
+    client remembered half as many.
+    """
+
+    client = ThalovantClient(identity(), transport=HubTransport([]))
+    cap = client.MAX_REMEMBERED_CONVERSATIONS
+    handlers = _fart_handlers()
+
+    for index in range(cap):
+        client._remember_conversation([f"sat-{index}", f"hub:sat-{index}"], handlers)
+
+    # `cap` conversations under 2 * cap names, and every name still resolves.
+    assert client._remembered_conversations() == cap
+    assert len(client._conversations) == 2 * cap
+    for index in range(cap):
+        for name in (f"sat-{index}", f"hub:sat-{index}"):
+            assert client._continue_conversation(None, name), name
+
+    # One more evicts the oldest conversation -- both of its names, together.
+    client._remember_conversation(["sat-new", "hub:sat-new"], handlers)
+    assert client._remembered_conversations() == cap
+    assert client._continue_conversation(None, "sat-0") is None
+    assert client._continue_conversation(None, "hub:sat-0") is None
+    assert client._continue_conversation(None, "sat-1")
+    assert client._continue_conversation(None, "hub:sat-1")
+
+
+class LateHandledHubTransport(HubTransport):
+    """A hub whose `ovos.utterance.handled` arrives after the reply settled."""
+
+    def __init__(self, turns: list[HubTurn], delay: float = 0.05):
+        super().__init__(turns)
+        self.delay = delay
+        self.threads: list[threading.Thread] = []
+
+    def emit_event(self, event_type, data, context):
+        self.emitted.append((event_type, data, context))
+        self.sent_sessions.append(dict(context.get("session") or {}))
+        turn = self.turns.pop(0) if self.turns else HubTurn(session={})
+        reply_context = dict(context)
+        reply_context["session"] = {**(context.get("session") or {}), **turn.session}
+        for handler in self.handlers.get("speak", []):
+            handler(FakeMessage({"utterance": "Pfffft."}, context=reply_context))
+
+        def _late() -> None:
+            time.sleep(self.delay)
+            for handler in self.handlers.get("ovos.utterance.handled", []):
+                handler(FakeMessage({}, context=reply_context))
+
+        thread = threading.Thread(target=_late, daemon=True)
+        self.threads.append(thread)
+        thread.start()
+
+
+def test_a_handled_event_that_arrives_after_the_reply_still_records_the_carry():
+    """A zero settle window finishes the reply before the hub says what changed.
+
+    Dropping the subscription there lost the carry entirely: the next turn sent
+    no `converse_handlers` and the follow-up reached the fallback.
+    """
+
+    transport = LateHandledHubTransport([HubTurn(session=_fart_handlers())])
+    client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0.0, empty_reply_wait_seconds=0.0)
+
+    client.ask("Fais un prout", session_id="sat-1")
+    for thread in transport.threads:
+        thread.join(5)
+
+    transport.turns.append(HubTurn(session=_fart_handlers()))
+    client.ask("Encore un", session_id="sat-1")
+    assert transport.sent_sessions[-1].get("converse_handlers"), transport.sent_sessions[-1]

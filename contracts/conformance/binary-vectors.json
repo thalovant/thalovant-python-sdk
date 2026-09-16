@@ -1,0 +1,73 @@
+{
+  "source": "thalovant-python-sdk/src/thalovant/events.py ThalovantBinary; transport _BINARY_KINDS",
+  "contract": "A hub answers speak:synth by rendering the utterance and sending a BINARY frame, so a client with no synthesiser of its own can still speak; a file arrives the same way. The wire numbers the payload type, the SDK names it. A type nobody has named still arrives, under its number, rather than being dropped. Metadata a hub did not send reads as absent, never as an empty string. The payload type is a four-bit field, so only 0-15 can travel; hivemind-bus-client flattens any unassigned value to 0, while an SDK decoding those four bits itself keeps the number it saw. The decode cases therefore use values the wire can carry, and unnamed_kind_names checks the naming on its own, for numbers no frame will ever hold.",
+  "payload_kinds": {
+    "1": "raw_audio",
+    "2": "numpy_image",
+    "3": "file",
+    "4": "stt_transcribe",
+    "5": "stt_handle",
+    "6": "tts_audio"
+  },
+  "unnamed_kind_format": "binary:<wire number>",
+  "cases": [
+    {
+      "name": "rendered speech carries what was said",
+      "bin_type": 6,
+      "metadata": {
+        "utterance": "Pfffft.",
+        "lang": "fr-FR",
+        "file_name": "prout.wav"
+      },
+      "expected": {
+        "kind": "tts_audio",
+        "utterance": "Pfffft.",
+        "lang": "fr-FR",
+        "file_name": "prout.wav"
+      }
+    },
+    {
+      "name": "a file carries only its name",
+      "bin_type": 3,
+      "metadata": {
+        "file_name": "notes.txt"
+      },
+      "expected": {
+        "kind": "file",
+        "utterance": null,
+        "lang": null,
+        "file_name": "notes.txt"
+      }
+    },
+    {
+      "name": "an empty name is no name",
+      "bin_type": 3,
+      "metadata": {
+        "file_name": ""
+      },
+      "expected": {
+        "kind": "file",
+        "utterance": null,
+        "lang": null,
+        "file_name": null
+      }
+    },
+    {
+      "name": "a payload type nobody named arrives under its number",
+      "bin_type": 0,
+      "metadata": {},
+      "expected": {
+        "kind": "binary:0",
+        "utterance": null,
+        "lang": null,
+        "file_name": null
+      }
+    }
+  ],
+  "unnamed_kind_names": {
+    "0": "binary:0",
+    "7": "binary:7",
+    "15": "binary:15",
+    "99": "binary:99"
+  }
+}

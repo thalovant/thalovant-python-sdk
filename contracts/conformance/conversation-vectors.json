@@ -1,0 +1,190 @@
+{
+  "source": "thalovant-python-sdk/src/thalovant/events.py carry_conversation",
+  "contract": "A hub keeps nothing between the turns of a named session (OVOS-SESSION-2 \u00a72.2), so the client carries the conversation. This turn's own values always win; only a field it leaves out is taken from the turn before. An allow-list, so a hub field nobody has considered cannot start replaying itself.",
+  "carried_fields": [
+    "converse_handlers",
+    "active_handlers",
+    "active_skills",
+    "context",
+    "utterance_states",
+    "response_mode"
+  ],
+  "never_carried": [
+    "lang",
+    "pipeline",
+    "site_id",
+    "is_speaking",
+    "is_recording",
+    "session_id"
+  ],
+  "cases": [
+    {
+      "name": "the next turn carries what the last one activated",
+      "previous": {
+        "converse_handlers": [
+          {
+            "skill_id": "fart",
+            "activated_at": 1.0
+          }
+        ]
+      },
+      "session": {
+        "session_id": "sat-1"
+      },
+      "expected": {
+        "session_id": "sat-1",
+        "converse_handlers": [
+          {
+            "skill_id": "fart",
+            "activated_at": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "this turn's language outranks the last one's",
+      "previous": {
+        "lang": "fr-FR",
+        "converse_handlers": [
+          {
+            "skill_id": "fart",
+            "activated_at": 1.0
+          }
+        ]
+      },
+      "session": {
+        "session_id": "sat-1",
+        "lang": "en-US"
+      },
+      "expected": {
+        "session_id": "sat-1",
+        "lang": "en-US",
+        "converse_handlers": [
+          {
+            "skill_id": "fart",
+            "activated_at": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "live device state is not replayed",
+      "previous": {
+        "is_speaking": true,
+        "is_recording": true,
+        "active_skills": [
+          [
+            "fart",
+            1.0
+          ]
+        ]
+      },
+      "session": {
+        "session_id": "sat-1"
+      },
+      "expected": {
+        "session_id": "sat-1",
+        "active_skills": [
+          [
+            "fart",
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "name": "this turn keeps its own value",
+      "previous": {
+        "converse_handlers": [
+          {
+            "skill_id": "old",
+            "activated_at": 1.0
+          }
+        ]
+      },
+      "session": {
+        "converse_handlers": [
+          {
+            "skill_id": "new",
+            "activated_at": 2.0
+          }
+        ]
+      },
+      "expected": {
+        "converse_handlers": [
+          {
+            "skill_id": "new",
+            "activated_at": 2.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "nothing to carry leaves the turn untouched",
+      "previous": {},
+      "session": {
+        "session_id": "sat-1",
+        "lang": "fr-FR"
+      },
+      "expected": {
+        "session_id": "sat-1",
+        "lang": "fr-FR"
+      }
+    },
+    {
+      "name": "a turn that clears the conversation is not refilled from the last one",
+      "previous": {
+        "converse_handlers": [
+          {
+            "skill_id": "fart",
+            "activated_at": 1.0
+          }
+        ],
+        "active_handlers": [
+          {
+            "skill_id": "fart",
+            "activated_at": 1.0
+          }
+        ],
+        "active_skills": [
+          [
+            "fart",
+            1.0
+          ]
+        ],
+        "context": {
+          "frame_stack": [
+            [
+              {
+                "key": "value"
+              },
+              0
+            ]
+          ]
+        },
+        "utterance_states": {
+          "fart": "waiting"
+        },
+        "response_mode": "continuous"
+      },
+      "session": {
+        "converse_handlers": [],
+        "active_handlers": [],
+        "active_skills": [],
+        "context": {},
+        "utterance_states": {},
+        "response_mode": "",
+        "session_id": "sat-1"
+      },
+      "expected": {
+        "converse_handlers": [],
+        "active_handlers": [],
+        "active_skills": [],
+        "context": {},
+        "utterance_states": {},
+        "response_mode": "",
+        "session_id": "sat-1"
+      }
+    }
+  ]
+}
