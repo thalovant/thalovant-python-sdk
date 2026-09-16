@@ -37,10 +37,12 @@
         }
       },
       "tests": [
-        "tests/test_conformance_vectors.py"
+        "tests/test_conformance_vectors.py",
+        "tests/test_public_conformance.py"
       ],
       "vectors": [
-        "binary-vectors.json"
+        "binary-vectors.json",
+        "binary-frames.json"
       ]
     },
     "cli": {
@@ -426,11 +428,12 @@
   },
   "reference": {
     "conformance": {
-      "binary-vectors.json": "bc749825fad0f3dfe9254481bc1185c6c8491105edacaf001f05d30ed8c94b72",
+      "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
+      "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
       "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
-      "inventory-vectors.json": "8bc3147ce295d5e90ace2a05738671990ffc5d154751d8e5a91f893850c512bb",
+      "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
-      "question-vectors.json": "a1f503fbf7573b80312f4a52265745976ac486008faf014bbcf15f508d79bb3d",
+      "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
       "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     },
     "dependencies": {
@@ -498,7 +501,10 @@
     "49bab2a8922b69b5cd886e7acadf217cdaa78bd94bfb48374e2f4b1cde85dfc0",
     "9af92bcafd77385cd7c9cfede859eeb3586f65d0b24c9dbff36352089e94821c",
     "04d252a2faf88f76d6d85080dda3aa8045d57467b8fdb847efae90fe29823ecf",
-    "fb3f0011032b091372ade4adc6f9d84e479f321725b1b318abf4b8f7356d2aaf"
+    "fb3f0011032b091372ade4adc6f9d84e479f321725b1b318abf4b8f7356d2aaf",
+    "c2e0f3682c162a82cf8da88b07385db4d967953008ffefaf62872744bb5718ab",
+    "acd7dbfc6352150b4a61e49280e09b6580c3287b935635ad7fe5e4b5929f945b",
+    "ed8b30df32ee8b385608cee8ebda39ccb04eb5079b73e8ccc23dca0c48d62449"
   ],
   "schema_version": 1
 }

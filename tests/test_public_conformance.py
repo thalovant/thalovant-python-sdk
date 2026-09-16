@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 VECTORS = ROOT / "contracts/conformance"
 # Named here rather than discovered, because the parity contract asks which test
 # reads each vector file and a glob answers with nothing it can check.
-GENERATED = ("question-vectors.json", "inventory-vectors.json", "reply-claim-vectors.json")
+GENERATED = ("question-vectors.json", "inventory-vectors.json", "reply-claim-vectors.json",
+             "binary-frames.json")
 
 
 def conformance():

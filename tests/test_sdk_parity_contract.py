@@ -241,5 +241,5 @@ def test_naming_a_test_that_never_reads_the_vectors_is_not_enough(consumer):
     acceptance = json.loads(path.read_text())
     acceptance["capabilities"]["feature"]["tests"] = {"tests/test.txt": parity.file_hash(root, "tests/test.txt")}
     path.write_text(json.dumps(acceptance))
-    with pytest.raises(ValueError, match="no test reads"):
+    with pytest.raises(ValueError, match="no test names"):
         parity.validate_consumer(contract, root, "consumer", [])

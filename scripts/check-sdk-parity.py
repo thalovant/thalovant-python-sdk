@@ -156,7 +156,7 @@ def validate_reference(reference):
                     f"Capability {name} names conformance vectors but no test "
                     f"that runs them; the reference owes the same evidence it "
                     f"asks every consumer for")
-            if not any(vector in read_text(reference, path) for path in tests):
+            if not any(Path(vector).stem in read_text(reference, path) for path in tests):
                 raise ValueError(
                     f"Capability {name}: no reference test reads {vector}")
         for path in capability.get("tests", []):
@@ -290,10 +290,14 @@ def validate_consumer(reference_manifest, root, repo, planned):
                 raise ValueError(
                     f"{repo}/{name}: {where} is not the reference's {vector}; "
                     f"re-vendor it and rerun the conformance suite")
-            if not any(Path(where).name in read_text(root, path)
-                       for path in entry.get("tests", {})):
+            # The stem, not the filename: Swift asks its bundle for a resource
+            # by name and extension separately, and .NET names an embedded
+            # resource without one. Requiring the exact string made the rule a
+            # test of naming conventions rather than of what the test reads.
+            named = Path(where).stem
+            if not any(named in read_text(root, path) for path in entry.get("tests", {})):
                 raise ValueError(
-                    f"{repo}/{name}: no test reads {vector}; the capability's "
+                    f"{repo}/{name}: no test names {named}; the capability's "
                     f"behaviour is defined by those vectors and has to be run "
                     f"against them, not merely declared")
 

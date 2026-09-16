@@ -48,8 +48,13 @@ def vectors():
     texts = ["", "  ", "go home", "is it ready", "weather in", "ai je besoin d une veste", "y a t il de la neige", "hello!", "?hello"]
     texts += ["hello" + mark + "  " for mark in marks]
     texts += ["hello" + chr(i) for i in [0x10441, 0x11144, 0x1e960, 0x1fbc5, 0xe0040]]
-    source = {"thalovant": importlib.metadata.version("thalovant"),
-              "thalovant-languages": importlib.metadata.version("thalovant-languages"),
+    # What the expectations actually depend on, and nothing else. This SDK's own
+    # version was in here and did two kinds of harm: read from the installed
+    # distribution rather than this tree, it stamped whatever happened to be in
+    # the virtualenv -- and being stamped at all, it changed the vectors' digest
+    # on every release, sending nine repositories to re-vendor a file whose
+    # expectations had not moved.
+    source = {"thalovant-languages": importlib.metadata.version("thalovant-languages"),
               "unicode_version": unicodedata.unidata_version}
     question = {"source": source, "cases": [{"text": text, "lang": language, "expected": listing.asks(text, language)} for language in languages for text in texts]}
     inventory = Inventory("hub", "Kitchen", "hub", "2026-09-13T00:00:00Z", (
@@ -65,7 +70,86 @@ def vectors():
         {"language": lang, "limit": limit, "expected": list(inventory.intents[0].examples(lang, limit))}
         for lang, limit in queries
     ], "speaks": [{"language": lang, "expected": inventory.skills[0].speaks(lang)} for lang in ["en-gb", "fr", "de"]]}
-    return {"question-vectors.json": question, "inventory-vectors.json": inventory_vectors, "reply-claim-vectors.json": reply_claim_vectors()}
+    return {"question-vectors.json": question, "inventory-vectors.json": inventory_vectors,
+            "reply-claim-vectors.json": reply_claim_vectors(), "binary-frames.json": binary_frames()}
+
+
+def binary_frames():
+    """Real WIRE-1 BINARY frames, produced by the reference encoder.
+
+    Every SDK that decodes these bits itself needs frames it did not build to
+    test against; one written by hand tests a reading of the specification
+    rather than the wire a hub puts out. So these come from
+    ``hivemind-bus-client``'s own ``get_bitstring``, base64'd, and every SDK
+    vendors the same file.
+    """
+
+    import base64
+
+    from hivemind_bus_client.message import HiveMessageType, HiveMindBinaryPayloadType as Kind
+    from hivemind_bus_client.serialization import get_bitstring
+
+    clip = bytes(range(256))
+    vectors = json.loads((Path(__file__).resolve().parents[1]
+                          / "contracts/conformance/binary-vectors.json").read_text())
+    cases = []
+    for row in vectors["cases"]:
+        frame = get_bitstring(hive_type=HiveMessageType.BINARY, payload=clip,
+                              compressed=False, hivemeta=row["metadata"],
+                              binary_type=Kind(row["bin_type"]), versioned=True)
+        cases.append({"name": row["name"],
+                      "frame": base64.b64encode(frame.bytes).decode(),
+                      "expected_kind": row["expected"]["kind"],
+                      "expected_metadata": row["metadata"],
+                      "expected_payload": base64.b64encode(clip).decode()})
+    for wire, name in sorted(vectors["payload_kinds"].items(), key=lambda kv: int(kv[0])):
+        frame = get_bitstring(hive_type=HiveMessageType.BINARY, payload=clip,
+                              compressed=False, hivemeta={"file_name": f"{name}.bin"},
+                              binary_type=Kind(int(wire)), versioned=True)
+        cases.append({"name": f"payload type {wire} is {name}",
+                      "frame": base64.b64encode(frame.bytes).decode(),
+                      "expected_kind": name,
+                      "expected_metadata": {"file_name": f"{name}.bin"},
+                      "expected_payload": base64.b64encode(clip).decode()})
+    # A frame whose metadata is worth compressing. The encoder chooses per
+    # frame -- whichever of the two is shorter -- so a hub really does send
+    # these, and an SDK that cannot inflate loses the utterance while the clip
+    # still arrives. Without a case here that gap ships untested in every
+    # language that had to write its own inflate.
+    talkative = {"lang": "fr-FR", "file_name": "prout.wav",
+                 "utterance": "Pfffft. " * 40}
+    compressed = get_bitstring(hive_type=HiveMessageType.BINARY, payload=clip,
+                               compressed=True, hivemeta=talkative,
+                               binary_type=Kind.TTS_AUDIO, versioned=True)
+    cases.append({"name": "compressed metadata still reads, and the clip is never inflated",
+                  "frame": base64.b64encode(compressed.bytes).decode(),
+                  "expected_kind": "tts_audio",
+                  "expected_metadata": talkative,
+                  "expected_payload": base64.b64encode(clip).decode()})
+    bus = get_bitstring(hive_type=HiveMessageType.BUS,
+                        payload=json.dumps({"type": "speak", "data": {"utterance": "Pfffft."}}),
+                        compressed=False, hivemeta={}, versioned=True)
+    return {"contract": "Frames from hivemind-bus-client's own encoder. A BINARY "
+                        "frame's payload is bytes; every other type binarized on "
+                        "the wire is still JSON.",
+            "cases": cases,
+            "bus_frame": base64.b64encode(bus.bytes).decode()}
+
+
+def check_binary_frames(data):
+    import base64
+
+    from hivemind_bus_client.serialization import decode_bitstring
+
+    for row in data["cases"]:
+        message = decode_bitstring(base64.b64decode(row["frame"]))
+        assert message.payload == base64.b64decode(row["expected_payload"]), row["name"]
+        assert message.metadata == row["expected_metadata"], row["name"]
+    bus = decode_bitstring(base64.b64decode(data["bus_frame"]))
+    # A binarized BUS frame decodes to a Message, not to bytes: only BINARY
+    # carries a payload the library leaves alone.
+    assert bus.payload.msg_type == "speak"
+    assert bus.payload.data == {"utterance": "Pfffft."}
 
 
 def check_questions(question):
@@ -97,6 +181,7 @@ def check_reply_claims(claims):
 # visible hole rather than a quiet one: the parity contract asks which test runs
 # each vector, and this is the answer for the three generated here.
 CHECKS = {
+    "binary-frames.json": check_binary_frames,
     "question-vectors.json": check_questions,
     "inventory-vectors.json": check_inventory,
     "reply-claim-vectors.json": check_reply_claims,
