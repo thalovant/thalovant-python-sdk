@@ -387,12 +387,26 @@ def compare_conformance(repo, reference_results, root, planned):
 
     if not reference_results:
         return
+    # Only the vectors this consumer declares. A capability it has justified as
+    # `not-applicable` or `planned` carries no vectors and vendors no copy of
+    # them, so asking it to record results is asking it to run cases for
+    # behaviour it has said -- and had accepted -- that it does not implement.
+    # thalovant-embedded-c calls both of these not-applicable and
+    # thalovant-mcp calls both planned; before this, the release gate asked
+    # them for results anyway and no amount of work in those repositories
+    # could have produced them.
+    declared = set()
+    for capability in (read(root / MANIFEST).get("capabilities") or {}).values():
+        declared.update((capability.get("vectors") or {}).keys())
+    wanted = {name: value for name, value in reference_results.items() if name in declared}
+    if not wanted:
+        return
     theirs = conformance_results(root)
     if theirs is None:
         planned.append(f"{repo}: records no conformance results; run the suite with "
                        f"THALOVANT_CONFORMANCE_OUT=contracts/conformance-results.json")
         return
-    for vector_file, expected in sorted(reference_results.items()):
+    for vector_file, expected in sorted(wanted.items()):
         recorded = theirs.get(vector_file)
         if recorded is None:
             planned.append(f"{repo}: no recorded results for {vector_file}")

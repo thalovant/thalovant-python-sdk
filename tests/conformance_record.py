@@ -27,18 +27,46 @@ from typing import Any
 _RESULTS: dict[str, dict[str, Any]] = {}
 
 
+def _same_number_everywhere(value: Any) -> Any:
+    """Spell a whole number the way every language spells it.
+
+    Python writes a float of 1.0 as ``1.0``; JavaScript, Go, Rust, C# and Swift
+    all write the same value as ``1``, because JSON has one number type and
+    their writers drop a fractional part that is zero. So an SDK could compute
+    exactly the right answer and still record a different digest for it --
+    which is what ``conversation-vectors.json`` does, where ``activated_at`` is
+    ``1.0``.
+
+    Nothing here is about tolerance: 1.0 and 1 are the same JSON number, and
+    this only stops one language's spelling of it from counting as a different
+    result.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _same_number_everywhere(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_same_number_everywhere(item) for item in value]
+    return value
+
+
 def canonical_digest(value: Any) -> str:
     """A stable digest of a produced value.
 
-    Sorted keys and no insignificant whitespace, so the same value recorded by
-    two SDKs in two languages digests the same. Values that are not JSON --
-    bytes from a binary frame, say -- are named by their own content rather
-    than by a repr that would differ per language.
+    Sorted keys, no insignificant whitespace, and a whole number spelled the
+    one way, so the same value recorded by two SDKs in two languages digests
+    the same. Values that are not JSON -- bytes from a binary frame, say -- are
+    named by their own content rather than by a repr that would differ per
+    language.
     """
 
     if isinstance(value, (bytes, bytearray)):
         return "bytes:" + hashlib.sha256(bytes(value)).hexdigest()
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    encoded = json.dumps(_same_number_everywhere(value), sort_keys=True,
+                         separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
