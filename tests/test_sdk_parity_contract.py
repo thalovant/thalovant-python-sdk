@@ -74,14 +74,14 @@ def test_consumer_evidence_is_bound_to_reference_and_actual_files(tmp_path):
     path = tmp_path / parity.MANIFEST
     path.parent.mkdir()
     path.write_text(json.dumps(acceptance))
-    parity.validate_consumer(contract, tmp_path, "consumer")
+    parity.validate_consumer(contract, tmp_path, "consumer", [])
     changed = copy.deepcopy(contract)
     changed["reference"]["revision"] = 2
     with pytest.raises(ValueError, match="reference changed"):
-        parity.validate_consumer(changed, tmp_path, "consumer")
+        parity.validate_consumer(changed, tmp_path, "consumer", [])
     (tmp_path / "tests/test.txt").write_text("disabled")
     with pytest.raises(ValueError, match="tests changed"):
-        parity.validate_consumer(contract, tmp_path, "consumer")
+        parity.validate_consumer(contract, tmp_path, "consumer", [])
 
 
 def test_evidence_cannot_escape_checkout(tmp_path):
