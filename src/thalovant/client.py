@@ -618,6 +618,11 @@ class ThalovantClient:
         Returns a callable that unsubscribes. The frame is handed over as the
         hub sent it -- a HiveMessage, not a normalized `ThalovantEvent` -- so
         nothing is lost in a shape this SDK does not model yet.
+
+        ``handler`` runs on the transport's receive thread, in subscription
+        order, like every other subscription in this SDK. A handler that blocks
+        holds up the next frame. ``AsyncThalovantClient`` hops back to the loop
+        it subscribed from.
         """
 
         if kind not in HIVE_KINDS:
@@ -644,6 +649,12 @@ class ThalovantClient:
         Delivered by subscription and not on a reply, because a binary frame
         carries no request id: it cannot be attributed to one ``ask()``. Its
         ``utterance`` is the only thread back to a turn.
+
+        ``handler`` runs on the transport's receive thread, in subscription
+        order, like every other subscription in this SDK. A handler that blocks
+        holds up the next frame, so hand slow work -- decoding, playback,
+        writing to disk -- to a thread or a queue of your own.
+        ``AsyncThalovantClient`` does that hop for you.
         """
 
         self.connect()
