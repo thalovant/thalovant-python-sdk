@@ -281,3 +281,62 @@ def test_only_a_name_reaching_a_call_is_evidence():
         'let u = "https://example.com//x"; load("binary-vectors.json")',
     ):
         assert names_vector(text, "binary-vectors"), text
+
+
+def _results(tmp_path, payload):
+    root = tmp_path / "consumer"
+    (root / "contracts").mkdir(parents=True, exist_ok=True)
+    (root / "contracts" / "conformance-results.json").write_text(json.dumps(payload))
+    return root
+
+
+def test_a_consumer_is_judged_on_what_it_produced_not_what_it_declared(tmp_path):
+    """The gate can only establish that a test *names* a vector.
+
+    Every tightening of that check moved the bar for how convincingly a
+    consumer could decline to run anything -- first any mention, then a quoted
+    string, then a call argument. What it produced when it ran is a different
+    kind of claim, and a wrong one stops matching the moment the vectors change.
+    """
+    reference = json.loads(
+        (ROOT / "contracts" / "conformance-results.json").read_text())["results"]
+    assert reference, "the reference has to record results before asking anyone else to"
+    vector_file = sorted(reference)[0]
+    case = sorted(reference[vector_file]["cases"])[0]
+
+    # Not adopted yet is behind, not broken -- the mechanism arrives one SDK
+    # at a time, the way the reference digests already do.
+    planned = []
+    parity.compare_conformance("consumer", reference, tmp_path / "absent", planned)
+    assert len(planned) == 1 and "records no conformance results" in planned[0]
+
+    # Matching results pass and plan nothing.
+    planned = []
+    parity.compare_conformance(
+        "consumer", reference,
+        _results(tmp_path, {"schema_version": 1, "results": reference}), planned)
+    assert planned == []
+
+    # A different answer for a case the vectors define is a behaviour gap.
+    wrong = copy.deepcopy(reference)
+    wrong[vector_file]["cases"][case] = "0" * 64
+    with pytest.raises(ValueError, match="produced a different result"):
+        parity.compare_conformance(
+            "consumer", reference,
+            _results(tmp_path, {"schema_version": 1, "results": wrong}), [])
+
+    # A case that was never run cannot be passed off as one that was.
+    skipped = copy.deepcopy(reference)
+    del skipped[vector_file]["cases"][case]
+    with pytest.raises(ValueError, match="ran no case named"):
+        parity.compare_conformance(
+            "consumer", reference,
+            _results(tmp_path, {"schema_version": 1, "results": skipped}), [])
+
+    # Results recorded against an older copy of the vectors are not results.
+    stale = copy.deepcopy(reference)
+    stale[vector_file]["digest"] = "f" * 64
+    with pytest.raises(ValueError, match="different copy of the vectors"):
+        parity.compare_conformance(
+            "consumer", reference,
+            _results(tmp_path, {"schema_version": 1, "results": stale}), [])
