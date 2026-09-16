@@ -135,8 +135,13 @@ def _transport_for_protocol(
 # Poll admitted readiness without extending the caller's connect deadline.
 _SETTLE_POLL = 0.02
 #: How long a finished ask keeps listening for the hub's "what the
-#: conversation now is" frame. Bounded and small: it exists only so a
-#: zero settle window cannot complete the reply before that frame lands.
+#: conversation now is" frame.
+#:
+#: Measured on production 2026-09-16, 12 turns driven onto the runtime bus:
+#: ``ovos.utterance.handled`` lands 4.2-15.3 ms after the last ``speak``
+#: (median 11.2), against the satellite's 100 ms settle window -- so this is
+#: insurance, not the common path. It exists for the case the margin narrows:
+#: a loaded hub, or a caller settling in nothing flat.
 CARRY_GRACE_SECONDS = 2.0
 
 
