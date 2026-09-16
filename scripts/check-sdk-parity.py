@@ -100,6 +100,19 @@ def file_hash(root, name):
     return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
+def read_text(root, path):
+    """A consumer file's text, for checking that a test reads what it claims.
+
+    Missing or unreadable reads as empty: the hash check above has already
+    established the file is there, so this only ever narrows.
+    """
+
+    try:
+        return (root / path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
 def validate_reference(reference):
     manifest = read(reference / MANIFEST)
     if manifest.get("schema_version") != 1:
@@ -124,6 +137,14 @@ def validate_reference(reference):
         if not capability.get("description") or not capability.get("files"):
             raise ValueError(f"Incomplete capability: {name}")
         covered.extend(capability["files"])
+        # A capability that names conformance vectors is one whose behaviour is
+        # written down and executable. The vectors must exist here before any
+        # consumer can be asked to run them.
+        for vector in capability.get("vectors", []):
+            if vector not in actual["conformance"]:
+                raise ValueError(
+                    f"Capability {name} names conformance vectors that are not "
+                    f"in contracts/conformance: {vector}")
         scopes = capability.get("scope", {})
         if set(scopes) != set(REPOSITORIES):
             raise ValueError(f"Capability {name} must address all eight SDKs and MCP")
@@ -132,8 +153,15 @@ def validate_reference(reference):
                 raise ValueError(f"Invalid scope for {name}/{repo}")
             if scope["status"] == "not-applicable" and not scope.get("reason", "").strip():
                 raise ValueError(f"Missing scope explanation for {name}/{repo}")
-    if sorted(covered) != sorted(actual["files"]):
-        raise ValueError("Every Python implementation file must belong to exactly one capability")
+    orphans = sorted(set(actual["files"]) - set(covered))
+    if orphans:
+        # Coverage, not exclusivity. One module can implement several
+        # capabilities -- `client.py` carries the conversation, sends into the
+        # mesh and does plenty besides -- and pretending otherwise was what
+        # forced every new behaviour into `runtime`, where a consumer owed it
+        # no evidence because its own files had not changed.
+        raise ValueError("Python implementation files belong to no capability: "
+                         + ", ".join(orphans))
     return manifest
 
 
@@ -162,6 +190,18 @@ def validate_consumer(reference_manifest, root, repo):
                     raise ValueError(f"{repo}/{name}: {kind} changed: {path}; rerun conformance and refresh evidence")
             if kind == "tests" and set(evidence) & set(entry.get("implementation", {})):
                 raise ValueError(f"{repo}/{name}: tests must be separate from implementation")
+        # Behaviour, not a signature. A capability whose contract is written
+        # down as shared vectors is only accepted when the tests this consumer
+        # points at actually read them: naming an existing file is otherwise
+        # enough to pass, which is how three releases of behaviour reached one
+        # SDK and none of the others while every gate stayed green.
+        for vector in capability.get("vectors", []):
+            tests = entry.get("tests", {})
+            if not any(vector in read_text(root, path) for path in tests):
+                raise ValueError(
+                    f"{repo}/{name}: no test reads {vector}; the capability's "
+                    f"behaviour is defined by those vectors and has to be run "
+                    f"against them, not merely declared")
 
 
 def check(reference, workspace=None, consumer=None):

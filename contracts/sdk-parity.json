@@ -1,5 +1,45 @@
 {
   "capabilities": {
+    "binary": {
+      "description": "Receiving binary frames: speech a hub rendered, and files",
+      "files": [
+        "src/thalovant/events.py",
+        "src/thalovant/transport.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "C carries no session store and no event loop; a frame arrives through the caller's own poll.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "vectors": [
+        "binary-vectors.json"
+      ]
+    },
     "cli": {
       "description": "Python command line interface",
       "files": [
@@ -80,6 +120,46 @@
           "status": "required"
         }
       }
+    },
+    "conversation": {
+      "description": "Carrying a conversation between the turns of a named session, which a hub keeps nothing of",
+      "files": [
+        "src/thalovant/events.py",
+        "src/thalovant/client.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "C carries no session store and no event loop; a frame arrives through the caller's own poll.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "vectors": [
+        "conversation-vectors.json"
+      ]
     },
     "identity": {
       "description": "Secure client identity and credential handling within the host storage model",
@@ -189,6 +269,47 @@
         }
       }
     },
+    "mesh": {
+      "description": "The hive's own frame kinds: broadcast, propagate, escalate, intercom, rendezvous",
+      "files": [
+        "src/thalovant/events.py",
+        "src/thalovant/client.py",
+        "src/thalovant/transport.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "C exposes the wire types but not a subscription API; the caller dispatches its own frames.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "vectors": [
+        "mesh-vectors.json"
+      ]
+    },
     "runtime": {
       "description": "Runtime messages, correlation, lifecycle, Noise and inventory queries within each supported transport tier",
       "files": [
@@ -278,7 +399,10 @@
   },
   "reference": {
     "conformance": {
+      "binary-vectors.json": "bc749825fad0f3dfe9254481bc1185c6c8491105edacaf001f05d30ed8c94b72",
+      "conversation-vectors.json": "45fa15c71635f8f242154c0ba82762235026f95f9a2eff5e29d43580de3965ba",
       "inventory-vectors.json": "8bc3147ce295d5e90ace2a05738671990ffc5d154751d8e5a91f893850c512bb",
+      "mesh-vectors.json": "c006f807e82a3470f2965a374a69964f0982cd9fee7c30f4da8f881f955c246d",
       "question-vectors.json": "a1f503fbf7573b80312f4a52265745976ac486008faf014bbcf15f508d79bb3d",
       "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     },
