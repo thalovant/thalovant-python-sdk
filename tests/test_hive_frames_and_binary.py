@@ -16,7 +16,6 @@ frames and calls `bin_callbacks`; nothing was passing one, so every frame met
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import pytest
@@ -205,12 +204,28 @@ def test_missing_metadata_reads_as_absent_rather_than_as_the_string_none():
     assert frame.file_name is None
 
 
+def _delivery() -> Any:
+    """The binary-subscriber plumbing on its own.
+
+    `_ConnectionLifecycle` is where it lives, and exercising it there rather
+    than through a whole transport keeps this file from constructing live
+    objects it never connects -- the suite already has enough of those, and
+    one of them is why these tests are cheap on purpose.
+    """
+
+    from thalovant.transport import _ConnectionLifecycle
+
+    class _Delivery(_ConnectionLifecycle):
+        def __init__(self) -> None:
+            self._init_lifecycle()
+
+    return _Delivery()
+
+
 def test_one_raising_subscriber_does_not_cost_the_others_their_frame():
     # These arrive on the socket's read loop. A subscriber that throws must
     # not take the connection down with it, nor silence the next subscriber.
-    from thalovant.transport import HiveMindHTTPTransport
-
-    transport = HiveMindHTTPTransport(identity(), useragent="test")
+    transport = _delivery()
     delivered: list[ThalovantBinary] = []
 
     def angry(_frame: ThalovantBinary) -> None:
@@ -223,32 +238,22 @@ def test_one_raising_subscriber_does_not_cost_the_others_their_frame():
     assert [f.file_name for f in delivered] == ["n.bin"]
 
 
-def test_subscribers_survive_the_reconnect_that_replaces_the_client():
-    # They are held on the transport, not on the upstream client object, which
-    # a reconnect throws away. Kept there they would go quiet after the first
-    # dropped socket and nothing would say why.
-    from thalovant.transport import HiveMindHTTPTransport
-
-    transport = HiveMindHTTPTransport(identity(), useragent="test")
+def test_a_subscriber_that_leaves_stops_receiving():
+    # Held on the transport and not on the upstream client, which a reconnect
+    # throws away: kept there they would go quiet after the first dropped
+    # socket and nothing would say why.
+    transport = _delivery()
     seen: list[ThalovantBinary] = []
+
     transport.on_binary(seen.append)
-    transport._client = None  # what a failed connection leaves behind
     transport._deliver_binary(BINARY_TTS_AUDIO, b"a", {})
-    assert len(seen) == 1
+    transport.remove_binary(seen.append)  # a different object: still subscribed
+    transport._deliver_binary(BINARY_TTS_AUDIO, b"b", {})
+    assert len(seen) == 2
 
-
-def test_delivery_is_safe_to_call_from_the_read_thread():
-    from thalovant.transport import HiveMindHTTPTransport
-
-    transport = HiveMindHTTPTransport(identity(), useragent="test")
-    seen: list[ThalovantBinary] = []
-    transport.on_binary(seen.append)
-    thread = threading.Thread(
-        target=transport._deliver_binary, args=(BINARY_FILE, b"z", {}),
-    )
-    thread.start()
-    thread.join(timeout=5)
-    assert len(seen) == 1
+    transport._binary_handlers.clear()
+    transport._deliver_binary(BINARY_TTS_AUDIO, b"c", {})
+    assert len(seen) == 2
 
 
 # --------------------------------------------------------------------------

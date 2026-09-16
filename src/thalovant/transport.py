@@ -100,6 +100,9 @@ class _ConnectionLifecycle:
         self._connecting = False
         self._closing = False
         self._failed_cleanup: tuple[Any, BaseException] | None = None
+        # Held here and not on the upstream client, so a reconnect -- which
+        # builds a new client -- keeps its subscribers.
+        self._binary_handlers: list[Callable[[Any], None]] = []
 
     def on_binary(self, handler: Callable[[Any], None]) -> None:
         self._binary_handlers.append(handler)
@@ -305,9 +308,6 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
         self._connect_started = 0.0
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo()
-        # Held on the transport and not on the upstream client, so a reconnect
-        # -- which builds a new client -- keeps its subscribers.
-        self._binary_handlers: list[Callable[[Any], None]] = []
 
     def connection_info(self) -> ThalovantConnectionInfo:
         return self._connection_info
@@ -1029,9 +1029,6 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         self._connect_started = 0.0
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo()
-        # Held on the transport and not on the upstream client, so a reconnect
-        # -- which builds a new client -- keeps its subscribers.
-        self._binary_handlers: list[Callable[[Any], None]] = []
 
     def connection_info(self) -> ThalovantConnectionInfo:
         return self._connection_info

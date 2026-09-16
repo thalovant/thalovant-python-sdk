@@ -323,7 +323,7 @@
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
       "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "f0a0a3cc3d787e174779c179619ce2be1eff4d767c315630a62f82e6cad9e1af"
+      "src/thalovant/transport.py": "002e424e2bdb3aa61a293d318dd9b5e2d10df39c0f310cdeabc399a5176b0314"
     }
   },
   "schema_version": 1
