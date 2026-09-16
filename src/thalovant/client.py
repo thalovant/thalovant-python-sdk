@@ -1415,8 +1415,19 @@ class ThalovantClient:
                 # says nothing about what the next one will need.
                 if (not direct and getattr(message, "name", None) == EVENT_UTTERANCE_HANDLED
                         and message.request_id == request_id):
-                    self._remember_conversation(
-                        session_id, _session_from_context(message.context))
+                    carried = _session_from_context(message.context)
+                    self._remember_conversation(session_id, carried)
+                    # And under the id the hub answered with, when that differs.
+                    # ``ThalovantReply.session_id`` hands the caller the first
+                    # non-empty *event* session id, so a caller that does the
+                    # natural thing -- passing ``reply.session_id`` to the next
+                    # ask -- looked up a key nothing was filed under and sent no
+                    # carried state at all. Filing both costs one dict entry and
+                    # serves the satellite (which reuses its own id) and an
+                    # ordinary caller alike.
+                    answered_with = _session_id_from_context(message.context)
+                    if answered_with and answered_with != session_id:
+                        self._remember_conversation(answered_with, carried)
                 if terminal:
                     return
                 now = time.monotonic()

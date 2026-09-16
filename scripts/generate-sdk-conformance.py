@@ -141,10 +141,19 @@ def check_binary_frames(data):
 
     from hivemind_bus_client.serialization import decode_bitstring
 
+    vectors = json.loads((Path(__file__).resolve().parents[1]
+                          / "contracts/conformance/binary-vectors.json").read_text())
+    named = vectors["payload_kinds"]
     for row in data["cases"]:
         message = decode_bitstring(base64.b64decode(row["frame"]))
         assert message.payload == base64.b64decode(row["expected_payload"]), row["name"]
         assert message.metadata == row["expected_metadata"], row["name"]
+        # And the kind each frame records. Without this the file could name a
+        # payload type the frame does not carry, and every SDK would assert
+        # against the wrong expectation in step.
+        assert row["expected_kind"] == named.get(
+            str(int(message.bin_type)), f"binary:{int(message.bin_type)}"
+        ), row["name"]
     bus = decode_bitstring(base64.b64decode(data["bus_frame"]))
     # A binarized BUS frame decodes to a Message, not to bytes: only BINARY
     # carries a payload the library leaves alone.

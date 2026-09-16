@@ -229,3 +229,56 @@ def test_a_top_level_session_id_names_the_same_conversation():
 
     assert list(client._conversations) == ["kitchen"]
     assert transport.sent_sessions[1]["converse_handlers"]
+
+
+class NattingHubTransport(HubTransport):
+    """A hub that answers under an id of its own, as HiveMind NATs one.
+
+    HIVEMIND-BRIDGE-1 §4 maps a declared id to a per-connection identity and
+    undoes it outbound; older hubs substituted a uuid outright.
+    """
+
+    def __init__(self, turns: list[HubTurn], answered_with: str):
+        super().__init__(turns)
+        self.answered_with = answered_with
+
+    def emit_event(self, event_type, data, context):
+        self.emitted.append((event_type, data, context))
+        self.sent_sessions.append(dict(context.get("session") or {}))
+        turn = self.turns.pop(0) if self.turns else HubTurn(session={})
+        reply_context = dict(context)
+        reply_context["session"] = {
+            **(context.get("session") or {}), **turn.session,
+            "session_id": self.answered_with,
+        }
+        for handler in self.handlers.get("speak", []):
+            handler(FakeMessage({"utterance": "Pfffft."}, context=reply_context))
+        for handler in self.handlers.get("ovos.utterance.handled", []):
+            handler(FakeMessage({}, context=reply_context))
+
+
+def test_the_carry_survives_whichever_session_id_the_caller_sends_back():
+    """`reply.session_id` is the hub's, and a caller may well send it back.
+
+    It is the first non-empty *event* session id, so when a hub answers under
+    an id of its own the reply hands the caller an id the carry used to be
+    filed under nothing. Both are remembered now: the request's, which is what
+    a satellite reuses, and the hub's, which is what `reply.session_id` offers.
+    """
+
+    transport = NattingHubTransport([HubTurn(session=_fart_handlers())],
+                                    answered_with="hub-namespace:sat-1")
+    client = ThalovantClient(identity(), transport=transport)
+
+    reply = client.ask("Fais un prout", session_id="sat-1")
+    assert reply.session_id == "hub-namespace:sat-1"
+
+    # The caller does the natural thing with what the reply handed back.
+    client.ask("Encore un", session_id=reply.session_id)
+    carried = transport.sent_sessions[-1]
+    assert carried.get("converse_handlers"), carried
+
+    # And the satellite's path -- reusing its own id -- still works.
+    transport.turns.append(HubTurn(session=_fart_handlers()))
+    client.ask("Encore un", session_id="sat-1")
+    assert transport.sent_sessions[-1].get("converse_handlers"), transport.sent_sessions[-1]
