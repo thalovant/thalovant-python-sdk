@@ -347,8 +347,15 @@ def test_blocked_registration_retains_ownership_and_removes_late_listener(name):
     sdk = client(transport)
     try:
         started = time.monotonic()
+        # Enough budget to reach the transport, not enough to finish. `setup()`
+        # computes its connect deadline when the worker thread actually runs,
+        # so with 20ms a thread that starts late gets a deadline already in the
+        # past: _connect raises before it ever calls register, nothing is held,
+        # and the ownership this test is about never exists. The assertion
+        # below still bounds promptness -- this only makes the precondition
+        # reachable on a machine that is busy.
         with pytest.raises(ThalovantTimeoutError):
-            operation(sdk, name)
+            operation(sdk, name, timeout=0.15)
         assert time.monotonic() - started < 0.3
         assert transport.entered.wait(5), 'registration never reached the transport'
         with pytest.raises(ThalovantConnectionError):
