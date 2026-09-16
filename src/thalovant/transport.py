@@ -601,6 +601,29 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
             thalovant_last_error: BaseException | None = None
             thalovant_closed: bool = False
 
+            def _handle_binary(inner_self: Any, message: Any) -> None:
+                """Deliver every binary payload type, not only two of them.
+
+                The library's own handler surfaces TTS_AUDIO and FILE and logs
+                "Ignoring received untyped binary data" for the rest, so
+                RAW_AUDIO, NUMPY_IMAGE and the two STT types were decoded off
+                the wire and then dropped. The contract's binary vectors name
+                all six; this is what makes that true rather than aspirational.
+
+                A type nobody here has named still arrives, under its wire
+                number -- the same rule the MQTT path already follows.
+                """
+
+                payload = message.payload
+                if not isinstance(payload, (bytes, bytearray)):
+                    return
+                metadata = getattr(message, "metadata", None)
+                transport._deliver_binary(
+                    _BINARY_KINDS.get(_binary_type_value(message), _unnamed_binary(message)),
+                    payload,
+                    metadata if isinstance(metadata, dict) else {},
+                )
+
             def on_message(inner_self: Any, *args: Any) -> None:
                 if not transport._is_current_client(inner_self) or inner_self.thalovant_closed:
                     return

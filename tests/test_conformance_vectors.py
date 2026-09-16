@@ -127,3 +127,73 @@ def test_the_envelope_is_the_shape_the_vectors_describe():
     # and re-stamps the route on it. A flat frame loses the route.
     assert envelope["payload"]["msg_type"] == "bus"
     assert set(envelope["payload"]["payload"]) == {"type", "data", "context"}
+
+
+def test_every_payload_type_the_vectors_name_is_actually_delivered():
+    """Not merely mapped -- delivered.
+
+    The library's own binary handler surfaces TTS_AUDIO and FILE and logs
+    "Ignoring received untyped binary data" for the rest, so four of the six
+    types these vectors name were decoded off the wire and then dropped. A test
+    that checked the name map would have passed throughout; it has to be the
+    handler the WSS client actually calls.
+    """
+
+    from hivemind_bus_client.message import HiveMindBinaryPayloadType as Wire
+
+    from thalovant.identity import ThalovantIdentity
+    from thalovant.transport import HiveMindWSSTransport
+
+    transport = HiveMindWSSTransport(
+        ThalovantIdentity(
+            access_key="key", password="password", site_id="site",
+            default_master="wss://hub.local", default_port=443,
+        ),
+        useragent="test",
+    )
+    seen: list[str] = []
+    transport.on_binary(lambda frame: seen.append(frame.kind))
+
+    class _Base:
+        noise_transport = None
+
+    handler = transport._build_wss_client_class(_Base, object)._handle_binary
+
+    class _Frame:
+        def __init__(self, wire: int) -> None:
+            self.bin_type = wire
+            self.payload = b"bytes"
+            self.metadata = {"file_name": "x"}
+
+    for wire in sorted(kind.value for kind in Wire if kind is not Wire.UNDEFINED):
+        handler(None, _Frame(wire))
+
+    spec = vectors("binary-vectors.json")
+    assert seen == [spec["payload_kinds"][str(wire)]
+                    for wire in sorted(int(key) for key in spec["payload_kinds"])]
+
+
+def test_a_payload_type_nobody_named_still_arrives():
+    from thalovant.identity import ThalovantIdentity
+    from thalovant.transport import HiveMindWSSTransport
+
+    transport = HiveMindWSSTransport(
+        ThalovantIdentity(
+            access_key="key", password="password", site_id="site",
+            default_master="wss://hub.local", default_port=443,
+        ),
+        useragent="test",
+    )
+    seen: list[str] = []
+    transport.on_binary(lambda frame: seen.append(frame.kind))
+
+    class _Base:
+        noise_transport = None
+
+    class _Frame:
+        bin_type = 9
+        payload = b"bytes"
+        metadata: dict[str, Any] = {}
+
+    transport._build_wss_client_class(_Base, object)._handle_binary(None, _Frame())
+    assert seen == [vectors("binary-vectors.json")["unnamed_kind_format"].replace("<wire number>", "9")]
