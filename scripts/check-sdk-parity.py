@@ -100,6 +100,61 @@ def file_hash(root, name):
     return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
+def _quoted_arguments(text):
+    """Yield every string literal that is passed as a call argument.
+
+    Walks the source rather than matching it. A regex cannot do this job: a
+    trailing `# "binary-vectors"` looks exactly like a literal to a pattern
+    that only strips whole-line comments, and a URL's `//` looks exactly like
+    the start of one. Only a scanner that knows whether it is inside a string
+    can tell those apart.
+
+    "Passed as an argument" is the part that matters. Any quoted string
+    containing the name is too weak -- `const unused = "binary-vectors"` has
+    read nothing -- so a literal counts only where a call could receive it:
+    after `(` for `load("x")`, after `,` for a second argument, after `:` for
+    a labelled one (`url(forResource: "x")`).
+    """
+
+    index, length = 0, len(text)
+    previous = ""            # last significant character outside a string
+    while index < length:
+        char = text[index]
+        if char in "\"'":
+            quote, start = char, index + 1
+            index += 1
+            while index < length and text[index] != quote:
+                index += 2 if text[index] == "\\" else 1
+            yield previous, text[start:index]
+            index += 1
+            previous = '"'
+            continue
+        if char == "#" or text.startswith("//", index):
+            while index < length and text[index] != "\n":
+                index += 1
+            continue
+        if text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = length if closing == -1 else closing + 2
+            continue
+        if not char.isspace():
+            previous = char
+        index += 1
+
+
+def names_vector(text, stem):
+    """True when a test passes ``stem`` to something that loads it.
+
+    It still cannot prove the test *executed* the vectors -- only a recorded
+    conformance result can, and consumers do not produce one yet. What it does
+    establish is that the name reaches a call, which a comment and an unused
+    constant do not.
+    """
+
+    return any(stem in literal and preceding in "(,:"
+               for preceding, literal in _quoted_arguments(text))
+
+
 def read_text(root, path):
     """A consumer file's text, for checking that a test reads what it claims.
 
@@ -156,7 +211,8 @@ def validate_reference(reference):
                     f"Capability {name} names conformance vectors but no test "
                     f"that runs them; the reference owes the same evidence it "
                     f"asks every consumer for")
-            if not any(Path(vector).stem in read_text(reference, path) for path in tests):
+            if not any(names_vector(read_text(reference, path), Path(vector).stem)
+                       for path in tests):
                 raise ValueError(
                     f"Capability {name}: no reference test reads {vector}")
         for path in capability.get("tests", []):
@@ -295,7 +351,8 @@ def validate_consumer(reference_manifest, root, repo, planned):
             # resource without one. Requiring the exact string made the rule a
             # test of naming conventions rather than of what the test reads.
             named = Path(where).stem
-            if not any(named in read_text(root, path) for path in entry.get("tests", {})):
+            if not any(names_vector(read_text(root, path), named)
+                       for path in entry.get("tests", {})):
                 raise ValueError(
                     f"{repo}/{name}: no test names {named}; the capability's "
                     f"behaviour is defined by those vectors and has to be run "
