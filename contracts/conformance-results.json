@@ -1,0 +1,25 @@
+{
+  "results": {
+    "binary-vectors.json": {
+      "cases": {
+        "a file carries only its name": "4728cbc8f472ff4bacd059a87d75fb365d84049b39b449ea9b0a075122c5d01d",
+        "a payload type nobody named arrives under its number": "dce277a50a116aa322ab975fc627afe86161a8efe0f10e344c819847c5f5e254",
+        "an empty name is no name": "f106c67ffbe7b900d91deeb19c8be963c09c0ce6bbdb73787bbe39aedde4dac8",
+        "rendered speech carries what was said": "3240db248ac2a93410a4eb04b060bb9e87bfc188a4f00f03df7a55f0e44ba076"
+      },
+      "digest": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc"
+    },
+    "conversation-vectors.json": {
+      "cases": {
+        "a turn that clears the conversation is not refilled from the last one": "38337c3956a365682f04f1d4df2f969695a84ba30895baccaf129f63ab48590a",
+        "live device state is not replayed": "e4bc151de1f688feb9abde792b6bcff5fe72ba46ba42742eb12710c74a1a6a28",
+        "nothing to carry leaves the turn untouched": "92ebd8fc8ad90673945720418c8dc2be79613964320d5732e261310e0bb5377b",
+        "the next turn carries what the last one activated": "892b43dfb5bfe4935a672aa0f8755462a53ca945d7d2a5265b80b44634b79ca4",
+        "this turn keeps its own value": "3465bf9e45d6ba8db043f4af9508f98a935c7f970276e988def7dd3683793c5e",
+        "this turn's language outranks the last one's": "822ea26770f806232ff121094a0d498b603439d34d2c276c2522b6f812018081"
+      },
+      "digest": "4fb01db8e93b82a7a46588c0481d936521082b48809d25db9e1aa5eb5cc8c0bf"
+    }
+  },
+  "schema_version": 1
+}

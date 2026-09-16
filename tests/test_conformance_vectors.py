@@ -25,6 +25,9 @@ from thalovant.events import (
 VECTORS = Path(__file__).resolve().parents[1] / "contracts" / "conformance"
 
 
+from conformance_record import record
+
+
 def vectors(name: str) -> dict[str, Any]:
     return json.loads((VECTORS / name).read_text(encoding="utf-8"))
 
@@ -37,6 +40,9 @@ def test_the_carry_matches_its_vectors():
     spec = vectors("conversation-vectors.json")
     for case in spec["cases"]:
         carried = carry_conversation(case["previous"], case["session"])
+        # Recorded before the assert: the record is what this SDK produced,
+        # not a restatement of what the vector says it should have.
+        record("conversation-vectors.json", case["name"], carried)
         assert carried == case["expected"], case["name"]
 
 
@@ -69,6 +75,12 @@ def test_binary_frames_match_their_vectors():
 
             kind = _unnamed_binary(_Frame())
         frame = ThalovantBinary(kind=kind, data=b"", metadata=case["metadata"])
+        record("binary-vectors.json", case["name"], {
+            "kind": frame.kind,
+            "utterance": frame.utterance,
+            "lang": frame.lang,
+            "file_name": frame.file_name,
+        })
         expected = case["expected"]
         assert frame.kind == expected["kind"], case["name"]
         assert frame.utterance == expected["utterance"], case["name"]

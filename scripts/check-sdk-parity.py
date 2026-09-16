@@ -359,6 +359,62 @@ def validate_consumer(reference_manifest, root, repo, planned):
                     f"against them, not merely declared")
 
 
+def conformance_results(root):
+    """What an SDK recorded for each conformance case, if it records any.
+
+    Absent is a rollout state, not a fault: the mechanism arrives one SDK at a
+    time, and a consumer that has not adopted it yet is behind rather than
+    broken -- the same tolerance the reference digests already get.
+    """
+
+    path = root / "contracts" / "conformance-results.json"
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema_version") != 1:
+        raise ValueError("conformance-results.json: unsupported schema")
+    return data.get("results") or {}
+
+
+def compare_conformance(repo, reference_results, root, planned):
+    """Check what a consumer produced against what the reference produced.
+
+    This is the part a declaration cannot fake. The gate can only ever
+    establish that a test *names* a vector; what it produced when it ran is a
+    different kind of claim, and a wrong one stops matching the moment the
+    vectors change.
+    """
+
+    if not reference_results:
+        return
+    theirs = conformance_results(root)
+    if theirs is None:
+        planned.append(f"{repo}: records no conformance results; run the suite with "
+                       f"THALOVANT_CONFORMANCE_OUT=contracts/conformance-results.json")
+        return
+    for vector_file, expected in sorted(reference_results.items()):
+        recorded = theirs.get(vector_file)
+        if recorded is None:
+            planned.append(f"{repo}: no recorded results for {vector_file}")
+            continue
+        if recorded.get("digest") != expected.get("digest"):
+            raise ValueError(
+                f"recorded {vector_file} results are for a different copy of the "
+                f"vectors; re-vendor it and rerun the suite")
+        mine, yours = expected.get("cases", {}), recorded.get("cases", {})
+        missing = sorted(set(mine) - set(yours))
+        if missing:
+            raise ValueError(
+                f"{vector_file}: ran no case named {missing[0]!r}"
+                + (f" (and {len(missing) - 1} more)" if len(missing) > 1 else ""))
+        differing = sorted(name for name in mine if yours.get(name) != mine[name])
+        if differing:
+            raise ValueError(
+                f"{vector_file}: produced a different result for {differing[0]!r}"
+                + (f" (and {len(differing) - 1} more)" if len(differing) > 1 else "")
+                + " -- the vectors say what the answer is, so this is a behaviour gap")
+
+
 def check(reference, workspace=None, consumer=None, release=False):
     errors = []
     planned = []
@@ -371,6 +427,7 @@ def check(reference, workspace=None, consumer=None, release=False):
         manifest = validate_reference(reference)
     except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
         return [str(error)]
+    reference_results = conformance_results(reference) or {}
     if workspace is not None:
         for repo in ([consumer] if consumer else REPOSITORIES):
             # The producer has its own frozen reference plus executable tests.
@@ -378,6 +435,7 @@ def check(reference, workspace=None, consumer=None, release=False):
                 continue
             try:
                 validate_consumer(manifest, workspace / repo, repo, planned)
+                compare_conformance(repo, reference_results, workspace / repo, planned)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 errors.append(f"{repo}: {error}")
     for gap in sorted(planned):
