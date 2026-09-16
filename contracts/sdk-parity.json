@@ -11,7 +11,7 @@
           "status": "required"
         },
         "thalovant-embedded-c": {
-          "reason": "C carries no session store and no event loop; a frame arrives through the caller's own poll.",
+          "reason": "src/wire.c decodes JSON frames, not WIRE-1 bitstrings, so there is no bit reader to extend; the type-code table already knows bin=12. The real blocker is zlib: the encoder chooses per frame whether to compress the metadata, and taking a compression dependency into a -std=c99 -pedantic microcontroller target is a decision about this SDK's footprint rather than about parity. The clip itself is never compressed, so a decoder that refused compressed metadata would still deliver audio.",
           "status": "not-applicable"
         },
         "thalovant-go-sdk": {
@@ -137,7 +137,7 @@
           "status": "required"
         },
         "thalovant-embedded-c": {
-          "reason": "C carries no session store and no event loop; a frame arrives through the caller's own poll.",
+          "reason": "thalovant_ask_request takes a session_id string, not a session, and builds {\"session\":{\"session_id\":...}} itself -- there is nowhere to put converse_handlers and nothing to carry it into. Applicable the day the C API accepts an opaque session object; the carry itself is a pure function and would port directly.",
           "status": "not-applicable"
         },
         "thalovant-go-sdk": {
@@ -301,7 +301,7 @@
           "status": "required"
         },
         "thalovant-embedded-c": {
-          "reason": "C exposes the wire types but not a subscription API; the caller dispatches its own frames.",
+          "reason": "C exposes the wire types but not a subscription API; the caller polls and dispatches its own frames, so there is no on_hive for this SDK to own. Sending is a different matter and would port.",
           "status": "not-applicable"
         },
         "thalovant-go-sdk": {
