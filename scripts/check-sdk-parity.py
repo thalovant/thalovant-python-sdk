@@ -14,7 +14,6 @@ import argparse
 import ast
 import hashlib
 import json
-import re
 from pathlib import Path
 import sys
 import tomllib
@@ -101,27 +100,59 @@ def file_hash(root, name):
     return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
-def names_vector(text, stem):
-    """True when a test actually *names* ``stem`` as a resource it loads.
+def _quoted_arguments(text):
+    """Yield every string literal that is passed as a call argument.
 
-    A bare substring search over the file accepted a vector named only in a
-    comment or an unused constant -- the check reported that a test runs the
-    vectors while proving nothing more than that somebody typed the name. So
-    strip comments first, then require the name inside a quoted string, which
-    is the shape every loader call has across these languages:
-    ``load("binary-vectors.json")``, ``vectors("binary-vectors")``,
-    ``include_str!("../contracts/.../binary-vectors.json")``.
+    Walks the source rather than matching it. A regex cannot do this job: a
+    trailing `# "binary-vectors"` looks exactly like a literal to a pattern
+    that only strips whole-line comments, and a URL's `//` looks exactly like
+    the start of one. Only a scanner that knows whether it is inside a string
+    can tell those apart.
 
-    It still cannot prove the test *executed* the vectors -- only a recorded
-    conformance result can, and consumers do not produce one yet. It closes
-    the gap that a comment satisfied the gate.
+    "Passed as an argument" is the part that matters. Any quoted string
+    containing the name is too weak -- `const unused = "binary-vectors"` has
+    read nothing -- so a literal counts only where a call could receive it:
+    after `(` for `load("x")`, after `,` for a second argument, after `:` for
+    a labelled one (`url(forResource: "x")`).
     """
 
-    without_comments = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    without_comments = re.sub(r"(?m)^\s*(?://|#)[^\n]*$", " ", without_comments)
-    without_comments = re.sub(r"(?<![:\w])//[^\n\"']*$", " ", without_comments, flags=re.M)
-    quoted = re.findall(r"\"([^\"\n]*)\"|'([^'\n]*)'", without_comments)
-    return any(stem in (a or b) for a, b in quoted)
+    index, length = 0, len(text)
+    previous = ""            # last significant character outside a string
+    while index < length:
+        char = text[index]
+        if char in "\"'":
+            quote, start = char, index + 1
+            index += 1
+            while index < length and text[index] != quote:
+                index += 2 if text[index] == "\\" else 1
+            yield previous, text[start:index]
+            index += 1
+            previous = '"'
+            continue
+        if char == "#" or text.startswith("//", index):
+            while index < length and text[index] != "\n":
+                index += 1
+            continue
+        if text.startswith("/*", index):
+            closing = text.find("*/", index + 2)
+            index = length if closing == -1 else closing + 2
+            continue
+        if not char.isspace():
+            previous = char
+        index += 1
+
+
+def names_vector(text, stem):
+    """True when a test passes ``stem`` to something that loads it.
+
+    It still cannot prove the test *executed* the vectors -- only a recorded
+    conformance result can, and consumers do not produce one yet. What it does
+    establish is that the name reaches a call, which a comment and an unused
+    constant do not.
+    """
+
+    return any(stem in literal and preceding in "(,:"
+               for preceding, literal in _quoted_arguments(text))
 
 
 def read_text(root, path):

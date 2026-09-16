@@ -247,19 +247,27 @@ def test_naming_a_test_that_never_reads_the_vectors_is_not_enough(consumer):
         parity.validate_consumer(contract, root, "consumer", [])
 
 
-def test_a_vector_named_only_in_a_comment_is_not_evidence():
+def test_only_a_name_reaching_a_call_is_evidence():
     """The check said a test "has to be run against them, not merely declared"
-    while accepting the name anywhere in the file -- a comment satisfied it.
+    while accepting the name anywhere in the file.
+
+    Tightening it to "inside a quoted string" was not enough either: a trailing
+    `# "binary-vectors"` is a quoted string to anything that strips only
+    whole-line comments, and so is an unused constant. It scans the source now
+    and asks where the literal goes.
 
     It still cannot prove execution; only a recorded conformance result could,
-    and consumers do not produce one yet. This closes the comment gap.
+    and consumers do not produce one yet.
     """
     names_vector = parity.names_vector
     for text in (
-        "// see binary-vectors.json for the cases\nassert(1);",
-        "# binary-vectors.json describes these\nassert x",
-        "/* binary-vectors.json */\nassert(1);",
-        "const unused = 1;  // binary-vectors.json\n",
+        "// see binary-vectors.json for the cases",
+        "# binary-vectors.json describes these",
+        "/* binary-vectors.json */",
+        '/* a\n   "binary-vectors"\n */',
+        'assert ok  # "binary-vectors"',
+        'assert ok  // "binary-vectors"',
+        'const unused = "binary-vectors"; assert(1);',
     ):
         assert not names_vector(text, "binary-vectors"), text
 
@@ -267,6 +275,8 @@ def test_a_vector_named_only_in_a_comment_is_not_evidence():
         'const v = load("binary-vectors.json");',
         'let v = include_str!("../contracts/conformance/binary-vectors.json");',
         'vectors("binary-vectors")',
+        'Bundle.module.url(forResource: "binary-vectors", withExtension: "json")',
+        'read(path, "binary-vectors.json")',
         # A URL's // must not be mistaken for a comment and eat the rest.
         'let u = "https://example.com//x"; load("binary-vectors.json")',
     ):
