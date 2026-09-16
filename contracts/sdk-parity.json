@@ -301,17 +301,17 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "0601385788a5d799c42be7b2a8b4d892df6d0b58bbdbcdd9740fbcb7c6512907",
+      "src/thalovant/__init__.py": "01b5778a9a61a8a1e4bbd35776bdc5010dc5c90228f7d0ec353cfc996f5c2ffa",
       "src/thalovant/_http_runtime.py": "d7ad4a25cad5616d858909a00c445ab137d17df6d7e713e404372154a60eef8b",
       "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
       "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "c76282eb18d48e1a4f4e933f8d68c6d518b1804786680f59f0103a2d342e09fa",
+      "src/thalovant/client.py": "d9af73255581076710703e0fa51b66e1d67a428ef0724495d214f09ecf71b2ca",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "f96c12b3af0847250f2ebcc047955699c64dd1440261f0e9899601cfd2e44d56",
-      "src/thalovant/events.py": "20c99005c5d9f205ce207a48484c04ce46d0d34e863a2ea859c62ecf35aa7164",
+      "src/thalovant/events.py": "e7ee8eb1a3bcd76f3081ee7a375e9387a661a91a52f9f6450b5e07184675f073",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
       "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
@@ -323,7 +323,7 @@
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
       "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "7d0f721d53c441c266d6b1f09d8f85e04273d547cb40cd7eca398d8d969f7269"
+      "src/thalovant/transport.py": "f0a0a3cc3d787e174779c179619ce2be1eff4d767c315630a62f82e6cad9e1af"
     }
   },
   "schema_version": 1

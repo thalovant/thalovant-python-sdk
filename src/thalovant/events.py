@@ -13,6 +13,39 @@ EVENT_RECOGNIZER_LOOP_UTTERANCE = "recognizer_loop:utterance"
 EVENT_SPEAK = "speak"
 EVENT_OVOS_UTTERANCE_SPEAK = "ovos.utterance.speak"
 EVENT_UTTERANCE_HANDLED = "ovos.utterance.handled"
+
+#: The HiveMind frame types a client can subscribe to beyond its own replies.
+#:
+#: A hub is a *hive*, not a star. Besides the BUS traffic of one conversation
+#: it relays frames that belong to the mesh: one aimed down at every child, one
+#: walked across the whole hive, one sent up to the parent, one addressed node
+#: to node, and a mailbox peers use to find each other through NAT. Our hub
+#: implements all of them; until now nothing in this SDK could hear any of
+#: them, and the transport dropped them without a word.
+HIVE_BROADCAST = "broadcast"
+HIVE_PROPAGATE = "propagate"
+HIVE_ESCALATE = "escalate"
+HIVE_INTERCOM = "intercom"
+HIVE_RENDEZVOUS = "rendezvous"
+
+#: Every frame kind `on_hive()` accepts, in the order a reader meets them
+#: above. `query` and `cascade` are deliberately absent: they are this client's
+#: own request/response traffic and `ask()` already owns them.
+HIVE_KINDS = (
+    HIVE_BROADCAST,
+    HIVE_PROPAGATE,
+    HIVE_ESCALATE,
+    HIVE_INTERCOM,
+    HIVE_RENDEZVOUS,
+)
+
+#: What a binary frame is carrying, by the name this SDK gives it.
+#:
+#: The wire numbers these (HiveMindBinaryPayloadType); the names are ours, so
+#: a caller branches on something readable and a payload type nobody here has
+#: seen still arrives, under its wire number, rather than vanishing.
+BINARY_TTS_AUDIO = "tts_audio"
+BINARY_FILE = "file"
 # Legacy Mycroft name for an utterance that matched no intent.
 EVENT_INTENT_FAILURE = "complete_intent_failure"
 # Current OVOS name for the same terminal "no intent matched" event.
@@ -53,6 +86,55 @@ FAILURE_EVENTS = (
 
 EventHandler = Callable[["ThalovantEvent"], Any]
 EventPredicate = Callable[["ThalovantEvent"], bool]
+
+
+@dataclass(frozen=True)
+class ThalovantBinary:
+    """A binary frame a hub sent this client.
+
+    This is how a hub answers ``speak:synth``: it renders the utterance and
+    sends the audio back as a BINARY frame rather than text, so a client with
+    no synthesiser of its own can still speak. Files arrive the same way.
+
+    It is *not* tied to a request. A binary frame carries no request id -- only
+    the metadata below -- so it cannot be correlated to one ``ask()`` and is
+    delivered by subscription instead. Match it on ``utterance`` if a turn
+    needs to claim it.
+    """
+
+    kind: str
+    """``tts_audio``, ``file``, or ``binary:<n>`` for a wire type this SDK does
+    not name yet -- unknown is still delivered, never dropped."""
+
+    data: bytes
+    metadata: dict[str, Any]
+
+    @property
+    def utterance(self) -> str | None:
+        """What was spoken, for TTS audio. The hub sends it beside the sound."""
+
+        value = self.metadata.get("utterance")
+        return str(value) if isinstance(value, str) and value else None
+
+    @property
+    def lang(self) -> str | None:
+        value = self.metadata.get("lang")
+        return str(value) if isinstance(value, str) and value else None
+
+    @property
+    def file_name(self) -> str | None:
+        """The hub's own name for the bytes.
+
+        Remote text naming a remote file: useful as a hint, never as a path to
+        write to. A caller that saves this owes it the same treatment as any
+        other untrusted filename.
+        """
+
+        value = self.metadata.get("file_name")
+        return str(value) if isinstance(value, str) and value else None
+
+    def __len__(self) -> int:
+        return len(self.data)
 
 
 @dataclass(frozen=True)

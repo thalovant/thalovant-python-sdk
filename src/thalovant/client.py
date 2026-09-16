@@ -24,6 +24,11 @@ from .context import request_context
 from .events import (
     CONVERSATION_SESSION_FIELDS,
     EVENT_AUDIO_QUEUE,
+    HIVE_BROADCAST,
+    HIVE_ESCALATE,
+    HIVE_KINDS,
+    HIVE_PROPAGATE,
+    ThalovantBinary,
     carry_conversation,
     MAX_AUDIO_CLIP_BYTES,
     MAX_REPLY_MEDIA_BYTES,
@@ -600,6 +605,125 @@ class ThalovantClient:
 
         self._add_subscription(event_name, wrapped)
         return ThalovantSubscription(self, event_name, wrapped)
+
+    def on_hive(self, kind: str, handler: Callable[[Any], None]) -> Callable[[], None]:
+        """Listen to one of the hive's own frame kinds.
+
+        A hub relays more than this client's conversation. ``broadcast`` is
+        aimed down at every child, ``propagate`` walks the whole hive,
+        ``escalate`` goes up to the parent, ``intercom`` is addressed node to
+        node, and ``rendezvous`` is the mailbox peers use to find each other
+        through NAT. See :data:`HIVE_KINDS`.
+
+        Returns a callable that unsubscribes. The frame is handed over as the
+        hub sent it -- a HiveMessage, not a normalized `ThalovantEvent` -- so
+        nothing is lost in a shape this SDK does not model yet.
+        """
+
+        if kind not in HIVE_KINDS:
+            # Named rather than silently never firing: subscribing to "bus" or
+            # to a typo is the kind of mistake that looks like a quiet hub.
+            raise ValueError(
+                f"{kind!r} is not a hive frame kind; expected one of {', '.join(HIVE_KINDS)}."
+            )
+        self.connect()
+        self._transport.on_hive_message(kind, handler)
+
+        def unsubscribe() -> None:
+            self._transport.remove_hive_message(kind, handler)
+
+        return unsubscribe
+
+    def on_binary(self, handler: Callable[[ThalovantBinary], None]) -> Callable[[], None]:
+        """Listen for binary frames: rendered speech, and files.
+
+        This is what a hub sends back for ``speak:synth`` -- the audio itself,
+        so a client with no synthesiser can still speak -- and how it hands
+        over a file. Returns a callable that unsubscribes.
+
+        Delivered by subscription and not on a reply, because a binary frame
+        carries no request id: it cannot be attributed to one ``ask()``. Its
+        ``utterance`` is the only thread back to a turn.
+        """
+
+        self.connect()
+        self._transport.on_binary(handler)
+
+        def unsubscribe() -> None:
+            self._transport.remove_binary(handler)
+
+        return unsubscribe
+
+    def propagate(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send an event across the hive.
+
+        Every node sees it once; the route each frame carries is what stops it
+        going round for ever.
+        """
+
+        return self._send_hive(HIVE_PROPAGATE, event_type, data, context)
+
+    def escalate(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send an event up to the parent node."""
+
+        return self._send_hive(HIVE_ESCALATE, event_type, data, context)
+
+    def broadcast(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send an event down to every child of this hub. **Admin only.**
+
+        A hub requires both admin standing and the ``can_broadcast`` grant for
+        this, and a client that sends one without them is not answered with an
+        error -- it is **disconnected for misbehaviour**. The same is true of
+        ``propagate`` and ``escalate`` where an operator has revoked their
+        grants, which are on by default.
+
+        Nothing here can check first: a hub's HELLO carries its public key, its
+        peer name and its node id, and says nothing about what this client is
+        allowed to do. So a refusal arrives as a closed socket on the next
+        read, not as a raised exception from this call.
+        """
+
+        return self._send_hive(HIVE_BROADCAST, event_type, data, context)
+
+    def _send_hive(
+        self,
+        kind: str,
+        event_type: str,
+        data: dict[str, Any] | None,
+        context: dict[str, Any] | None,
+    ) -> Any:
+        """Wrap a bus event in a hive frame and send it.
+
+        The envelope is nested on purpose: a hub reads ``message.payload`` of a
+        mesh frame as a HiveMessage of its own and re-stamps its route on it
+        before forwarding, so the inner frame is what travels.
+        """
+
+        if not event_type or not event_type.strip():
+            raise ValueError("A hive frame needs a non-empty event type.")
+        return self._with_reconnect(
+            lambda: self._transport.send_hive_frame(
+                kind,
+                event_type.strip(),
+                data or {},
+                self._context_with_identity_metadata(context),
+            )
+        )
 
     def wait_for_event(
         self, event_name: str, *, timeout: float = 12.0,
@@ -1825,6 +1949,47 @@ class AsyncThalovantClient:
         context: dict[str, Any] | None = None,
     ) -> Any:
         return await asyncio.to_thread(self._client.emit, event_type, data, context)
+
+    async def propagate(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send an event across the hive."""
+
+        return await asyncio.to_thread(self._client.propagate, event_type, data, context)
+
+    async def escalate(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send an event up to the parent node."""
+
+        return await asyncio.to_thread(self._client.escalate, event_type, data, context)
+
+    async def broadcast(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send an event down to every child. **Admin only** -- see the sync
+        client's ``broadcast``: a hub disconnects a client that may not."""
+
+        return await asyncio.to_thread(self._client.broadcast, event_type, data, context)
+
+    async def on_hive(self, kind: str, handler: Callable[[Any], None]) -> Callable[[], None]:
+        """Listen to one of the hive's own frame kinds. Returns an unsubscriber."""
+
+        return await asyncio.to_thread(self._client.on_hive, kind, handler)
+
+    async def on_binary(self, handler: Callable[[Any], None]) -> Callable[[], None]:
+        """Listen for binary frames: rendered speech, and files."""
+
+        return await asyncio.to_thread(self._client.on_binary, handler)
 
     async def send_utterance(
         self,

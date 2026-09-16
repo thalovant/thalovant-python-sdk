@@ -55,6 +55,14 @@ class Transport(Protocol):
 
     def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any: ...
 
+    def send_hive_frame(
+        self, kind: str, event_type: str, data: dict[str, Any], context: dict[str, Any],
+    ) -> Any: ...
+
+    def on_binary(self, handler: Callable[[Any], None]) -> None: ...
+
+    def remove_binary(self, handler: Callable[[Any], None]) -> None: ...
+
     def emit_event(
         self,
         event_type: str,
@@ -92,6 +100,28 @@ class _ConnectionLifecycle:
         self._connecting = False
         self._closing = False
         self._failed_cleanup: tuple[Any, BaseException] | None = None
+
+    def on_binary(self, handler: Callable[[Any], None]) -> None:
+        self._binary_handlers.append(handler)
+
+    def remove_binary(self, handler: Callable[[Any], None]) -> None:
+        self._binary_handlers = [
+            entry for entry in self._binary_handlers if entry is not handler
+        ]
+
+    def _deliver_binary(self, kind: str, data: bytes, metadata: dict[str, Any]) -> None:
+        from .events import ThalovantBinary
+
+        frame = ThalovantBinary(kind=kind, data=bytes(data), metadata=dict(metadata or {}))
+        for handler in tuple(self._binary_handlers):
+            # One subscriber raising must not cost the others their frame, and
+            # must not take down the socket's read loop with it.
+            try:
+                handler(frame)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "A binary-frame subscriber raised; continuing."
+                )
 
     def _is_current_client(self, client: Any) -> bool:
         with self._lifecycle_lock:
@@ -275,6 +305,9 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
         self._connect_started = 0.0
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo()
+        # Held on the transport and not on the upstream client, so a reconnect
+        # -- which builds a new client -- keeps its subscribers.
+        self._binary_handlers: list[Callable[[Any], None]] = []
 
     def connection_info(self) -> ThalovantConnectionInfo:
         return self._connection_info
@@ -407,6 +440,61 @@ class HiveMindHTTPTransport(_ConnectionLifecycle):
     def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any:
         deps = self._load_deps()
         return self._send_hive_message_object(deps.HiveMessage(**message), encrypt=encrypt)
+
+    def send_hive_frame(
+        self, kind: str, event_type: str, data: dict[str, Any], context: dict[str, Any],
+    ) -> Any:
+        deps = self._load_deps()
+        client = self._require_live_client()
+        inner = deps.HiveMessage(
+            deps.HiveMessageType.BUS,
+            deps.Message(
+                event_type,
+                data,
+                _runtime_bus_context(
+                    context,
+                    useragent=client.useragent,
+                    session_id=client.session_id,
+                    site_id=client.site_id,
+                ),
+            ),
+        )
+        # Nested, because that is what a hub reads: it takes `message.payload`
+        # of a mesh frame as a HiveMessage of its own, re-stamps the route on
+        # it and forwards *that*. A flat frame would lose the route.
+        return self._send_hive_message_object(
+            deps.HiveMessage(kind, inner), encrypt=True,
+        )
+
+    def _binary_callbacks(self) -> Any:
+        """Adapt the library's binary callbacks onto this transport's subscribers.
+
+        The two it defines are the two a hub sends: rendered speech, and a
+        file. Both arrive with metadata the caller wants (what was spoken, in
+        which language, under what name), so it is rebuilt here rather than
+        passed through as positional arguments nobody can read.
+        """
+
+        from hivemind_bus_client.client import BinaryDataCallbacks
+
+        from .events import BINARY_FILE, BINARY_TTS_AUDIO
+
+        transport = self
+
+        class _Callbacks(BinaryDataCallbacks):
+            def handle_receive_tts(
+                self, bin_data: bytes, utterance: str, lang: str, file_name: str,
+            ) -> None:
+                transport._deliver_binary(
+                    BINARY_TTS_AUDIO,
+                    bin_data,
+                    {"utterance": utterance, "lang": lang, "file_name": file_name},
+                )
+
+            def handle_receive_file(self, bin_data: bytes, file_name: str) -> None:
+                transport._deliver_binary(BINARY_FILE, bin_data, {"file_name": file_name})
+
+        return _Callbacks()
 
     def _send_hive_message_object(self, hive_message: Any, *, encrypt: bool) -> Any:
         # The legacy flag remains source-compatible; v3 application traffic is
@@ -768,6 +856,10 @@ class HiveMindWSSTransport(HiveMindHTTPTransport):
                 port=parsed.port or (443 if parsed.scheme == "wss" else 80),
                 useragent=self.useragent, self_signed=self.self_signed,
                 compress=self.compress, binarize=self.binarize, identity=persistent_identity,
+                # Without this the library logs "Ignoring received binary TTS
+                # audio" and drops it: a hub that renders speech for a client
+                # with no synthesiser was answering into nothing.
+                bin_callbacks=self._binary_callbacks(),
             )
             protocol = self._build_protocol(client, deps)
             self._install_client(client, generation)
@@ -937,6 +1029,9 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         self._connect_started = 0.0
         self._transport_opened = 0.0
         self._connection_info = ThalovantConnectionInfo()
+        # Held on the transport and not on the upstream client, so a reconnect
+        # -- which builds a new client -- keeps its subscribers.
+        self._binary_handlers: list[Callable[[Any], None]] = []
 
     def connection_info(self) -> ThalovantConnectionInfo:
         return self._connection_info
@@ -1146,6 +1241,37 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
     def send_hive_message(self, message: dict[str, Any], *, encrypt: bool = True) -> Any:
         return self._send_hive_message(message)
 
+    def send_hive_frame(
+        self, kind: str, event_type: str, data: dict[str, Any], context: dict[str, Any],
+    ) -> Any:
+        # The inner frame is a whole BUS envelope, not a bare bus message: a
+        # hub reads `message.payload` of a mesh frame as a HiveMessage of its
+        # own and re-stamps the route on it before forwarding.
+        return self._send_hive_message({
+            "msg_type": kind,
+            "payload": {
+                "msg_type": "bus",
+                "payload": {
+                    "type": event_type,
+                    "data": data,
+                    "context": _runtime_bus_context(
+                        context,
+                        useragent=self.useragent,
+                        session_id=self.session_id,
+                        site_id=self.identity.site_id,
+                    ),
+                },
+                "metadata": {},
+                "route": [],
+            },
+            "metadata": {},
+            "route": [],
+            "node": None,
+            "target_site_id": None,
+            "target_pubkey": None,
+            "source_peer": None,
+        })
+
     def emit_event(
         self,
         event_type: str,
@@ -1301,7 +1427,17 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             )
             for handler in tuple(self._handlers.get(event_name, ())):
                 handler(message)
-        elif msg_type in {"query", "cascade"}:
+        elif msg_type == "binary":
+            # The wire numbers the payload type; name the two a hub actually
+            # sends and pass anything else through under its number rather
+            # than dropping it, which is what happened to every one of these
+            # before: no handler, no branch, no log line.
+            self._deliver_binary(
+                _BINARY_KINDS.get(_binary_type_value(message), _unnamed_binary(message)),
+                message.payload if isinstance(message.payload, (bytes, bytearray)) else b"",
+                message.metadata if isinstance(getattr(message, "metadata", None), dict) else {},
+            )
+        elif msg_type in _HIVE_DISPATCHED:
             for handler in tuple(self._hive_handlers.get(msg_type, ())):
                 handler(message)
 
@@ -1423,6 +1559,40 @@ def _mqtt_tls_enabled(credentials: Any, scheme: str) -> bool:
 
 def _mqtt_default_port(tls_enabled: bool) -> int:
     return 8883 if tls_enabled else 1883
+
+
+#: Hive frame kinds this transport hands to `on_hive_message` subscribers.
+#:
+#: `query` and `cascade` are this client's own request/response traffic; the
+#: five after them belong to the mesh and used to fall off the end of the
+#: dispatch with no branch and no log line.
+_HIVE_DISPATCHED = frozenset({
+    "query", "cascade", "broadcast", "propagate", "escalate", "intercom", "rendezvous",
+})
+
+#: The binary payload types this SDK gives a name to, by wire number.
+_BINARY_KINDS = {
+    1: "raw_audio",
+    2: "numpy_image",
+    3: "file",
+    4: "stt_transcribe",
+    5: "stt_handle",
+    6: "tts_audio",
+}
+
+
+def _binary_type_value(message: Any) -> int:
+    raw = getattr(getattr(message, "bin_type", None), "value", getattr(message, "bin_type", None))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _unnamed_binary(message: Any) -> str:
+    """A payload type nobody here has named, kept rather than dropped."""
+
+    return f"binary:{_binary_type_value(message)}"
 
 
 def _message_type_value(value: Any) -> str:
