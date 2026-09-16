@@ -320,11 +320,19 @@ def test_blocked_registration_retains_ownership_and_removes_late_listener(name):
         def __init__(self):
             super().__init__()
             self.gate = threading.Event()
+            # Set the moment registration is actually blocked. The assertion
+            # below is about ownership being *retained* while it is; without
+            # this the test raced the registration thread's own start-up
+            # against a 20ms budget and failed whenever the machine was busy
+            # enough to lose it -- adding one test file elsewhere in the suite
+            # was enough, which is not something this test means to measure.
+            self.entered = threading.Event()
             self.once = True
 
         def hold(self):
             if self.once:
                 self.once = False
+                self.entered.set()
                 self.gate.wait(5)
 
         def on_mycroft(self, name, handler):
@@ -342,6 +350,7 @@ def test_blocked_registration_retains_ownership_and_removes_late_listener(name):
         with pytest.raises(ThalovantTimeoutError):
             operation(sdk, name)
         assert time.monotonic() - started < 0.3
+        assert transport.entered.wait(5), 'registration never reached the transport'
         with pytest.raises(ThalovantConnectionError):
             sdk.connect(timeout=0.02)
         transport.gate.set()
