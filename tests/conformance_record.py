@@ -56,8 +56,14 @@ def record(vector_file: str, case: str, produced: Any) -> None:
 
 def _write() -> None:
     target = os.environ.get("THALOVANT_CONFORMANCE_OUT")
-    if not target or not _RESULTS:
+    if not target:
         return
+    # Not `or not _RESULTS`. Returning early on an empty run left whatever was
+    # at that path alone, so a suite that executed no conformance case at all
+    # could present last week's artifact as this run's output -- which is
+    # exactly the "names a vector without running it" hole this whole
+    # mechanism exists to close, wearing a different hat. An empty run writes
+    # an empty result, and the checker reports it as having recorded nothing.
     vectors_dir = Path(__file__).resolve().parents[1] / "contracts" / "conformance"
     results = {}
     for vector_file, cases in sorted(_RESULTS.items()):
@@ -65,7 +71,14 @@ def _write() -> None:
         results[vector_file] = {
             # Ties the outputs to the exact input that produced them: a vector
             # change invalidates the record rather than silently outliving it.
-            "digest": hashlib.sha256(source.read_bytes()).hexdigest(),
+            #
+            # The parsed JSON, not the bytes. check-sdk-parity accepts a
+            # vendored vector by hashing what it parses to, so indentation and
+            # line endings are deliberately allowed to differ between
+            # consumers -- and hashing bytes here made those same consumers
+            # fail with "a different copy of the vectors" for a file that had
+            # already been accepted as the right one.
+            "digest": canonical_digest(json.loads(source.read_text(encoding="utf-8"))),
             "cases": dict(sorted(cases.items())),
         }
     Path(target).write_text(

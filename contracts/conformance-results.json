@@ -7,7 +7,7 @@
         "an empty name is no name": "f106c67ffbe7b900d91deeb19c8be963c09c0ce6bbdb73787bbe39aedde4dac8",
         "rendered speech carries what was said": "3240db248ac2a93410a4eb04b060bb9e87bfc188a4f00f03df7a55f0e44ba076"
       },
-      "digest": "efea87d1e24c915de64563ff83d74bc0b71180decf971bd00840bed57966b415"
+      "digest": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc"
     },
     "conversation-vectors.json": {
       "cases": {
@@ -18,7 +18,7 @@
         "this turn keeps its own value": "3465bf9e45d6ba8db043f4af9508f98a935c7f970276e988def7dd3683793c5e",
         "this turn's language outranks the last one's": "822ea26770f806232ff121094a0d498b603439d34d2c276c2522b6f812018081"
       },
-      "digest": "53b8138179a9645b7a9dfd58148e2cfc213753b1d656590f8a047de9b3472777"
+      "digest": "4fb01db8e93b82a7a46588c0481d936521082b48809d25db9e1aa5eb5cc8c0bf"
     }
   },
   "schema_version": 1
