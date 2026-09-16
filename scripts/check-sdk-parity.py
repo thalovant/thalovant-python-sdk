@@ -165,20 +165,43 @@ def validate_reference(reference):
     return manifest
 
 
-def validate_consumer(reference_manifest, root, repo):
+def validate_consumer(reference_manifest, root, repo, planned):
     acceptance = read(root / MANIFEST)
     expected = digest(reference_manifest["reference"])
     if acceptance.get("schema_version") != 1 or expected not in acceptance.get("reference_digests", []):
         raise ValueError(f"{repo}: reference changed; port or explicitly review every capability")
     capabilities = reference_manifest["capabilities"]
     entries = acceptance.get("capabilities", {})
-    if set(entries) != set(capabilities):
-        raise ValueError(f"{repo}: missing or unknown capability acceptance")
+    unknown = sorted(set(entries) - set(capabilities))
+    if unknown:
+        # Declaring a capability the reference does not have cannot weaken
+        # anything, and is how a consumer goes first in a rollout.
+        planned.append(f"{repo}: declares capabilities the reference does not "
+                       f"know yet: {', '.join(unknown)}")
     for name, capability in capabilities.items():
-        entry = entries[name]
+        entry = entries.get(name)
+        if entry is None:
+            # A capability the reference has grown and this consumer has not
+            # answered yet. Loud on every run and refused at release, but not a
+            # hard error: the reference and its consumers cannot both go first,
+            # and making each block the other only teaches people to switch the
+            # gate off.
+            planned.append(f"{repo}/{name}: not acknowledged yet "
+                           f"({capability.get('description', name)})")
+            continue
         scope = capability["scope"][repo]
-        if entry.get("status") != scope["status"] or not entry.get("reason", "").strip():
-            raise ValueError(f"{repo}/{name}: incorrect scope or missing review explanation")
+        if not entry.get("reason", "").strip():
+            raise ValueError(f"{repo}/{name}: missing review explanation")
+        # "planned" is the one state a consumer may hold that the reference does
+        # not: the capability applies to it and is not built yet. It is never
+        # silent -- every run reports it, and --release refuses to publish over
+        # it -- because the alternative was a digest signed with nothing behind
+        # it, which is how three releases of behaviour reached one SDK alone.
+        if entry.get("status") == "planned" and scope["status"] == "required":
+            planned.append(f"{repo}/{name}: {entry['reason'].strip()}")
+            continue
+        if entry.get("status") != scope["status"]:
+            raise ValueError(f"{repo}/{name}: incorrect scope")
         if scope["status"] == "not-applicable":
             continue
         for kind in ("implementation", "tests"):
@@ -204,8 +227,9 @@ def validate_consumer(reference_manifest, root, repo):
                     f"against them, not merely declared")
 
 
-def check(reference, workspace=None, consumer=None):
+def check(reference, workspace=None, consumer=None, release=False):
     errors = []
+    planned = []
     try:
         manifest = validate_reference(reference)
     except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
@@ -216,9 +240,17 @@ def check(reference, workspace=None, consumer=None):
             if repo == "thalovant-python-sdk":
                 continue
             try:
-                validate_consumer(manifest, workspace / repo, repo)
+                validate_consumer(manifest, workspace / repo, repo, planned)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 errors.append(f"{repo}: {error}")
+    for gap in sorted(planned):
+        # Reported on every run, failing only a release: a gap somebody can see
+        # on each check is a gap that gets closed, and one that blocks every
+        # unrelated PR in eight repositories just gets the gate switched off.
+        print(f"SDK parity: NOT YET ON PAR -- {gap}", file=sys.stderr)
+    if release and planned:
+        errors.append("cannot release while consumers are behind: "
+                      + "; ".join(sorted(planned)))
     return errors
 
 
@@ -229,13 +261,15 @@ def main():
                         help="Require acceptance from all consumers; omitted only for local producer checks")
     parser.add_argument("--consumer", choices=REPOSITORIES[1:], help="Validate one consumer during additive rollout; producer/release coordination uses the whole workspace")
     parser.add_argument("--snapshot", action="store_true", help="Print candidate snapshot; never updates acceptance")
+    parser.add_argument("--release", action="store_true",
+                        help="Refuse to pass while any consumer is behind; the gate a publish runs")
     args = parser.parse_args()
     if args.snapshot:
         print(json.dumps(snapshot(args.reference), indent=2, sort_keys=True))
         return 0
     if args.consumer and args.workspace is None:
         parser.error("--consumer requires --workspace")
-    errors = check(args.reference, args.workspace, args.consumer)
+    errors = check(args.reference, args.workspace, args.consumer, release=args.release)
     for error in errors:
         print("SDK parity: " + error, file=sys.stderr)
     if errors:
