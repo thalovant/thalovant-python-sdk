@@ -88,6 +88,7 @@ nav:
       - Concepts: concepts.md
   - Guides:
       - Conversations And Agents: guides/conversations-and-agents.md
+      - The Hive: guides/the-hive.md
       - CLI: cli.md
       - Deployment: deployment.md
   - API:

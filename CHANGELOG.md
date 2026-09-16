@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0 — 2026-09-16
+
+- Speak the rest of the HiveMind protocol. A hub is a *hive*, not a star: besides the conversation traffic `ask()` owns, it relays frames aimed down at every child, walked across the whole hive, sent up to a parent, addressed node to node, and a mailbox peers use to find each other through NAT. Our hub implements all thirteen HiveMind message types; this SDK implemented five, and the transport dropped the rest off the end of its dispatch with no branch and no log line. `on_hive(kind, handler)` listens to all five mesh kinds, and `propagate()`, `escalate()` and `broadcast()` send. A refusal is a disconnection rather than an error -- a hub's HELLO says nothing about what a client may do, so nothing can check first; `broadcast()` documents that it needs admin standing and the `can_broadcast` grant.
+- Receive binary frames. This is how a hub answers `speak:synth`: it renders the utterance and sends the audio back, so a client with no synthesiser of its own can still speak, and it is how a file arrives. The library decodes these and calls `bin_callbacks`; nothing was passing one, so every frame met "Ignoring received binary TTS audio" and was discarded. `on_binary(handler)` delivers a `ThalovantBinary` carrying the bytes, the payload kind, and the metadata beside them. Both wire formats were checked against the hub's own `hivemind-bus-client` (1.1.1a1, which is not the version resolved here).
+
 ## 0.7.8 — 2026-09-15
 
 - Resolve the conversation key the same way on both sides of the carry. A session id is accepted in three places -- the `ask()` argument, `context["session"]`, and a top-level `context["session_id"]` -- and a turn is filed under whatever the request resolves to, but the lookup read only the nested one. A caller using the top-level shape stored its turn under that id and looked it up under `None`, so 0.7.7's carry never happened for it and nothing said why.
