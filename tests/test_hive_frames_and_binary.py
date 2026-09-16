@@ -325,3 +325,68 @@ def test_the_mesh_kinds_this_sdk_dispatches_match_the_ones_it_offers():
     # A kind offered by on_hive() but not dispatched would subscribe happily
     # and never fire.
     assert set(HIVE_KINDS) <= _HIVE_DISPATCHED
+
+
+# --------------------------------------------------------------------------
+# what a subscriber is handed, and where it is run
+
+
+def test_one_subscriber_cannot_edit_what_the_next_one_reads():
+    """A frame each.
+
+    `ThalovantBinary` is frozen, but freezing a dataclass does not freeze the
+    dict inside it. Sharing one frame let an earlier subscriber rewrite
+    `metadata` and hand the next a value the hub never sent -- the sort of
+    thing that surfaces as one listener disagreeing with another about what
+    was said.
+    """
+
+    transport = _delivery()
+    seen: list[str | None] = []
+
+    def vandal(frame: ThalovantBinary) -> None:
+        frame.metadata["utterance"] = "something else"
+
+    transport.on_binary(vandal)
+    transport.on_binary(lambda frame: seen.append(frame.utterance))
+    transport._deliver_binary(BINARY_TTS_AUDIO, b"a", {"utterance": "Pfffft."})
+
+    assert seen == ["Pfffft."]
+
+
+def test_an_async_subscriber_is_run_on_the_loop_it_subscribed_from():
+    """Otherwise it is never run at all.
+
+    The transport calls subscribers on its own receive thread. An `async def`
+    handler invoked there returns a coroutine nobody awaits: it does not run,
+    and the only sign is a warning at interpreter exit. The async client's
+    `on()` has always hopped back to the loop; `on_hive` and `on_binary` did
+    not until this.
+    """
+
+    import asyncio
+
+    from thalovant.client import AsyncThalovantClient
+
+    async def exercise() -> list[str]:
+        transport = MeshTransport()
+        client = AsyncThalovantClient(identity(), transport=transport, reply_settle_seconds=0)
+        ran: list[str] = []
+
+        async def handler(_frame: Any) -> None:
+            ran.append("ran")
+
+        await client.on_binary(handler)
+        # Exactly what the receive thread does: a plain call, off the loop.
+        await asyncio.to_thread(
+            transport.binary_handlers[0],
+            ThalovantBinary(BINARY_TTS_AUDIO, b"a", {}),
+        )
+        # The hop is scheduled on this loop; give it one turn to be taken.
+        for _ in range(50):
+            if ran:
+                break
+            await asyncio.sleep(0.01)
+        return ran
+
+    assert asyncio.run(exercise()) == ["ran"]

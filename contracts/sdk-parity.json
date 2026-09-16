@@ -306,7 +306,7 @@
       "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
       "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "d9af73255581076710703e0fa51b66e1d67a428ef0724495d214f09ecf71b2ca",
+      "src/thalovant/client.py": "03c3561eb7a9bec771b22813a4c232fb24a322bce9f752fb7f530c6e186ebcd7",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
@@ -323,7 +323,7 @@
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
       "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "002e424e2bdb3aa61a293d318dd9b5e2d10df39c0f310cdeabc399a5176b0314"
+      "src/thalovant/transport.py": "6084ed0ce749e1ef1e0b9fcbc111fb2ccdf46ce70c1603d85be76292efc64c26"
     }
   },
   "schema_version": 1

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 — 2026-09-16
+
+- Run an `async def` subscriber passed to `AsyncThalovantClient.on_hive()` or `on_binary()` on the loop it subscribed from. The transport calls subscribers on its own receive thread, so an async handler invoked there returned a coroutine nobody awaited: it never ran, and the only sign was a warning at interpreter exit. `on()` has always hopped back to the loop; these two now do the same.
+- Hand each binary subscriber its own frame. `ThalovantBinary` is frozen, but freezing a dataclass does not freeze the dict inside it, so one subscriber editing `metadata` handed the next a value the hub never sent.
+
 ## 0.8.0 — 2026-09-16
 
 - Speak the rest of the HiveMind protocol. A hub is a *hive*, not a star: besides the conversation traffic `ask()` owns, it relays frames aimed down at every child, walked across the whole hive, sent up to a parent, addressed node to node, and a mailbox peers use to find each other through NAT. Our hub implements all thirteen HiveMind message types; this SDK implemented five, and the transport dropped the rest off the end of its dispatch with no branch and no log line. `on_hive(kind, handler)` listens to all five mesh kinds, and `propagate()`, `escalate()` and `broadcast()` send. A refusal is a disconnection rather than an error -- a hub's HELLO says nothing about what a client may do, so nothing can check first; `broadcast()` documents that it needs admin standing and the `can_broadcast` grant.
