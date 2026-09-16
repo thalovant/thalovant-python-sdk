@@ -134,6 +134,10 @@ def _transport_for_protocol(
 
 # Poll admitted readiness without extending the caller's connect deadline.
 _SETTLE_POLL = 0.02
+#: How long a finished ask keeps listening for the hub's "what the
+#: conversation now is" frame. Bounded and small: it exists only so a
+#: zero settle window cannot complete the reply before that frame lands.
+CARRY_GRACE_SECONDS = 2.0
 
 
 def _message_mapping(value: Any) -> dict[str, Any]:
@@ -250,7 +254,9 @@ class ThalovantClient:
         # a long-lived client that is handed a fresh session id per turn must
         # not accumulate one entry per turn forever.
         self._conversations_lock = threading.Lock()
-        self._conversations: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._conversations: OrderedDict[
+            str | None, tuple[tuple[str | None, ...], dict[str, Any]]
+        ] = OrderedDict()
         self._subscriptions_lock = threading.Lock()
         self._subscription_session_ready = False
         self._subscription_session_token: Any = None
@@ -1086,18 +1092,47 @@ class ThalovantClient:
         stand; no real session id can collide with it.
         """
 
+        keys: list[str | None] = []
+        for value in ((session_id,) if isinstance(session_id, (str, type(None)))
+                      else session_id):
+            if value not in keys:
+                keys.append(value)
         kept = {field: session[field] for field in CONVERSATION_SESSION_FIELDS
                 if (session or {}).get(field)}
         with self._conversations_lock:
-            self._conversations.pop(session_id, None)
+            # Take over every id these already reach, rather than dropping
+            # them: a turn the caller continued under the hub's id must not
+            # forget the id the satellite still uses for the same conversation.
+            # The names accumulate, the conversation stays one entry.
+            for key in list(keys):
+                previous = self._conversations.pop(key, None)
+                if previous is None:
+                    continue
+                for sibling in previous[0]:
+                    self._conversations.pop(sibling, None)
+                    if sibling not in keys:
+                        keys.append(sibling)
             if not kept:
                 # The turn ended with nothing to carry -- a skill deactivated,
                 # a context cleared. Forgetting is the state, not an absence
                 # of one: leaving the old entry would resurrect it.
                 return
-            self._conversations[session_id] = kept
-            while len(self._conversations) > self.MAX_REMEMBERED_CONVERSATIONS:
-                self._conversations.popitem(last=False)
+            # One conversation, however many ids reach it. Filed as separate
+            # entries they aged and were evicted separately, so a caller using
+            # the evicted alias lost the carry while one using its partner kept
+            # it -- and the bound counted aliases rather than conversations.
+            group = tuple(keys)
+            for key in keys:
+                self._conversations[key] = (group, kept)
+            while self._remembered_conversations() > self.MAX_REMEMBERED_CONVERSATIONS:
+                _, (oldest, _) = next(iter(self._conversations.items()))
+                for sibling in oldest:
+                    self._conversations.pop(sibling, None)
+
+    def _remembered_conversations(self) -> int:
+        """Conversations held, counting a group of aliases once."""
+
+        return len({entry[0] for entry in self._conversations.values()})
 
     def _continue_conversation(self, context: dict[str, Any] | None,
                                session_id: str | None) -> dict[str, Any] | None:
@@ -1113,11 +1148,17 @@ class ThalovantClient:
         # and nothing said why.
         session_id = session_id or _session_id_from_context(context) or None
         with self._conversations_lock:
-            previous = self._conversations.get(session_id)
-            if previous is not None:
+            entry = self._conversations.get(session_id)
+            previous = None
+            if entry is not None:
+                group, previous = entry
                 # Most recently used: a client juggling more conversations than
-                # the cap should evict the one nobody is speaking in.
-                self._conversations.move_to_end(session_id)
+                # the cap should evict the one nobody is speaking in. Every id
+                # of this conversation moves together, so reaching it by one
+                # name keeps the others alive too.
+                for key in group:
+                    if key in self._conversations:
+                        self._conversations.move_to_end(key)
         carried = carry_conversation(previous, session)
         if carried == session:
             return context
@@ -1361,6 +1402,10 @@ class ThalovantClient:
         fragments: list[str] = []
         raw_messages: list[Any] = []
         events: list[ThalovantEvent] = []
+        # What the handled turn said the conversation is, held so the reply can
+        # file it under the id the caller is handed. A list because the handler
+        # runs on the transport thread and rebinding a local would not carry.
+        handled_session: list[dict[str, Any]] = []
         dropped_media = 0
         media_chars = 0
         registered: list[tuple[str, Callable[[Any], None]]] = []
@@ -1416,18 +1461,17 @@ class ThalovantClient:
                 if (not direct and getattr(message, "name", None) == EVENT_UTTERANCE_HANDLED
                         and message.request_id == request_id):
                     carried = _session_from_context(message.context)
-                    self._remember_conversation(session_id, carried)
-                    # And under the id the hub answered with, when that differs.
-                    # ``ThalovantReply.session_id`` hands the caller the first
-                    # non-empty *event* session id, so a caller that does the
-                    # natural thing -- passing ``reply.session_id`` to the next
-                    # ask -- looked up a key nothing was filed under and sent no
-                    # carried state at all. Filing both costs one dict entry and
-                    # serves the satellite (which reuses its own id) and an
-                    # ordinary caller alike.
+                    # One conversation, every id that can reach it: the id the
+                    # request used, which a satellite reuses, and the one the
+                    # hub answered with, which is what an ordinary caller is
+                    # handed. Filed in a single call so they age and are
+                    # evicted together rather than as separate conversations.
                     answered_with = _session_id_from_context(message.context)
+                    keys = [session_id]
                     if answered_with and answered_with != session_id:
-                        self._remember_conversation(answered_with, carried)
+                        keys.append(answered_with)
+                    handled_session[:] = [(keys, carried)]
+                    self._remember_conversation(keys, carried)
                 if terminal:
                     return
                 now = time.monotonic()
@@ -1595,14 +1639,26 @@ class ThalovantClient:
                 raise ThalovantRuntimeError(_failure_reason(failure_event))
             if not fragments:
                 raise ThalovantTimeoutError("Hub finished the query but did not emit a speak reply.")
+            reply_session_id = (
+                next((value for value in (event.session_id for event in events) if value and value.strip()), None)
+                or _session_id_from_context(request_context)
+            )
+            # And under exactly the id the caller is about to be handed.
+            # ``reply.session_id`` is the first non-blank id from *any* event, so
+            # a `speak` carrying one id and a handled event carrying another --
+            # or none -- returned an id that nothing had been filed under, and
+            # the next ask() with it sent no carried state at all. Re-filed as
+            # one group, so the whole conversation keeps a single place in the
+            # bound however many names reach it.
+            if handled_session and reply_session_id:
+                keys, carried = handled_session[0]
+                if reply_session_id not in keys:
+                    self._remember_conversation([*keys, reply_session_id], carried)
             reply = ThalovantReply(
                 text=" ".join(fragments),
                 utterances=tuple(fragments),
                 handled=failure_event is None,
-                session_id=(
-                    next((value for value in (event.session_id for event in events) if value and value.strip()), None)
-                    or _session_id_from_context(request_context)
-                ),
+                session_id=reply_session_id,
                 request_id=request_id,
                 raw_messages=tuple(raw_messages),
                 events=tuple(events),
@@ -1621,12 +1677,29 @@ class ThalovantClient:
                 terminal = True
                 owned_handlers = tuple(registered)
                 registered.clear()
-            for kind, handler in owned_handlers:
+            def drop(kind: str, handler: Any) -> None:
                 try:
                     unsubscribe = remove_hive_message if direct else self._transport.remove_mycroft
                     unsubscribe(kind, handler)
                 except ThalovantConnectionError:
                     pass
+
+            for kind, handler in owned_handlers:
+                if (completed and not direct and not handled_session
+                        and kind == EVENT_UTTERANCE_HANDLED):
+                    # Answered, but the hub has not yet said what the
+                    # conversation now is. A short settle window -- zero, most
+                    # of all -- finishes the reply before
+                    # ``ovos.utterance.handled`` arrives, and dropping the
+                    # subscription here loses the carry the next turn needs.
+                    # The handler records it ahead of every other gate, so
+                    # leaving this one registered for a bounded moment is all
+                    # it takes. Everything else goes now.
+                    timer = threading.Timer(CARRY_GRACE_SECONDS, drop, (kind, handler))
+                    timer.daemon = True
+                    timer.start()
+                    continue
+                drop(kind, handler)
 
     def _with_reconnect(self, operation: Callable[[], Any]) -> Any:
         last_error: BaseException | None = None

@@ -203,10 +203,18 @@ def test_a_payload_type_nobody_named_still_arrives():
     class _Base:
         noise_transport = None
 
-    class _Frame:
-        bin_type = 9
-        payload = b"bytes"
-        metadata: dict[str, Any] = {}
+    spec = vectors("binary-vectors.json")
+    handler = transport._build_wss_client_class(_Base, object)._handle_binary
+    for wire in sorted(int(key) for key in spec["unnamed_kind_names"]):
+        class _Frame:
+            bin_type = wire
+            payload = b"bytes"
+            metadata: dict[str, Any] = {}
 
-    transport._build_wss_client_class(_Base, object)._handle_binary(None, _Frame())
-    assert seen == [vectors("binary-vectors.json")["unnamed_kind_format"].replace("<wire number>", "9")]
+        handler(None, _Frame())
+    # Only 0-15 can travel -- the wire field is four bits -- and anything
+    # unassigned reaches us as 0, because hivemind-bus-client flattens it there.
+    # The naming has to hold for every number all the same: it is the last thing
+    # between a payload type nobody has named yet and a frame that disappears.
+    assert seen == [spec["unnamed_kind_names"][key]
+                    for key in sorted(spec["unnamed_kind_names"], key=int)]
