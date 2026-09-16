@@ -27,6 +27,7 @@ jobs:
       contents: read
     with:
       source_ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag || github.sha }}
+      release: true
 
   publish:
     needs: sdk-parity

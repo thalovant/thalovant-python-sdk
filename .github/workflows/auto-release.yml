@@ -22,6 +22,7 @@ jobs:
       contents: read
     with:
       source_ref: ${{ github.sha }}
+      release: true
 
   plan:
     needs: sdk-parity
@@ -150,6 +151,7 @@ jobs:
       contents: read
     with:
       source_ref: ${{ needs.plan.outputs.release_sha }}
+      release: true
 
   release:
     needs: [plan, planned-parity]

@@ -68,13 +68,12 @@ def vectors():
     return {"question-vectors.json": question, "inventory-vectors.json": inventory_vectors, "reply-claim-vectors.json": reply_claim_vectors()}
 
 
-def check(directory):
-    # Execute the committed inputs, so Python Unicode database additions do not
-    # spuriously invalidate existing vectors on a supported interpreter.
-    question = json.loads((directory / "question-vectors.json").read_text())
+def check_questions(question):
     for row in question["cases"]:
         assert listing.asks(row["text"], row["lang"]) == row["expected"], row
-    data = json.loads((directory / "inventory-vectors.json").read_text())
+
+
+def check_inventory(data):
     assert InventoryCache.key("hub", None) == data["cache_key"]
     inventory = Inventory.from_dict(data["inventory"])
     for row in data["examples"]:
@@ -83,7 +82,8 @@ def check(directory):
         assert inventory.skills[0].speaks(row["language"]) == row["expected"], row
     assert inventory.skills[1].speaks("en") is None
 
-    claims = json.loads((directory / "reply-claim-vectors.json").read_text())
+
+def check_reply_claims(claims):
     for row in claims["cases"]:
         reply = ThalovantReply(text="reply", handled=row["handled"],
             events=tuple(ThalovantEvent("speak", {}, context, None) for context in row["contexts"]),
@@ -91,6 +91,23 @@ def check(directory):
         assert list(reply.pipeline_ids) == row["expected"]["pipeline_ids"], row["name"]
         assert list(reply.skill_ids) == row["expected"]["skill_ids"], row["name"]
         assert reply.claimed == row["expected"]["claimed"], row["name"]
+
+
+# One entry per committed vector file, so a file with nobody to execute it is a
+# visible hole rather than a quiet one: the parity contract asks which test runs
+# each vector, and this is the answer for the three generated here.
+CHECKS = {
+    "question-vectors.json": check_questions,
+    "inventory-vectors.json": check_inventory,
+    "reply-claim-vectors.json": check_reply_claims,
+}
+
+
+def check(directory):
+    # Execute the committed inputs, so Python Unicode database additions do not
+    # spuriously invalidate existing vectors on a supported interpreter.
+    for name, run in CHECKS.items():
+        run(json.loads((directory / name).read_text()))
 
 
 if __name__ == "__main__":

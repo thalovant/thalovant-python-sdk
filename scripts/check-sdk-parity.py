@@ -130,6 +130,7 @@ def validate_reference(reference):
                          ". Update the reference contract and every consumer impact record; "
                          "port applicable behavior and run its conformance tests before release.")
     covered = []
+    claimed_vectors = {}
     capabilities = manifest.get("capabilities", {})
     if not capabilities:
         raise ValueError("No SDK capabilities declared")
@@ -139,12 +140,27 @@ def validate_reference(reference):
         covered.extend(capability["files"])
         # A capability that names conformance vectors is one whose behaviour is
         # written down and executable. The vectors must exist here before any
-        # consumer can be asked to run them.
+        # consumer can be asked to run them -- and the reference has to run them
+        # too. Asking that of consumers alone is what let this SDK ship `binary`
+        # answering two of the six payload types its own vectors name, with
+        # every gate green: the obligation only ever pointed outward.
         for vector in capability.get("vectors", []):
             if vector not in actual["conformance"]:
                 raise ValueError(
                     f"Capability {name} names conformance vectors that are not "
                     f"in contracts/conformance: {vector}")
+            claimed_vectors.setdefault(vector, []).append(name)
+            tests = capability.get("tests", [])
+            if not tests:
+                raise ValueError(
+                    f"Capability {name} names conformance vectors but no test "
+                    f"that runs them; the reference owes the same evidence it "
+                    f"asks every consumer for")
+            if not any(vector in read_text(reference, path) for path in tests):
+                raise ValueError(
+                    f"Capability {name}: no reference test reads {vector}")
+        for path in capability.get("tests", []):
+            file_hash(reference, path)
         scopes = capability.get("scope", {})
         if set(scopes) != set(REPOSITORIES):
             raise ValueError(f"Capability {name} must address all eight SDKs and MCP")
@@ -153,6 +169,14 @@ def validate_reference(reference):
                 raise ValueError(f"Invalid scope for {name}/{repo}")
             if scope["status"] == "not-applicable" and not scope.get("reason", "").strip():
                 raise ValueError(f"Missing scope explanation for {name}/{repo}")
+    unclaimed = sorted(set(actual["conformance"]) - set(claimed_vectors))
+    if unclaimed:
+        # A vector file no capability claims is a written-down behaviour with no
+        # owner, so nothing obliges any SDK to run it and nothing notices when
+        # one stops. Vectors are the contract; leaving some unattached makes the
+        # contract partial in a way that looks complete.
+        raise ValueError("Conformance vectors belong to no capability: "
+                         + ", ".join(unclaimed))
     orphans = sorted(set(actual["files"]) - set(covered))
     if orphans:
         # Coverage, not exclusivity. One module can implement several
@@ -168,8 +192,25 @@ def validate_reference(reference):
 def validate_consumer(reference_manifest, root, repo, planned):
     acceptance = read(root / MANIFEST)
     expected = digest(reference_manifest["reference"])
-    if acceptance.get("schema_version") != 1 or expected not in acceptance.get("reference_digests", []):
-        raise ValueError(f"{repo}: reference changed; port or explicitly review every capability")
+    if acceptance.get("schema_version") != 1:
+        raise ValueError(f"{repo}: unsupported acceptance schema")
+    recorded = acceptance.get("reference_digests", [])
+    if expected not in recorded:
+        # Behind, or bogus. The reference and its consumers cannot both go
+        # first: a consumer can only ever have signed a digest that already
+        # exists on the reference's main branch, so demanding the candidate's
+        # digest here deadlocks every reference change against nine repositories
+        # -- which is how six rollouts ended up half-rebased with conflict
+        # markers committed. A digest the reference has actually published
+        # before is a rollout state: loud on every run, refused at release. A
+        # digest it has never published is not a state at all.
+        history = set(reference_manifest.get("reference_history", []))
+        if not history & set(recorded):
+            raise ValueError(f"{repo}: acknowledges no reference this SDK has "
+                             f"ever published; re-review against the current one")
+        planned.append(f"{repo}: one reference behind; re-review and record "
+                       f"{expected[:12]}")
+        return
     capabilities = reference_manifest["capabilities"]
     entries = acceptance.get("capabilities", {})
     unknown = sorted(set(entries) - set(capabilities))
@@ -218,9 +259,39 @@ def validate_consumer(reference_manifest, root, repo, planned):
         # points at actually read them: naming an existing file is otherwise
         # enough to pass, which is how three releases of behaviour reached one
         # SDK and none of the others while every gate stayed green.
+        if capability.get("vectors") and not entry.get("vectors"):
+            # An acceptance from before the vectors were pinned. Loud on every
+            # run and refused at release, like every other rollout state -- a
+            # rule that hard-fails eight repositories the day it lands is a rule
+            # somebody switches off before it ever has teeth.
+            planned.append(f"{repo}/{name}: not yet re-reviewed against the "
+                           f"shared vectors ({', '.join(capability['vectors'])})")
+            continue
         for vector in capability.get("vectors", []):
-            tests = entry.get("tests", {})
-            if not any(vector in read_text(root, path) for path in tests):
+            # Two things have to hold, because either alone is forgeable. The
+            # consumer must carry the *same* vectors -- compared as parsed JSON,
+            # so formatting is free and a single changed expectation is not --
+            # and a declared test must name the file. Naming it in a comment
+            # still satisfies the second, which is why it is not the only one:
+            # pinning the content means a vector the reference changes breaks
+            # every consumer that has not re-run it, whatever its tests say.
+            where = entry.get("vectors", {}).get(vector)
+            if not where:
+                raise ValueError(
+                    f"{repo}/{name}: does not say where it keeps {vector}; each "
+                    f"SDK vendors the vectors where its own test runner looks, "
+                    f"so the contract has to be told the path")
+            file_hash(root, where)
+            try:
+                same = digest(read(root / where)) == reference_manifest["reference"]["conformance"][vector]
+            except (OSError, ValueError, KeyError):
+                same = False
+            if not same:
+                raise ValueError(
+                    f"{repo}/{name}: {where} is not the reference's {vector}; "
+                    f"re-vendor it and rerun the conformance suite")
+            if not any(Path(where).name in read_text(root, path)
+                       for path in entry.get("tests", {})):
                 raise ValueError(
                     f"{repo}/{name}: no test reads {vector}; the capability's "
                     f"behaviour is defined by those vectors and has to be run "
@@ -230,6 +301,11 @@ def validate_consumer(reference_manifest, root, repo, planned):
 def check(reference, workspace=None, consumer=None, release=False):
     errors = []
     planned = []
+    if release and (workspace is None or consumer is not None):
+        # A release gate that looked at one consumer -- or none -- still printed
+        # "verified". Refuse the combination rather than answer a question about
+        # the whole fleet from part of it.
+        return ["--release must check the whole consumer workspace"]
     try:
         manifest = validate_reference(reference)
     except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:

@@ -92,6 +92,19 @@ def test_the_mesh_kinds_are_the_ones_the_vectors_name():
     assert sorted(HIVE_KINDS) == sorted(spec["kinds"])
 
 
+def test_every_kind_the_vectors_declare_has_a_case_that_runs_it():
+    """A declared kind with no case is a rule written down and never checked.
+
+    `refused_kinds` listed six and the cases exercised three, so `hello`,
+    `shake` and `binary` were refused only on paper. Tie the two together and
+    the next kind somebody adds cannot arrive without the case that proves it.
+    """
+
+    spec = vectors("mesh-vectors.json")
+    declared = set(spec["kinds"]) | set(spec["refused_kinds"])
+    assert declared - {case["kind"] for case in spec["cases"]} == set()
+
+
 def test_subscription_matches_the_mesh_vectors():
     from thalovant.client import ThalovantClient
     from thalovant.identity import ThalovantIdentity
