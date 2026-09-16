@@ -1981,15 +1981,36 @@ class AsyncThalovantClient:
 
         return await asyncio.to_thread(self._client.broadcast, event_type, data, context)
 
+    def _dispatched(self, handler: Callable[[Any], None]) -> Callable[[Any], None]:
+        """Hand a frame to an async handler on the loop it was subscribed from.
+
+        The transport calls subscribers on its own receive thread. An
+        ``async def`` handler invoked there returns a coroutine nobody awaits:
+        it never runs, and the only sign is a warning at interpreter exit.
+        Same shape as ``on()`` above, which has always done this.
+        """
+
+        loop = asyncio.get_running_loop()
+
+        def dispatch(frame: Any) -> None:
+            def run_handler() -> None:
+                result = handler(frame)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(result)
+
+            loop.call_soon_threadsafe(run_handler)
+
+        return dispatch
+
     async def on_hive(self, kind: str, handler: Callable[[Any], None]) -> Callable[[], None]:
         """Listen to one of the hive's own frame kinds. Returns an unsubscriber."""
 
-        return await asyncio.to_thread(self._client.on_hive, kind, handler)
+        return await asyncio.to_thread(self._client.on_hive, kind, self._dispatched(handler))
 
     async def on_binary(self, handler: Callable[[Any], None]) -> Callable[[], None]:
         """Listen for binary frames: rendered speech, and files."""
 
-        return await asyncio.to_thread(self._client.on_binary, handler)
+        return await asyncio.to_thread(self._client.on_binary, self._dispatched(handler))
 
     async def send_utterance(
         self,

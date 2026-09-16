@@ -115,8 +115,13 @@ class _ConnectionLifecycle:
     def _deliver_binary(self, kind: str, data: bytes, metadata: dict[str, Any]) -> None:
         from .events import ThalovantBinary
 
-        frame = ThalovantBinary(kind=kind, data=bytes(data), metadata=dict(metadata or {}))
+        payload = bytes(data)
         for handler in tuple(self._binary_handlers):
+            # A frame each. The dataclass is frozen, but freezing it does not
+            # freeze the dict inside it -- one subscriber editing `metadata`
+            # would hand the next a value the hub never sent. The bytes are
+            # immutable and shared.
+            frame = ThalovantBinary(kind=kind, data=payload, metadata=dict(metadata or {}))
             # One subscriber raising must not cost the others their frame, and
             # must not take down the socket's read loop with it.
             try:
