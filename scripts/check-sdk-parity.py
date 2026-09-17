@@ -395,10 +395,19 @@ def compare_conformance(repo, reference_results, root, planned):
     # thalovant-mcp calls both planned; before this, the release gate asked
     # them for results anyway and no amount of work in those repositories
     # could have produced them.
+    try:
+        declaration = read(root / MANIFEST)
+    except (OSError, ValueError):
+        # No declaration to read: ask for everything, which is what this did
+        # before and the strict side of the choice. validate_consumer runs
+        # first in the real flow and raises on a manifest this one cannot
+        # read, so reaching here means a caller passed a bare directory.
+        declaration = {}
     declared = set()
-    for capability in (read(root / MANIFEST).get("capabilities") or {}).values():
+    for capability in (declaration.get("capabilities") or {}).values():
         declared.update((capability.get("vectors") or {}).keys())
-    wanted = {name: value for name, value in reference_results.items() if name in declared}
+    wanted = ({name: value for name, value in reference_results.items() if name in declared}
+              if declaration else dict(reference_results))
     if not wanted:
         return
     theirs = conformance_results(root)
