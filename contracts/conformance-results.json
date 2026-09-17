@@ -12,13 +12,13 @@
     "conversation-vectors.json": {
       "cases": {
         "a turn that clears the conversation is not refilled from the last one": "38337c3956a365682f04f1d4df2f969695a84ba30895baccaf129f63ab48590a",
-        "live device state is not replayed": "e4bc151de1f688feb9abde792b6bcff5fe72ba46ba42742eb12710c74a1a6a28",
+        "live device state is not replayed": "8d6a15dd88cd64046882fd82a92e936780e48b6ad6fb5cda7cb8a4b18a7d181b",
         "nothing to carry leaves the turn untouched": "92ebd8fc8ad90673945720418c8dc2be79613964320d5732e261310e0bb5377b",
-        "the next turn carries what the last one activated": "892b43dfb5bfe4935a672aa0f8755462a53ca945d7d2a5265b80b44634b79ca4",
-        "this turn keeps its own value": "3465bf9e45d6ba8db043f4af9508f98a935c7f970276e988def7dd3683793c5e",
-        "this turn's language outranks the last one's": "822ea26770f806232ff121094a0d498b603439d34d2c276c2522b6f812018081"
+        "the next turn carries what the last one activated": "87ad2d37147d80808f7d8b3ef671b56d0fdf06f9d0398d49bbcc00f1882a552c",
+        "this turn keeps its own value": "d005ca7b828035f2c33398d19e26c1958c24bdd2a0dd8453bb5bafa2b434fb63",
+        "this turn's language outranks the last one's": "126f8af320b43021d1ff01d3eabf4d1048b4a79ccb4a87dc657e29756a6d873d"
       },
-      "digest": "4fb01db8e93b82a7a46588c0481d936521082b48809d25db9e1aa5eb5cc8c0bf"
+      "digest": "e162defefc9955cc2f3ac2eb3a86afd12fa89ee732299403942eb0280d3e06c3"
     }
   },
   "schema_version": 1

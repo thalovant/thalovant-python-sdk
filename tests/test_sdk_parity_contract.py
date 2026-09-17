@@ -325,6 +325,21 @@ def test_a_consumer_is_judged_on_what_it_produced_not_what_it_declared(tmp_path)
             "consumer", reference,
             _results(tmp_path, {"schema_version": 1, "results": wrong}), [])
 
+    # A consumer that declares none of these vectors is not asked for them.
+    # thalovant-embedded-c calls both capabilities not-applicable and
+    # thalovant-mcp calls them planned; neither vendors a copy, so a record was
+    # never something work in those repositories could produce.
+    planned = []
+    declares_nothing = tmp_path / "declares-nothing"
+    (declares_nothing / "contracts").mkdir(parents=True)
+    (declares_nothing / "contracts" / "sdk-parity.json").write_text(json.dumps({
+        "schema_version": 1,
+        "reference_digests": [],
+        "capabilities": {"binary": {"status": "not-applicable", "reason": "no."}},
+    }), encoding="utf-8")
+    parity.compare_conformance("consumer", reference, declares_nothing, planned)
+    assert planned == [], "a consumer is not asked to record vectors it does not declare"
+
     # A case that was never run cannot be passed off as one that was.
     skipped = copy.deepcopy(reference)
     del skipped[vector_file]["cases"][case]
