@@ -405,6 +405,12 @@ def compare_conformance(repo, reference_results, root, planned):
         declaration = {}
     declared = set()
     for capability in (declaration.get("capabilities") or {}).values():
+        # Only what the consumer says it implements. A vector named under an
+        # entry it has justified as planned or not-applicable is not evidence
+        # it owes -- and a legacy vector left in such an entry would otherwise
+        # add a release-blocking gap for behaviour nobody expects it to have.
+        if capability.get("status") != "required":
+            continue
         declared.update((capability.get("vectors") or {}).keys())
     wanted = ({name: value for name, value in reference_results.items() if name in declared}
               if declaration else dict(reference_results))
