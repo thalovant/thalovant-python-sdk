@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .errors import ThalovantRuntimeError
 
 from .rich import ThalovantDisplayItem, display_items_from_event_data, rich_media_from_data, strip_ssml
 
@@ -463,6 +466,46 @@ def _event_from_message(event_name: str, message: Any) -> ThalovantEvent:
         context=_message_context(message),
         raw=message,
     )
+
+
+def refusal_belongs_to_ask(
+    *,
+    request_id: str | None,
+    own_request_id: str,
+    denied_type: str | None,
+    asks_in_flight: int,
+    queries_in_flight: int,
+) -> bool:
+    """Whether a ``hive.policy.denied`` is this ask's to raise.
+
+    A denial that carries a request id is judged by it, like any reply. The
+    hub, though, builds its denials with source and destination context only
+    (hivemind-core ``_send_policy_denied``), so the usual one carries none and
+    names the type it refused instead. That is enough when this ask is the
+    only utterance the client has out: it is the one message of that type in
+    flight. With a second ask, or a query, it is a guess -- and a wrong guess
+    ends a question the hub never refused -- so neither takes it, and each is
+    left to its own reply or deadline.
+    """
+    if request_id:
+        return request_id == own_request_id
+    return (
+        denied_type == EVENT_RECOGNIZER_LOOP_UTTERANCE
+        and asks_in_flight == 1
+        and queries_in_flight == 0
+    )
+
+
+def failure_error(event: ThalovantEvent | None) -> "ThalovantRuntimeError":
+    """The typed error an ask raises for a failure event it ended on."""
+    from .errors import ThalovantPolicyDeniedError, ThalovantRuntimeError, ThalovantUnansweredError
+
+    if event is not None and event.name == EVENT_POLICY_DENIED:
+        return ThalovantPolicyDeniedError.from_event(event)
+    if event is not None and event.name in {EVENT_INTENT_UNMATCHED, EVENT_INTENT_FAILURE}:
+        said = event.data.get("reason") or event.data.get("error")
+        return ThalovantUnansweredError(said.strip() if isinstance(said, str) else "")
+    return ThalovantRuntimeError(_failure_reason(event))
 
 
 def _failure_reason(event: ThalovantEvent | None) -> str:

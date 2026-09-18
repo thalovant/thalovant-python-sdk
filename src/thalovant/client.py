@@ -46,7 +46,8 @@ from .events import (
     _context_with_correlation,
     _event_from_message,
     _event_matches_context,
-    _failure_reason,
+    failure_error,
+    refusal_belongs_to_ask,
     _merge_context,
     _new_request_id,
     _new_session_id,
@@ -1367,6 +1368,13 @@ class ThalovantClient:
         with self._reserve_reply_id("query", query_id):
             return collect()
 
+    def _utterances_in_flight(self) -> dict[str, int]:
+        """How many asks and queries this client has out, for a denial with no id."""
+        with self._reply_ids_lock:
+            asks = sum(1 for namespace, _ in self._active_reply_ids if namespace == "ask")
+            queries = sum(1 for namespace, _ in self._active_reply_ids if namespace == "query")
+        return {"asks_in_flight": asks, "queries_in_flight": queries}
+
     @contextmanager
     def _reserve_reply_id(self, namespace: str, identifier: str) -> Iterator[None]:
         """Reject ambiguous overlapping collectors without disturbing the owner."""
@@ -1515,8 +1523,22 @@ class ThalovantClient:
                 else:
                     event = message
                     # The runtime may replace the conversation session. The
-                    # request ID remains required to exclude ambient replies.
-                    if event.request_id != request_id:
+                    # request ID remains required to exclude ambient replies --
+                    # except for the one reply the hub cannot correlate. A
+                    # denial carries no request id, only the type it refused,
+                    # and dropping it here turned a refusal the hub made at
+                    # once into a full timeout: "your hub did not answer in
+                    # time", about a question it had refused and explained.
+                    if event.name == EVENT_POLICY_DENIED:
+                        denied_type = event.data.get("denied_type")
+                        if not refusal_belongs_to_ask(
+                            request_id=event.request_id,
+                            own_request_id=request_id,
+                            denied_type=denied_type if isinstance(denied_type, str) else None,
+                            **self._utterances_in_flight(),
+                        ):
+                            return
+                    elif event.request_id != request_id:
                         return
                 if event.name == EVENT_AUDIO_QUEUE:
                     # A skill sound rides along with the speech, in order. It
@@ -1664,7 +1686,10 @@ class ThalovantClient:
             if caller_cancellation is not None and caller_cancellation.is_set():
                 raise ThalovantConnectionError("Hub request was cancelled.")
             if failure_event is not None and not fragments:
-                raise ThalovantRuntimeError(_failure_reason(failure_event))
+                # Typed, so a caller can tell a refusal from a question the hub
+                # cannot answer from a fault -- they need three different
+                # sentences, and a bare runtime error allowed only one.
+                raise failure_error(failure_event)
             if not fragments:
                 raise ThalovantTimeoutError("Hub finished the query but did not emit a speak reply.")
             reply_session_id = (

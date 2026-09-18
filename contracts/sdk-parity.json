@@ -333,6 +333,49 @@
         "mesh-vectors.json"
       ]
     },
+    "refusal": {
+      "description": "What an ask does when the hub refuses it or cannot answer it: a refusal ends the ask at once as a typed error carrying the hub's code, and a spent quota's numbers; an unmatched intent is an unanswered question, not a failure; and a denial with no request id is taken only by the one utterance in flight",
+      "files": [
+        "src/thalovant/client.py",
+        "src/thalovant/errors.py",
+        "src/thalovant/events.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_refusal_vectors.py"
+      ],
+      "vectors": [
+        "refusal-vectors.json"
+      ]
+    },
     "runtime": {
       "description": "Runtime messages, correlation, lifecycle, Noise and inventory queries within each supported transport tier",
       "files": [
@@ -434,6 +477,7 @@
       "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
+      "refusal-vectors.json": "1e123c13d2ffdd925aae30531a4855111e9ee1161a3bf224284e7f0e1345460e",
       "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     },
     "dependencies": {
@@ -455,17 +499,17 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "01b5778a9a61a8a1e4bbd35776bdc5010dc5c90228f7d0ec353cfc996f5c2ffa",
+      "src/thalovant/__init__.py": "f98115a5131d974894a25836491992fe068e3bf0c87a57cc0e2bc303fd5114a5",
       "src/thalovant/_http_runtime.py": "d7ad4a25cad5616d858909a00c445ab137d17df6d7e713e404372154a60eef8b",
       "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
       "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "d5f96b9b8a9e934f1c71050b405d9a97c186ce98bdd296abc790be50669cc532",
+      "src/thalovant/client.py": "62e452f5527be526ce1e4d3930ed57fdbf45985a6e25b31fcaee474684fd8bda",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "f96c12b3af0847250f2ebcc047955699c64dd1440261f0e9899601cfd2e44d56",
-      "src/thalovant/events.py": "e7ee8eb1a3bcd76f3081ee7a375e9387a661a91a52f9f6450b5e07184675f073",
+      "src/thalovant/errors.py": "f277cdfcadfa82f49bb48f2990b596f9fffc49891ada0fc0f95ff4c3c7839ef6",
+      "src/thalovant/events.py": "88112aa0e9373bc646bdea0842e470d7e16651425d3a4fb5650aa567a0113809",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
       "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
@@ -508,7 +552,8 @@
     "083b2da8b256cd970b3050218d8d51f13e7355633913d086c9f4147d8790165b",
     "1e8b76b34b755207bb754e5f4c7364334f14476dee70fce1d2687bfdc1545f30",
     "f6a74ead44d53658228da3f4457334f3e922b67dd1e33b43c3ba8b6f7c066bf9",
-    "6f5f697b07eb86da6877faf8aa27138430f886495ac965d08a28fba780e411cd"
+    "6f5f697b07eb86da6877faf8aa27138430f886495ac965d08a28fba780e411cd",
+    "c28f2c9cf3f28b5387fb2f4a60027b29ac745b9972015beb386f6c628c9617b7"
   ],
   "schema_version": 1
 }

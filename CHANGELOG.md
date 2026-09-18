@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.3 — 2026-09-18
+
+- A refusal ends an `ask()` at once instead of letting it run to the deadline. The hub sends `hive.policy.denied` the instant it refuses, built with source and destination context only -- no request id -- so the request-id gate dropped it and the ask waited out its whole budget. Production showed pairs of denials 13.4 s apart behind "your hub did not answer in time", about a question the hub had refused at once and explained. A denial with no request id is now taken when it names the type this ask sent **and** this ask is the only utterance the client has out; with a second ask or a query in flight either could be the one refused, so neither takes it.
+- A refusal raises `ThalovantPolicyDeniedError` from `ask()`, not a bare `ThalovantRuntimeError`. It already existed, and `intents()` already raised it; `ask()` never did.
+- `ThalovantPolicyDeniedError.quota` is a `ThalovantQuota` -- `period`, `limit`, `used`, `reset_after` -- when the refusal is `intent_quota_exceeded`. The quota policy sends all four; an app could only say "refused" to somebody who had simply used up the day.
+- The refusal's message fits the refusal. It told everybody to "allow this connection to publish `recognizer_loop:utterance` in the dashboard", which is the fix for an allow-list and no help at all for a spent quota or for `backend_unavailable` -- a hub whose assistant is down, which arrives under the same event name.
+- An unmatched intent raises `ThalovantUnansweredError`. `ovos.intent.unmatched` (`complete_intent_failure` from older hubs) is the hub understanding the question and having nothing for it -- neither a refusal nor a fault -- and as a runtime error a caller could only report that something failed.
+- New `refusal` capability in the parity contract, with `contracts/conformance/refusal-vectors.json`: ten classification cases taken from the wire shapes hivemind-core and the intent-quota policy actually send, and six correlation cases. Kotlin shipped this behaviour alone in 0.7.9, with nothing in the contract to say any other SDK owed it.
+
 ## 0.8.2 — 2026-09-16
 
 - Deliver every binary payload type, not two of six. `hivemind-bus-client` surfaces `TTS_AUDIO` and `FILE` and logs "Ignoring received untyped binary data" for the other four, so `RAW_AUDIO`, `NUMPY_IMAGE`, `STT_AUDIO_TRANSCRIBE` and `STT_AUDIO_HANDLE` reached no subscriber. `on_binary()` now sees all of them, and a payload type nobody has named yet arrives rather than disappearing.
