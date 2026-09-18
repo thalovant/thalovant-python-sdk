@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 import math
 from pathlib import Path
@@ -48,6 +48,7 @@ from .events import (
     _event_matches_context,
     failure_error,
     refusal_belongs_to_ask,
+    UNTRACKED_UTTERANCE_GRACE_SECONDS,
     _merge_context,
     _new_request_id,
     _new_session_id,
@@ -246,6 +247,8 @@ class ThalovantClient:
         self._connected = False
         self._reply_ids_lock = threading.Lock()
         self._active_reply_ids: set[tuple[str, str]] = set()
+        # When each fire-and-forget utterance went out; see _utterances_in_flight().
+        self._untracked_sends: deque[float] = deque(maxlen=1024)
         self._connection_lock = threading.Lock()
         self._connection_state = threading.RLock()
         self._connection_generation = 0
@@ -944,6 +947,11 @@ class ThalovantClient:
     ) -> Any:
         """Emit a raw OVOS/HiveMind bus event through the HTTP data plane."""
 
+        if event_type == EVENT_RECOGNIZER_LOOP_UTTERANCE:
+            # A fire-and-forget utterance: nothing will wait on it, but the
+            # hub may refuse it, and that refusal carries no request id.
+            with self._reply_ids_lock:
+                self._untracked_sends.append(time.monotonic())
         return self._with_reconnect(
             lambda: self._transport.emit_event(
                 event_type,
@@ -1369,11 +1377,20 @@ class ThalovantClient:
             return collect()
 
     def _utterances_in_flight(self) -> dict[str, int]:
-        """How many asks and queries this client has out, for a denial with no id."""
+        """How many utterances this client may still have refused, for a denial with no id.
+
+        Asks and queries are counted while they wait. A fire-and-forget
+        utterance has nothing to wait on, so it counts for the grace window
+        after it was sent -- its refusal could land while an ask is waiting.
+        """
+        now = time.monotonic()
         with self._reply_ids_lock:
             asks = sum(1 for namespace, _ in self._active_reply_ids if namespace == "ask")
             queries = sum(1 for namespace, _ in self._active_reply_ids if namespace == "query")
-        return {"asks_in_flight": asks, "queries_in_flight": queries}
+            while self._untracked_sends and now - self._untracked_sends[0] > UNTRACKED_UTTERANCE_GRACE_SECONDS:
+                self._untracked_sends.popleft()
+            sends = len(self._untracked_sends)
+        return {"asks_in_flight": asks, "queries_in_flight": queries, "sends_in_flight": sends}
 
     @contextmanager
     def _reserve_reply_id(self, namespace: str, identifier: str) -> Iterator[None]:

@@ -468,6 +468,15 @@ def _event_from_message(event_name: str, message: Any) -> ThalovantEvent:
     )
 
 
+#: How long a fire-and-forget utterance counts as possibly still being
+#: refused. Denials come back as fast as the hub admits a message --
+#: milliseconds -- so this is generous on purpose: a wrong "in flight" only
+#: costs an ask the deadline it always had, where a wrong "not in flight" ends
+#: a question the hub never refused. Shared by every SDK through the refusal
+#: vectors' ``untracked_grace_seconds``.
+UNTRACKED_UTTERANCE_GRACE_SECONDS = 10.0
+
+
 def refusal_belongs_to_ask(
     *,
     request_id: str | None,
@@ -475,6 +484,7 @@ def refusal_belongs_to_ask(
     denied_type: str | None,
     asks_in_flight: int,
     queries_in_flight: int,
+    sends_in_flight: int = 0,
 ) -> bool:
     """Whether a ``hive.policy.denied`` is this ask's to raise.
 
@@ -486,6 +496,10 @@ def refusal_belongs_to_ask(
     flight. With a second ask, or a query, it is a guess -- and a wrong guess
     ends a question the hub never refused -- so neither takes it, and each is
     left to its own reply or deadline.
+
+    ``sends_in_flight`` is fire-and-forget utterances sent within
+    :data:`UNTRACKED_UTTERANCE_GRACE_SECONDS`. They have no reply and no id to
+    track, but a refusal of one could arrive while an ask is waiting.
     """
     if request_id:
         return request_id == own_request_id
@@ -493,6 +507,7 @@ def refusal_belongs_to_ask(
         denied_type == EVENT_RECOGNIZER_LOOP_UTTERANCE
         and asks_in_flight == 1
         and queries_in_flight == 0
+        and sends_in_flight == 0
     )
 
 

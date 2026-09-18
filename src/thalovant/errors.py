@@ -43,14 +43,18 @@ class ThalovantQuota:
 
 
 def _count(value: Any) -> int:
-    """A whole count from the wire, or 0 -- never a bool, never a guess."""
+    """A whole, non-negative count from the wire, or 0 -- never a bool, never a guess.
+
+    A negative limit, usage or reset time is not something a policy can mean,
+    and passing one through would have an app say "-1 of -5 questions used".
+    """
     if isinstance(value, bool):
         return 0
     if isinstance(value, int):
-        return value
+        return max(value, 0)
     if isinstance(value, str):
         try:
-            return int(value.strip())
+            return max(int(value.strip()), 0)
         except ValueError:
             return 0
     return 0

@@ -23,7 +23,12 @@ from thalovant import (
     ThalovantTimeoutError,
     ThalovantUnansweredError,
 )
-from thalovant.events import ThalovantEvent, failure_error, refusal_belongs_to_ask
+from thalovant.events import (
+    UNTRACKED_UTTERANCE_GRACE_SECONDS,
+    ThalovantEvent,
+    failure_error,
+    refusal_belongs_to_ask,
+)
 from test_query_semantics import QueryTransport, client
 
 CONFORMANCE = Path(__file__).resolve().parents[1] / "contracts" / "conformance"
@@ -75,7 +80,12 @@ def test_a_denial_is_taken_only_by_the_ask_it_can_belong_to(case):
         denied_type=case["denied_type"],
         asks_in_flight=case["asks_in_flight"],
         queries_in_flight=case["queries_in_flight"],
+        sends_in_flight=case["sends_in_flight"],
     ) is case["taken"]
+
+
+def test_the_grace_window_is_the_one_the_vectors_name():
+    assert UNTRACKED_UTTERANCE_GRACE_SECONDS == VECTORS["untracked_grace_seconds"]
 
 
 def test_the_vectors_cover_every_kind_of_refusal():
@@ -165,5 +175,32 @@ def test_with_two_asks_in_flight_an_uncorrelated_denial_fails_neither():
         assert len(sends) == 2
         for label in ("first", "second"):
             assert isinstance(outcomes.get(label), ThalovantTimeoutError), f"{label}: {outcomes.get(label)!r}"
+    finally:
+        sdk.close()
+
+
+def test_an_ask_does_not_take_a_denial_a_fire_and_forget_send_could_own():
+    # send_utterance() has no reply and no id, but the hub can refuse it, and
+    # that refusal names only the type. Arriving while an ask waits, it could
+    # be either message's -- so the ask is left to its own deadline.
+    def script(transport):
+        if transport.sent_utterances == 2:
+            name, data, context = _denial(code="intent_quota_exceeded", data={})
+            transport.bus(name, data, context=context)
+
+    class CountingTransport(QueryTransport):
+        sent_utterances = 0
+
+        def emit_event(self, name, data, context):
+            if name == "recognizer_loop:utterance":
+                CountingTransport.sent_utterances += 1
+            return super().emit_event(name, data, context)
+
+    transport = CountingTransport(script)
+    sdk = client(transport, settle=0.05)
+    try:
+        sdk.send_utterance("turn the lights off")
+        with pytest.raises(ThalovantTimeoutError):
+            sdk.ask("what time is it", timeout=0.4)
     finally:
         sdk.close()
