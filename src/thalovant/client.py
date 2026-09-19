@@ -947,18 +947,38 @@ class ThalovantClient:
     ) -> Any:
         """Emit a raw OVOS/HiveMind bus event through the HTTP data plane."""
 
-        if event_type == EVENT_RECOGNIZER_LOOP_UTTERANCE:
-            # A fire-and-forget utterance: nothing will wait on it, but the
-            # hub may refuse it, and that refusal carries no request id.
-            with self._reply_ids_lock:
-                self._untracked_sends.append(time.monotonic())
-        return self._with_reconnect(
-            lambda: self._transport.emit_event(
-                event_type,
-                data or {},
-                self._context_with_identity_metadata(context),
+        if event_type != EVENT_RECOGNIZER_LOOP_UTTERANCE:
+            return self._with_reconnect(
+                lambda: self._transport.emit_event(
+                    event_type,
+                    data or {},
+                    self._context_with_identity_metadata(context),
+                )
             )
-        )
+        # A fire-and-forget utterance: nothing will wait on it, but the hub may
+        # refuse it, and that refusal carries no request id. Recorded before the
+        # publish so a denial cannot beat the record, and dropped again if the
+        # publish never happened -- a send that failed to leave leaves nothing
+        # for the hub to refuse, and a phantom would suppress a real refusal for
+        # the whole grace window.
+        with self._reply_ids_lock:
+            self._untracked_sends.append(time.monotonic())
+            recorded = self._untracked_sends[-1]
+        try:
+            return self._with_reconnect(
+                lambda: self._transport.emit_event(
+                    event_type,
+                    data or {},
+                    self._context_with_identity_metadata(context),
+                )
+            )
+        except BaseException:
+            with self._reply_ids_lock:
+                try:
+                    self._untracked_sends.remove(recorded)
+                except ValueError:
+                    pass
+            raise
 
     def _emit_query_with_timeout(
         self, event_type: str, data: dict[str, Any], context: dict[str, Any], timeout: float,

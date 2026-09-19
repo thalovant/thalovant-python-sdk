@@ -518,8 +518,10 @@ def failure_error(event: ThalovantEvent | None) -> "ThalovantRuntimeError":
     if event is not None and event.name == EVENT_POLICY_DENIED:
         return ThalovantPolicyDeniedError.from_event(event)
     if event is not None and event.name in {EVENT_INTENT_UNMATCHED, EVENT_INTENT_FAILURE}:
-        said = event.data.get("reason") or event.data.get("error")
-        return ThalovantUnansweredError(said.strip() if isinstance(said, str) else "")
+        # What the person said: both names carry the input, and that is what a
+        # caller shows ("no skill here answers 'book me a flight'"). `reason`
+        # is not on these events at all, so reading it left `said` empty.
+        return ThalovantUnansweredError(event.text.strip())
     return ThalovantRuntimeError(_failure_reason(event))
 
 

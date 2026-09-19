@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from thalovant import (
+    ThalovantConnectionError,
     ThalovantPolicyDeniedError,
     ThalovantQuota,
     ThalovantTimeoutError,
@@ -52,6 +53,8 @@ def test_a_failure_event_becomes_the_error_its_vector_names(case):
     expect = case["expect"]
     if expect["kind"] == "unanswered":
         assert isinstance(error, ThalovantUnansweredError), error
+        # What the person said, which is what a caller shows.
+        assert error.said == expect["said"]
         return
     assert expect["kind"] == "refused"
     assert isinstance(error, ThalovantPolicyDeniedError), error
@@ -202,5 +205,21 @@ def test_an_ask_does_not_take_a_denial_a_fire_and_forget_send_could_own():
         sdk.send_utterance("turn the lights off")
         with pytest.raises(ThalovantTimeoutError):
             sdk.ask("what time is it", timeout=0.4)
+    finally:
+        sdk.close()
+
+
+def test_a_send_that_never_left_is_not_in_flight():
+    # A phantom would suppress a real refusal for the whole grace window.
+    class RefusingTransport(QueryTransport):
+        def emit_event(self, name, data, context):
+            raise ThalovantConnectionError("no route to the hub")
+
+    transport = RefusingTransport(lambda _: None)
+    sdk = client(transport, settle=0)
+    try:
+        with pytest.raises(ThalovantConnectionError):
+            sdk.send_utterance("turn the lights off")
+        assert sdk._utterances_in_flight()["sends_in_flight"] == 0
     finally:
         sdk.close()

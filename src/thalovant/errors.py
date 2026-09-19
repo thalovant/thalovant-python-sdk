@@ -50,14 +50,20 @@ def _count(value: Any) -> int:
     """
     if isinstance(value, bool):
         return 0
+    number: int
     if isinstance(value, int):
-        return max(value, 0)
-    if isinstance(value, str):
+        number = value
+    elif isinstance(value, str):
         try:
-            return max(int(value.strip()), 0)
+            number = int(value.strip())
         except ValueError:
             return 0
-    return 0
+    else:
+        return 0
+    # Whole, non-negative, and inside a signed 64-bit integer. Past that it is
+    # not a number the policy can have meant -- every other SDK's parser stops
+    # there, and a count nobody can act on is worse than none.
+    return number if 0 <= number <= 2**63 - 1 else 0
 
 
 class ThalovantPolicyDeniedError(ThalovantRuntimeError):
@@ -130,6 +136,10 @@ def _refusal_message(denied_type: str, code: str, reason: str, quota: ThalovantQ
     # day to "allow this connection to publish recognizer_loop:utterance" sent
     # them to a settings page that could not help.
     if quota is not None:
+        if not (quota.limit or quota.used or quota.reset_after or quota.period):
+            # The hub refused on a quota and sent none of the numbers. "All
+            # questions used" would be inventing one.
+            return f"The hub refused {denied_type!r}: a quota has run out."
         used = f"{quota.used} of {quota.limit}" if quota.limit else "all"
         period = f" {quota.period}" if quota.period else ""
         when = f"; it resets in {quota.reset_after}s" if quota.reset_after else ""
