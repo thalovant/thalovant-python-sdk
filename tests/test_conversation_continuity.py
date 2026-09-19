@@ -392,8 +392,12 @@ class LateHandledHubTransport(HubTransport):
                 handler(FakeMessage({}, context=reply_context))
 
         thread = threading.Thread(target=_late, daemon=True)
-        self.threads.append(thread)
+        # Started before it is published: the test joins everything in this
+        # list, and a thread that is visible but not yet started raises
+        # "cannot join thread before it is started" -- which is how this
+        # failed on a 3.12 runner while passing everywhere else.
         thread.start()
+        self.threads.append(thread)
 
 
 def test_a_handled_event_that_arrives_after_the_reply_still_records_the_carry():
