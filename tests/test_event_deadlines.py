@@ -48,9 +48,13 @@ def test_event_operations_bound_connect_and_never_subscribe_after_expiry(name):
             operation(sdk, name)
         assert time.monotonic() - started < 0.3
         # The claim is that cleanup happens, not that a background thread is
-        # scheduled inside 300ms: the operation's own promptness is the assert
-        # above. A loaded runner missed the narrower window.
-        assert transport.cleaned.wait(5)
+        # scheduled inside any particular window: the operation's own
+        # promptness is the assert above. The budget here is a backstop against
+        # a hung test, so it is far larger than the work -- cleanup lands in
+        # under a millisecond when the runner is not starved, and a runner that
+        # took five seconds to schedule the thread failed this on 3.13 while
+        # the same commit passed everywhere else.
+        assert transport.cleaned.wait(60)
         with pytest.raises(ThalovantConnectionError):
             sdk.connect(timeout=0.02)
         assert transport.dials == 1
