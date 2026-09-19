@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .errors import ThalovantRuntimeError
 
 from .rich import ThalovantDisplayItem, display_items_from_event_data, rich_media_from_data, strip_ssml
 
@@ -463,6 +466,63 @@ def _event_from_message(event_name: str, message: Any) -> ThalovantEvent:
         context=_message_context(message),
         raw=message,
     )
+
+
+#: How long a fire-and-forget utterance counts as possibly still being
+#: refused. Denials come back as fast as the hub admits a message --
+#: milliseconds -- so this is generous on purpose: a wrong "in flight" only
+#: costs an ask the deadline it always had, where a wrong "not in flight" ends
+#: a question the hub never refused. Shared by every SDK through the refusal
+#: vectors' ``untracked_grace_seconds``.
+UNTRACKED_UTTERANCE_GRACE_SECONDS = 10.0
+
+
+def refusal_belongs_to_ask(
+    *,
+    request_id: str | None,
+    own_request_id: str,
+    denied_type: str | None,
+    asks_in_flight: int,
+    queries_in_flight: int,
+    sends_in_flight: int = 0,
+) -> bool:
+    """Whether a ``hive.policy.denied`` is this ask's to raise.
+
+    A denial that carries a request id is judged by it, like any reply. The
+    hub, though, builds its denials with source and destination context only
+    (hivemind-core ``_send_policy_denied``), so the usual one carries none and
+    names the type it refused instead. That is enough when this ask is the
+    only utterance the client has out: it is the one message of that type in
+    flight. With a second ask, or a query, it is a guess -- and a wrong guess
+    ends a question the hub never refused -- so neither takes it, and each is
+    left to its own reply or deadline.
+
+    ``sends_in_flight`` is fire-and-forget utterances sent within
+    :data:`UNTRACKED_UTTERANCE_GRACE_SECONDS`. They have no reply and no id to
+    track, but a refusal of one could arrive while an ask is waiting.
+    """
+    if request_id:
+        return request_id == own_request_id
+    return (
+        denied_type == EVENT_RECOGNIZER_LOOP_UTTERANCE
+        and asks_in_flight == 1
+        and queries_in_flight == 0
+        and sends_in_flight == 0
+    )
+
+
+def failure_error(event: ThalovantEvent | None) -> "ThalovantRuntimeError":
+    """The typed error an ask raises for a failure event it ended on."""
+    from .errors import ThalovantPolicyDeniedError, ThalovantRuntimeError, ThalovantUnansweredError
+
+    if event is not None and event.name == EVENT_POLICY_DENIED:
+        return ThalovantPolicyDeniedError.from_event(event)
+    if event is not None and event.name in {EVENT_INTENT_UNMATCHED, EVENT_INTENT_FAILURE}:
+        # What the person said: both names carry the input, and that is what a
+        # caller shows ("no skill here answers 'book me a flight'"). `reason`
+        # is not on these events at all, so reading it left `said` empty.
+        return ThalovantUnansweredError(event.text.strip())
+    return ThalovantRuntimeError(_failure_reason(event))
 
 
 def _failure_reason(event: ThalovantEvent | None) -> str:

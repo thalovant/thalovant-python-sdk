@@ -376,6 +376,12 @@ class LateHandledHubTransport(HubTransport):
         super().__init__(turns)
         self.delay = delay
         self.threads: list[threading.Thread] = []
+        # Set once the late handled has actually been delivered. Waiting on the
+        # thread list instead is a race: the send runs on a worker, so ask() can
+        # return before the thread is even in the list, and joining an empty
+        # list waits for nothing -- the next turn then goes out before the hub
+        # has said what the conversation is.
+        self.delivered = threading.Event()
 
     def emit_event(self, event_type, data, context):
         self.emitted.append((event_type, data, context))
@@ -390,10 +396,11 @@ class LateHandledHubTransport(HubTransport):
             time.sleep(self.delay)
             for handler in self.handlers.get("ovos.utterance.handled", []):
                 handler(FakeMessage({}, context=reply_context))
+            self.delivered.set()
 
         thread = threading.Thread(target=_late, daemon=True)
-        self.threads.append(thread)
         thread.start()
+        self.threads.append(thread)
 
 
 def test_a_handled_event_that_arrives_after_the_reply_still_records_the_carry():
@@ -407,8 +414,7 @@ def test_a_handled_event_that_arrives_after_the_reply_still_records_the_carry():
     client = ThalovantClient(identity(), transport=transport, reply_settle_seconds=0.0, empty_reply_wait_seconds=0.0)
 
     client.ask("Fais un prout", session_id="sat-1")
-    for thread in transport.threads:
-        thread.join(5)
+    assert transport.delivered.wait(5), "the hub never said what the conversation was"
 
     transport.turns.append(HubTurn(session=_fart_handlers()))
     client.ask("Encore un", session_id="sat-1")

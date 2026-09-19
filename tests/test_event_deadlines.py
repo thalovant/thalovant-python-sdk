@@ -47,11 +47,20 @@ def test_event_operations_bound_connect_and_never_subscribe_after_expiry(name):
         with pytest.raises(ThalovantTimeoutError):
             operation(sdk, name)
         assert time.monotonic() - started < 0.3
-        assert transport.cleaned.wait(0.3)
         with pytest.raises(ThalovantConnectionError):
             sdk.connect(timeout=0.02)
         assert transport.dials == 1
+        # The connect this abandoned is owned by a worker, and the caller does
+        # not wait for it -- that is the whole point of the assert above. So
+        # the worker is still inside `Held.connect` here, and it retires the
+        # connection when that returns: this budget has to outlast the gate
+        # above, not the scheduler.
+        #
+        # Measured at 0.3s it was a coin toss, because it was really timing how
+        # fast a thread got scheduled in the gap. Two identical CI runs of one
+        # commit disagreed.
         transport.gate.set()
+        assert transport.cleaned.wait(30)
         sdk.connect(timeout=1)
         assert not transport.bus_handlers and transport.sent == 0
     finally:

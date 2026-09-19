@@ -1,0 +1,442 @@
+{
+  "schema_version": 1,
+  "description": "What an ask does when the hub refuses it or cannot answer it. The hub sends hive.policy.denied the instant it refuses, with source and destination context only -- no request id -- and nests the policy's own numbers under data.data. Every SDK must end the ask at once as a typed refusal rather than wait out its deadline, carry the numbers a spent quota sends, and tell an unanswered question apart from a refusal. A fire-and-forget utterance (send_utterance, send_action, send_code, or emit of recognizer_loop:utterance) has no reply and no id to track, so it counts as in flight for untracked_grace_seconds from the moment it is published -- recorded after the connection is up, since a connect that never published nothing to refuse, and kept when the publish itself errors, because a transport can fail after the hub already has the frame: its refusal could arrive while an ask is waiting. A count is a whole, non-negative number that every JSON decoder carries exactly: at most 9007199254740991 (2**53-1). Anything else -- fractional, negative, or larger -- is not a number the policy can have meant, and reads as 0. The ceiling is that low on purpose: above it a decoder backed by a double can no longer tell one whole number from the next, so two SDKs reading the same denial would report different allowances, and a contract that cannot be agreed on is not one. Wire shapes are hivemind-core _send_policy_denied / _send_backend_unavailable and hivemind-intent-quota-plugin _denied_verdict.",
+  "untracked_grace_seconds": 10,
+  "classification": [
+    {
+      "name": "an allow-list refusal names the type and carries no quota",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "acl_disallowed_type",
+          "reason": "recognizer_loop:utterance not in allowed_types",
+          "data": {
+            "allowed": [
+              "speak",
+              "ovos.skills.fallback.list"
+            ]
+          }
+        },
+        "context": {
+          "source": "hivemind-core",
+          "destination": "sat-1"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "acl_disallowed_type",
+        "reason": "recognizer_loop:utterance not in allowed_types",
+        "allowed": [
+          "speak",
+          "ovos.skills.fallback.list"
+        ],
+        "quota": null
+      }
+    },
+    {
+      "name": "a spent daily quota carries the numbers behind it",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "daily intent quota exceeded",
+          "data": {
+            "period": "daily",
+            "limit": 50,
+            "used": 50,
+            "reset_after": 36120,
+            "request_type": "recognizer_loop:utterance"
+          }
+        },
+        "context": {
+          "source": "hivemind-core",
+          "destination": "sat-1"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "daily intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "daily",
+          "limit": 50,
+          "used": 50,
+          "reset_after": 36120
+        }
+      }
+    },
+    {
+      "name": "a spent monthly quota is the same shape with its own period",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "monthly intent quota exceeded",
+          "data": {
+            "period": "monthly",
+            "limit": 1000,
+            "used": 1000,
+            "reset_after": 1
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "monthly intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "monthly",
+          "limit": 1000,
+          "used": 1000,
+          "reset_after": 1
+        }
+      }
+    },
+    {
+      "name": "a quota refusal missing its numbers still reads as a quota, with zeros",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "intent quota exceeded",
+          "data": {}
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "",
+          "limit": 0,
+          "used": 0,
+          "reset_after": 0
+        }
+      }
+    },
+    {
+      "name": "negative counts are not counts",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "daily intent quota exceeded",
+          "data": {
+            "period": "daily",
+            "limit": -5,
+            "used": "-1",
+            "reset_after": -60
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "daily intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "daily",
+          "limit": 0,
+          "used": 0,
+          "reset_after": 0
+        }
+      }
+    },
+    {
+      "name": "quota numbers on a refusal that is not a quota are ignored",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "acl_disallowed_type",
+          "reason": "not allowed",
+          "data": {
+            "period": "daily",
+            "limit": 5,
+            "used": 5,
+            "reset_after": 60
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "acl_disallowed_type",
+        "reason": "not allowed",
+        "allowed": [],
+        "quota": null
+      }
+    },
+    {
+      "name": "a number no policy could have meant is not a count",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "daily intent quota exceeded",
+          "data": {
+            "period": "daily",
+            "limit": "99999999999999999999",
+            "used": 1e+20,
+            "reset_after": 1.5
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "daily intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "daily",
+          "limit": 0,
+          "used": 0,
+          "reset_after": 0
+        }
+      }
+    },
+    {
+      "name": "a number past what every decoder carries exactly is not a count",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "daily intent quota exceeded",
+          "data": {
+            "period": "daily",
+            "limit": 9007199254740992,
+            "used": 9007199254740991,
+            "reset_after": 0
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "daily intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "daily",
+          "limit": 0,
+          "used": 9007199254740991,
+          "reset_after": 0
+        }
+      }
+    },
+    {
+      "name": "a hub whose agent bus is down refuses with its own code",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "backend_unavailable",
+          "reason": "agent bus is not connected",
+          "data": {}
+        },
+        "context": {
+          "source": "hivemind-core",
+          "destination": "sat-1"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "backend_unavailable",
+        "reason": "agent bus is not connected",
+        "allowed": [],
+        "quota": null
+      }
+    },
+    {
+      "name": "only non-blank strings are message types an operator can allow",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "acl_disallowed_type",
+          "reason": "",
+          "data": {
+            "allowed": [
+              "speak",
+              3,
+              null,
+              "  ",
+              "  mycroft.stop  ",
+              true
+            ]
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "acl_disallowed_type",
+        "reason": "",
+        "allowed": [
+          "speak",
+          "mycroft.stop"
+        ],
+        "quota": null
+      }
+    },
+    {
+      "name": "a denial with no nested data at all is still a refusal",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance"
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "",
+        "reason": "",
+        "allowed": [],
+        "quota": null
+      }
+    },
+    {
+      "name": "an unmatched intent is unanswered, not a refusal",
+      "event": {
+        "type": "ovos.intent.unmatched",
+        "data": {
+          "utterance": "book me a flight to the moon",
+          "lang": "en-US"
+        },
+        "context": {
+          "request_id": "req-1",
+          "session": {
+            "session_id": "sat-1"
+          }
+        }
+      },
+      "expect": {
+        "kind": "unanswered",
+        "said": "book me a flight to the moon"
+      }
+    },
+    {
+      "name": "the legacy intent failure is the same answer from an older hub",
+      "event": {
+        "type": "complete_intent_failure",
+        "data": {
+          "utterance": "book me a flight to the moon"
+        },
+        "context": {
+          "request_id": "req-1"
+        }
+      },
+      "expect": {
+        "kind": "unanswered",
+        "said": "book me a flight to the moon"
+      }
+    }
+  ],
+  "correlation": [
+    {
+      "name": "the only ask in flight takes an uncorrelated refusal of what it sent",
+      "asks_in_flight": 1,
+      "queries_in_flight": 0,
+      "sends_in_flight": 0,
+      "denied_type": "recognizer_loop:utterance",
+      "request_id": null,
+      "taken": true
+    },
+    {
+      "name": "with two asks in flight neither takes it, because either could be wrong",
+      "asks_in_flight": 2,
+      "queries_in_flight": 0,
+      "sends_in_flight": 0,
+      "denied_type": "recognizer_loop:utterance",
+      "request_id": null,
+      "taken": false
+    },
+    {
+      "name": "an ask beside a query does not take it either",
+      "asks_in_flight": 1,
+      "queries_in_flight": 1,
+      "sends_in_flight": 0,
+      "denied_type": "recognizer_loop:utterance",
+      "request_id": null,
+      "taken": false
+    },
+    {
+      "name": "a fire-and-forget utterance sent moments ago could be the one refused",
+      "asks_in_flight": 1,
+      "queries_in_flight": 0,
+      "sends_in_flight": 1,
+      "denied_type": "recognizer_loop:utterance",
+      "request_id": null,
+      "taken": false
+    },
+    {
+      "name": "a refusal of some other type never fails a good ask",
+      "asks_in_flight": 1,
+      "queries_in_flight": 0,
+      "sends_in_flight": 0,
+      "denied_type": "ovos.skills.fallback.list",
+      "request_id": null,
+      "taken": false
+    },
+    {
+      "name": "a refusal that does carry this ask's request id is always this ask's",
+      "asks_in_flight": 2,
+      "queries_in_flight": 1,
+      "sends_in_flight": 0,
+      "denied_type": "recognizer_loop:utterance",
+      "request_id": "own",
+      "taken": true
+    },
+    {
+      "name": "a refusal carrying another ask's request id is never this ask's",
+      "asks_in_flight": 1,
+      "queries_in_flight": 0,
+      "sends_in_flight": 0,
+      "denied_type": "recognizer_loop:utterance",
+      "request_id": "other",
+      "taken": false
+    }
+  ]
+}

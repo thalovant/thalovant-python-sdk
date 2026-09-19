@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 import math
 from pathlib import Path
@@ -46,7 +46,9 @@ from .events import (
     _context_with_correlation,
     _event_from_message,
     _event_matches_context,
-    _failure_reason,
+    failure_error,
+    refusal_belongs_to_ask,
+    UNTRACKED_UTTERANCE_GRACE_SECONDS,
     _merge_context,
     _new_request_id,
     _new_session_id,
@@ -245,6 +247,8 @@ class ThalovantClient:
         self._connected = False
         self._reply_ids_lock = threading.Lock()
         self._active_reply_ids: set[tuple[str, str]] = set()
+        # When each fire-and-forget utterance went out; see _utterances_in_flight().
+        self._untracked_sends: deque[float] = deque(maxlen=1024)
         self._connection_lock = threading.Lock()
         self._connection_state = threading.RLock()
         self._connection_generation = 0
@@ -943,13 +947,37 @@ class ThalovantClient:
     ) -> Any:
         """Emit a raw OVOS/HiveMind bus event through the HTTP data plane."""
 
-        return self._with_reconnect(
-            lambda: self._transport.emit_event(
+        if event_type != EVENT_RECOGNIZER_LOOP_UTTERANCE:
+            return self._with_reconnect(
+                lambda: self._transport.emit_event(
+                    event_type,
+                    data or {},
+                    self._context_with_identity_metadata(context),
+                )
+            )
+        # A fire-and-forget utterance: nothing will wait on it, but the hub may
+        # refuse it, and that refusal carries no request id.
+        #
+        # Recorded once the connection is up and immediately before the publish.
+        # Connecting can take seconds, and starting the window there would spend
+        # the grace on a handshake -- leaving a denial to land after it, where
+        # an unrelated ask would take it. A connect that fails never publishes,
+        # so it records nothing at all.
+        #
+        # A publish that raises keeps its record: the HTTP transport can fail
+        # after the hub already holds the frame, and the hub refuses what it
+        # holds. A record that need not have been there costs an ask its
+        # deadline; a missing one ends a question the hub never refused.
+        def publish() -> Any:
+            with self._reply_ids_lock:
+                self._untracked_sends.append(time.monotonic())
+            return self._transport.emit_event(
                 event_type,
                 data or {},
                 self._context_with_identity_metadata(context),
             )
-        )
+
+        return self._with_reconnect(publish)
 
     def _emit_query_with_timeout(
         self, event_type: str, data: dict[str, Any], context: dict[str, Any], timeout: float,
@@ -1367,6 +1395,22 @@ class ThalovantClient:
         with self._reserve_reply_id("query", query_id):
             return collect()
 
+    def _utterances_in_flight(self) -> dict[str, int]:
+        """How many utterances this client may still have refused, for a denial with no id.
+
+        Asks and queries are counted while they wait. A fire-and-forget
+        utterance has nothing to wait on, so it counts for the grace window
+        after it was sent -- its refusal could land while an ask is waiting.
+        """
+        now = time.monotonic()
+        with self._reply_ids_lock:
+            asks = sum(1 for namespace, _ in self._active_reply_ids if namespace == "ask")
+            queries = sum(1 for namespace, _ in self._active_reply_ids if namespace == "query")
+            while self._untracked_sends and now - self._untracked_sends[0] > UNTRACKED_UTTERANCE_GRACE_SECONDS:
+                self._untracked_sends.popleft()
+            sends = len(self._untracked_sends)
+        return {"asks_in_flight": asks, "queries_in_flight": queries, "sends_in_flight": sends}
+
     @contextmanager
     def _reserve_reply_id(self, namespace: str, identifier: str) -> Iterator[None]:
         """Reject ambiguous overlapping collectors without disturbing the owner."""
@@ -1515,8 +1559,22 @@ class ThalovantClient:
                 else:
                     event = message
                     # The runtime may replace the conversation session. The
-                    # request ID remains required to exclude ambient replies.
-                    if event.request_id != request_id:
+                    # request ID remains required to exclude ambient replies --
+                    # except for the one reply the hub cannot correlate. A
+                    # denial carries no request id, only the type it refused,
+                    # and dropping it here turned a refusal the hub made at
+                    # once into a full timeout: "your hub did not answer in
+                    # time", about a question it had refused and explained.
+                    if event.name == EVENT_POLICY_DENIED:
+                        denied_type = event.data.get("denied_type")
+                        if not refusal_belongs_to_ask(
+                            request_id=event.request_id,
+                            own_request_id=request_id,
+                            denied_type=denied_type if isinstance(denied_type, str) else None,
+                            **self._utterances_in_flight(),
+                        ):
+                            return
+                    elif event.request_id != request_id:
                         return
                 if event.name == EVENT_AUDIO_QUEUE:
                     # A skill sound rides along with the speech, in order. It
@@ -1664,7 +1722,10 @@ class ThalovantClient:
             if caller_cancellation is not None and caller_cancellation.is_set():
                 raise ThalovantConnectionError("Hub request was cancelled.")
             if failure_event is not None and not fragments:
-                raise ThalovantRuntimeError(_failure_reason(failure_event))
+                # Typed, so a caller can tell a refusal from a question the hub
+                # cannot answer from a fault -- they need three different
+                # sentences, and a bare runtime error allowed only one.
+                raise failure_error(failure_event)
             if not fragments:
                 raise ThalovantTimeoutError("Hub finished the query but did not emit a speak reply.")
             reply_session_id = (
