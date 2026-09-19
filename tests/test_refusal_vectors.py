@@ -209,17 +209,37 @@ def test_an_ask_does_not_take_a_denial_a_fire_and_forget_send_could_own():
         sdk.close()
 
 
-def test_a_send_that_never_left_is_not_in_flight():
-    # A phantom would suppress a real refusal for the whole grace window.
-    class RefusingTransport(QueryTransport):
-        def emit_event(self, name, data, context):
+def test_a_send_that_never_connected_is_not_in_flight():
+    # A connect that fails publishes nothing, so there is nothing for the hub
+    # to refuse -- and a phantom would suppress a real refusal for the whole
+    # grace window.
+    class Unreachable(QueryTransport):
+        def connect(self):
             raise ThalovantConnectionError("no route to the hub")
 
-    transport = RefusingTransport(lambda _: None)
+    transport = Unreachable(lambda _: None)
     sdk = client(transport, settle=0)
     try:
         with pytest.raises(ThalovantConnectionError):
             sdk.send_utterance("turn the lights off")
         assert sdk._utterances_in_flight()["sends_in_flight"] == 0
+    finally:
+        sdk.close()
+
+
+def test_a_publish_that_errored_still_counts_because_the_hub_may_hold_it():
+    # The transport can fail after the hub already has the frame, and the hub
+    # refuses what it holds. Forgetting the send would leave the next ask as
+    # the only candidate for a denial that was never its own.
+    class Lossy(QueryTransport):
+        def emit_event(self, name, data, context):
+            raise ThalovantConnectionError("the write reported a failure")
+
+    transport = Lossy(lambda _: None)
+    sdk = client(transport, settle=0)
+    try:
+        with pytest.raises(ThalovantConnectionError):
+            sdk.send_utterance("turn the lights off")
+        assert sdk._utterances_in_flight()["sends_in_flight"] == 1
     finally:
         sdk.close()

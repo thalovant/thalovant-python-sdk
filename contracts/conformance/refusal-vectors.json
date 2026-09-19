@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "What an ask does when the hub refuses it or cannot answer it. The hub sends hive.policy.denied the instant it refuses, with source and destination context only -- no request id -- and nests the policy's own numbers under data.data. Every SDK must end the ask at once as a typed refusal rather than wait out its deadline, carry the numbers a spent quota sends, and tell an unanswered question apart from a refusal. A fire-and-forget utterance (send_utterance, send_action, send_code, or emit of recognizer_loop:utterance) has no reply and no id to track, so it counts as in flight for untracked_grace_seconds after it is sent: its refusal could arrive while an ask is waiting. A count is a whole number that fits a signed 64-bit integer; anything else -- fractional, negative, or past that range -- is not a number the policy can have meant, and reads as 0. Wire shapes are hivemind-core _send_policy_denied / _send_backend_unavailable and hivemind-intent-quota-plugin _denied_verdict.",
+  "description": "What an ask does when the hub refuses it or cannot answer it. The hub sends hive.policy.denied the instant it refuses, with source and destination context only -- no request id -- and nests the policy's own numbers under data.data. Every SDK must end the ask at once as a typed refusal rather than wait out its deadline, carry the numbers a spent quota sends, and tell an unanswered question apart from a refusal. A fire-and-forget utterance (send_utterance, send_action, send_code, or emit of recognizer_loop:utterance) has no reply and no id to track, so it counts as in flight for untracked_grace_seconds from the moment it is published -- recorded after the connection is up, since a connect that never published nothing to refuse, and kept when the publish itself errors, because a transport can fail after the hub already has the frame: its refusal could arrive while an ask is waiting. A count is a whole number that fits a signed 64-bit integer; anything else -- fractional, negative, or past that range -- is not a number the policy can have meant, and reads as 0. Wire shapes are hivemind-core _send_policy_denied / _send_backend_unavailable and hivemind-intent-quota-plugin _denied_verdict.",
   "untracked_grace_seconds": 10,
   "classification": [
     {
@@ -221,6 +221,39 @@
           "period": "daily",
           "limit": 0,
           "used": 0,
+          "reset_after": 0
+        }
+      }
+    },
+    {
+      "name": "a number at the edge of what an integer holds is not a count",
+      "event": {
+        "type": "hive.policy.denied",
+        "data": {
+          "denied_type": "recognizer_loop:utterance",
+          "code": "intent_quota_exceeded",
+          "reason": "daily intent quota exceeded",
+          "data": {
+            "period": "daily",
+            "limit": 9223372036854775808,
+            "used": 9223372036854775807,
+            "reset_after": 0
+          }
+        },
+        "context": {
+          "source": "hivemind-core"
+        }
+      },
+      "expect": {
+        "kind": "refused",
+        "denied_type": "recognizer_loop:utterance",
+        "code": "intent_quota_exceeded",
+        "reason": "daily intent quota exceeded",
+        "allowed": [],
+        "quota": {
+          "period": "daily",
+          "limit": 0,
+          "used": 9223372036854775807,
           "reset_after": 0
         }
       }

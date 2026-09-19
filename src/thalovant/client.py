@@ -956,29 +956,28 @@ class ThalovantClient:
                 )
             )
         # A fire-and-forget utterance: nothing will wait on it, but the hub may
-        # refuse it, and that refusal carries no request id. Recorded before the
-        # publish so a denial cannot beat the record, and dropped again if the
-        # publish never happened -- a send that failed to leave leaves nothing
-        # for the hub to refuse, and a phantom would suppress a real refusal for
-        # the whole grace window.
-        with self._reply_ids_lock:
-            self._untracked_sends.append(time.monotonic())
-            recorded = self._untracked_sends[-1]
-        try:
-            return self._with_reconnect(
-                lambda: self._transport.emit_event(
-                    event_type,
-                    data or {},
-                    self._context_with_identity_metadata(context),
-                )
-            )
-        except BaseException:
+        # refuse it, and that refusal carries no request id.
+        #
+        # Recorded once the connection is up and immediately before the publish.
+        # Connecting can take seconds, and starting the window there would spend
+        # the grace on a handshake -- leaving a denial to land after it, where
+        # an unrelated ask would take it. A connect that fails never publishes,
+        # so it records nothing at all.
+        #
+        # A publish that raises keeps its record: the HTTP transport can fail
+        # after the hub already holds the frame, and the hub refuses what it
+        # holds. A record that need not have been there costs an ask its
+        # deadline; a missing one ends a question the hub never refused.
+        def publish() -> Any:
             with self._reply_ids_lock:
-                try:
-                    self._untracked_sends.remove(recorded)
-                except ValueError:
-                    pass
-            raise
+                self._untracked_sends.append(time.monotonic())
+            return self._transport.emit_event(
+                event_type,
+                data or {},
+                self._context_with_identity_metadata(context),
+            )
+
+        return self._with_reconnect(publish)
 
     def _emit_query_with_timeout(
         self, event_type: str, data: dict[str, Any], context: dict[str, Any], timeout: float,
