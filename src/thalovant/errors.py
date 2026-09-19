@@ -42,6 +42,10 @@ class ThalovantQuota:
     """Seconds until the counter resets, or 0 when the hub did not say."""
 
 
+MAX_COUNT = 2**53 - 1
+"""The largest count the wire can carry, being the largest whole number every JSON decoder holds exactly."""
+
+
 def _count(value: Any) -> int:
     """A whole, non-negative count from the wire, or 0 -- never a bool, never a guess.
 
@@ -60,10 +64,12 @@ def _count(value: Any) -> int:
             return 0
     else:
         return 0
-    # Whole, non-negative, and inside a signed 64-bit integer. Past that it is
-    # not a number the policy can have meant -- every other SDK's parser stops
-    # there, and a count nobody can act on is worse than none.
-    return number if 0 <= number <= 2**63 - 1 else 0
+    # Whole, non-negative, and no larger than every JSON decoder carries
+    # exactly. Above 2**53-1 a decoder backed by a double can no longer tell
+    # one whole number from the next, so two SDKs would report different
+    # allowances for the same denial -- and a count nobody can agree on is
+    # worse than none.
+    return number if 0 <= number <= MAX_COUNT else 0
 
 
 class ThalovantPolicyDeniedError(ThalovantRuntimeError):

@@ -477,7 +477,7 @@
       "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
-      "refusal-vectors.json": "a90d9b7dd6b717f116bb5b79896a68057908dca3cde1ac589013cca2315aaf92",
+      "refusal-vectors.json": "8388f62c4618613d0e262ba3f5367e4a83215b70a5834c7e7ec0516934fc57e0",
       "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     },
     "dependencies": {
@@ -508,7 +508,7 @@
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "17d94d311e77be8cff00fb7853ce265dd1133d82d35461791c06cf9083f9b641",
+      "src/thalovant/errors.py": "6972a23f1b9e5b2c45826335cbabd21b416532dcbd6437a8aef5855fc455a844",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
@@ -553,7 +553,7 @@
     "1e8b76b34b755207bb754e5f4c7364334f14476dee70fce1d2687bfdc1545f30",
     "f6a74ead44d53658228da3f4457334f3e922b67dd1e33b43c3ba8b6f7c066bf9",
     "6f5f697b07eb86da6877faf8aa27138430f886495ac965d08a28fba780e411cd",
-    "e0de5ebc373fcec60d083651e4001e22da8978419ad0d24a24d326db1e4e8e2a"
+    "2377330566e575bb3fda77998d943667bf0795940f9d569a5b8bc7f4f0e5e486"
   ],
   "schema_version": 1
 }
