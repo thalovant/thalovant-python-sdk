@@ -226,7 +226,7 @@
       }
     },
     {
-      "name": "a number at the edge of what an integer holds is not a count",
+      "name": "a number past what a count can hold is not a count",
       "event": {
         "type": "hive.policy.denied",
         "data": {
@@ -236,7 +236,7 @@
           "data": {
             "period": "daily",
             "limit": 9223372036854775808,
-            "used": 9223372036854775807,
+            "used": 9007199254740991,
             "reset_after": 0
           }
         },
@@ -253,7 +253,7 @@
         "quota": {
           "period": "daily",
           "limit": 0,
-          "used": 9223372036854775807,
+          "used": 9007199254740991,
           "reset_after": 0
         }
       }

@@ -477,7 +477,7 @@
       "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
-      "refusal-vectors.json": "4346937cc7cf6978157ced93774402c7b4214ed1950e4cf231985008fc480d87",
+      "refusal-vectors.json": "a90d9b7dd6b717f116bb5b79896a68057908dca3cde1ac589013cca2315aaf92",
       "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
     },
     "dependencies": {
@@ -553,7 +553,7 @@
     "1e8b76b34b755207bb754e5f4c7364334f14476dee70fce1d2687bfdc1545f30",
     "f6a74ead44d53658228da3f4457334f3e922b67dd1e33b43c3ba8b6f7c066bf9",
     "6f5f697b07eb86da6877faf8aa27138430f886495ac965d08a28fba780e411cd",
-    "5e1d6547780bb2cba69223a8010b7746d8c2b41af0496e1acd61c8ba33ae7983"
+    "e0de5ebc373fcec60d083651e4001e22da8978419ad0d24a24d326db1e4e8e2a"
   ],
   "schema_version": 1
 }
