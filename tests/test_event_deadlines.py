@@ -47,7 +47,10 @@ def test_event_operations_bound_connect_and_never_subscribe_after_expiry(name):
         with pytest.raises(ThalovantTimeoutError):
             operation(sdk, name)
         assert time.monotonic() - started < 0.3
-        assert transport.cleaned.wait(0.3)
+        # The claim is that cleanup happens, not that a background thread is
+        # scheduled inside 300ms: the operation's own promptness is the assert
+        # above. A loaded runner missed the narrower window.
+        assert transport.cleaned.wait(5)
         with pytest.raises(ThalovantConnectionError):
             sdk.connect(timeout=0.02)
         assert transport.dials == 1
