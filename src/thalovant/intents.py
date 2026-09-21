@@ -185,7 +185,13 @@ def usual_form(tag: str) -> str | None:
     except Exception:
         # A tag langcodes will not parse is not a tag we can improve on.
         return None
-    return None if same_language(usual, tag) else usual
+    # Byte comparison, NOT same_language. They are not the same test, and the
+    # difference is the whole point: `standardize_lang` hands callers back
+    # `en-US`, the manifest is keyed `en-us`, and `same_language` calls those
+    # equal -- so the retry that exists precisely for this case suppressed
+    # itself, for the SDK's own canonical spelling. Only a tag that is already
+    # byte-for-byte the usual form has nothing to retry with.
+    return None if usual == tag.strip() else usual
 
 
 @dataclass(frozen=True)

@@ -26,7 +26,7 @@ from thalovant import (
     ThalovantRuntimeError,
     ThalovantTimeoutError,
 )
-from thalovant.intents import SOURCE_ENGINES, SOURCE_MANIFEST, same_language, list_fallbacks
+from thalovant.intents import SOURCE_ENGINES, SOURCE_MANIFEST, same_language, list_fallbacks, usual_form
 from thalovant.models import ThalovantConnectionInfo, ThalovantHealth
 
 WEATHER = "thalovant-skill-weather.thalovant"
@@ -261,6 +261,26 @@ def test_a_tag_the_hub_does_not_register_is_listed_under_its_usual_form() -> Non
     assert weather.phrases_for("en-CA") == weather.phrases_for("en-us")
 
 
+def test_the_canonical_spelling_still_gets_a_retry() -> None:
+    """The case that made the retry suppress itself.
+
+    `standardize_lang` hands callers back `en-US`. A hub keys its manifest
+    `en-us` and the listing goes out verbatim, so `en-US` lists nothing --
+    and the retry that exists for exactly this suppressed itself, because
+    `same_language("en-us", "en-US")` is true. Only a tag that is already
+    byte-for-byte the usual form has nothing to try.
+    """
+
+    assert usual_form("en-US") == "en-us"
+    assert usual_form("en_US") == "en-us"
+    assert usual_form("en-us") is None, "already the usual spelling"
+
+    hub = FakeHubTransport()
+    inventory = client(hub).intents(["en-US"])
+    assert inventory.skills, "the hub has en-us and must not list as empty"
+    assert inventory.listed_in == ("en-us",)
+
+
 def test_the_retry_is_off_when_the_caller_says_so() -> None:
     hub = FakeHubTransport()
     inventory = client(hub).intents(["en-CA"], nearest=False)
@@ -281,10 +301,14 @@ def test_a_hub_that_answers_is_never_asked_twice() -> None:
 
 
 def test_a_language_with_no_usual_form_is_not_retried() -> None:
-    # en-US IS the usual form of English, so there is nothing else to try and
-    # a hub with no en-US would be asked exactly once.
+    # `en-us` IS the usual form of English, byte for byte, so there is
+    # nothing else to try and a hub without it is asked exactly once.
+    #
+    # This test used to say `en-US` and pass, which is how the bug hid: the
+    # capital spelling is a DIFFERENT string to the manifest, and suppressing
+    # its retry was the fault, not the intended behaviour.
     hub = FakeHubTransport(registrations={"fr-fr": REGISTRATIONS["fr-fr"]})
-    inventory = client(hub).intents(["en-US"])
+    inventory = client(hub).intents(["en-us"])
 
     listings = [data for name, data, _ in hub.emitted if name == "ovos.intent.list"]
     assert len(listings) == 1, f"nothing to retry with: {listings}"
