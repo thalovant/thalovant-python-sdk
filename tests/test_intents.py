@@ -235,6 +235,62 @@ def test_inventory_carries_the_sentences_per_language() -> None:
     assert shadow.intents[0].phrases_for("fr-fr") == ()
 
 
+def test_a_tag_the_hub_does_not_register_is_listed_under_its_usual_form() -> None:
+    """Listing and asking do not agree about languages, and this is the seam.
+
+    The hub matches an *utterance* to the closest language it knows, so a
+    phone set to en-CA is understood and answered by skills registered under
+    en-US. Its *manifest* is keyed by exact tag, so the same hub lists nothing
+    at all for en-CA -- and a person is shown an empty hub by the very hub
+    that is answering them.
+    """
+
+    hub = FakeHubTransport()
+    inventory = client(hub).intents(["en-CA"])
+
+    assert inventory.skills, "the hub answers en-CA and must not list as empty"
+    assert inventory.languages == ("en-CA",), "what was asked for is unchanged"
+    assert inventory.listed_in == ("en-us",), "and this is what answered"
+    weather = inventory.skills[1].intents[0]
+    # Read back by the tag that answered, and also by the tag asked for --
+    # `phrases_for` matches by closest language, which is the half of this
+    # that always worked.
+    assert weather.phrases_for("en-us") == (
+        "what is the weather", "what is the weather in {location}", "how is it outside",
+    )
+    assert weather.phrases_for("en-CA") == weather.phrases_for("en-us")
+
+
+def test_the_retry_is_off_when_the_caller_says_so() -> None:
+    hub = FakeHubTransport()
+    inventory = client(hub).intents(["en-CA"], nearest=False)
+
+    assert inventory.skills == (), "asked for exactly en-CA, and the hub has none"
+    assert inventory.listed_in == ("en-CA",)
+
+
+def test_a_hub_that_answers_is_never_asked_twice() -> None:
+    hub = FakeHubTransport()
+    inventory = client(hub).intents(["en-us"])
+
+    listings = [
+        data for name, data, _ in hub.emitted if name == "ovos.intent.list"
+    ]
+    assert len(listings) == 1, f"one listing, not a retry: {listings}"
+    assert inventory.listed_in == ("en-us",), "the tag asked for is the tag that answered"
+
+
+def test_a_language_with_no_usual_form_is_not_retried() -> None:
+    # en-US IS the usual form of English, so there is nothing else to try and
+    # a hub with no en-US would be asked exactly once.
+    hub = FakeHubTransport(registrations={"fr-fr": REGISTRATIONS["fr-fr"]})
+    inventory = client(hub).intents(["en-US"])
+
+    listings = [data for name, data, _ in hub.emitted if name == "ovos.intent.list"]
+    assert len(listings) == 1, f"nothing to retry with: {listings}"
+    assert inventory.skills == ()
+
+
 def test_examples_prefer_whole_sentences_and_respect_the_limit() -> None:
     weather = client(FakeHubTransport()).intents(["en-us"]).skills[1].intents[0]
     assert weather.examples("en-us", 2) == ("how is it outside", "what is the weather")
