@@ -504,7 +504,7 @@
       "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
       "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "d1fc05c430dab16444e653dbc2297d11449e2acf61818fa6bfa14ce0acfcef2e",
+      "src/thalovant/client.py": "86d435e82907881f758a7636dff73dad11bfa405870e520ad61e4f67819cb160",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
@@ -512,7 +512,7 @@
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
-      "src/thalovant/intents.py": "bde3330317bbfdd25ad2d2f81f46a13b75ddc4b2a90bb0f135095369f17859ca",
+      "src/thalovant/intents.py": "920dffd39a6caf0da6a76db0ae9771a3b67bb58d1762f5f5db5ea58e5e835e59",
       "src/thalovant/inventory.py": "8c849842eeecda1823703d22ad2dbfe849f5fa0569ecc267d93d0b9f60ebb11a",
       "src/thalovant/listing.py": "bb98804a949ce6769a618b0fca52750be8fa3c47111c49bc8bc7ed0f37583da0",
       "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
@@ -553,7 +553,8 @@
     "1e8b76b34b755207bb754e5f4c7364334f14476dee70fce1d2687bfdc1545f30",
     "f6a74ead44d53658228da3f4457334f3e922b67dd1e33b43c3ba8b6f7c066bf9",
     "6f5f697b07eb86da6877faf8aa27138430f886495ac965d08a28fba780e411cd",
-    "2377330566e575bb3fda77998d943667bf0795940f9d569a5b8bc7f4f0e5e486"
+    "2377330566e575bb3fda77998d943667bf0795940f9d569a5b8bc7f4f0e5e486",
+    "76bc1eb9957da5a6fdf03e89f3905f8d37d3ef2fe7c841ba751718105ca30a45"
   ],
   "schema_version": 1
 }
