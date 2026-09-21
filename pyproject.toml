@@ -48,7 +48,7 @@ dependencies = [
     # GHSA-g6cj-pr64-35w5. Do not allow an existing vulnerable install to satisfy
     # the SDK's requirements just because the latest resolver output is safe.
     "requests>=2.33.0",
-    "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "cryptography>=48.0.1,<51.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     # Intel Macs: cryptography stopped publishing x86_64 macOS wheels after
     # 48.0.1, and building it needs a Rust toolchain no desktop has. The one
     # path GHSA-g6cj-pr64-35w5 reaches, PKCS#7 EnvelopedData decryption, is
