@@ -142,6 +142,52 @@ def same_language(a: str, b: str) -> bool:
     return a.strip().lower().replace("_", "-") == b.strip().lower().replace("_", "-")
 
 
+def usual_form(tag: str) -> str | None:
+    """The form a language is usually written in, when that differs from ``tag``.
+
+    ``en-CA`` -> ``en-US``, ``fr-BE`` -> ``fr-FR``, ``pt-AO`` -> ``pt-BR``,
+    from CLDR's likely subtags. ``None`` when there is nothing different to
+    try, so a caller can tell "already the usual form" from "no idea".
+
+    This exists because listing and asking do not agree about languages. A
+    hub matches an *utterance* to the closest language it knows, so a phone
+    set to ``en-CA`` is understood and answered perfectly by skills that
+    registered ``en-US``. Its *manifest*, though, is keyed by exact tag: ask
+    for ``en-CA`` and the same hub reports nothing at all. Every client that
+    lists what a hub can do has to know this, and until now each one worked
+    it out for itself -- one of them on a phone, against a tag (``en-AT``)
+    that no hub anywhere registers.
+    """
+
+    try:
+        import langcodes
+    except ImportError:  # pragma: no cover - langcodes ships with the extra
+        return None
+    try:
+        base = langcodes.Language.get(tag).language
+        if not base:
+            return None
+        if not langcodes.Language.get(base).is_valid():
+            # `maximize` does not fail on a language it has never heard of;
+            # it answers out of the root locale. Ask it about "zzz" and it
+            # says "zzz-US" -- a confident United States for a language that
+            # does not exist. A retry against that is a wasted round trip at
+            # best, so not knowing is reported as not knowing.
+            return None
+        likely = langcodes.Language.get(base).maximize()
+        usual = f"{likely.language}-{likely.territory}" if likely.territory else likely.language
+        # Lower case, because that is how skills register and how the hub
+        # keys its manifest: `en-us`, not the BCP47 `en-US` that
+        # `standardize_lang` would hand back. The manifest lookup is exact, so
+        # a retry in the wrong case is a retry that finds nothing -- which is
+        # the very failure this function exists to end.
+        usual = usual.lower()
+    except Exception:
+        # A tag langcodes will not parse is not a tag we can improve on.
+        return None
+    return None if same_language(usual, tag) else usual
+
+
 @dataclass(frozen=True)
 class IntentRegistration:
     """One row of the hub's intent manifest."""
@@ -355,6 +401,13 @@ class HubIntentInventory:
     languages: tuple[str, ...]
     skills: tuple[HubSkillIntents, ...]
     source: str = SOURCE_MANIFEST
+    #: The tag the hub actually listed each requested language under, in the
+    #: same order as ``languages``. Equal to ``languages`` unless a listing
+    #: came back empty and the usual form of that language answered instead,
+    #: which is the only way these two differ. Callers that render sentences
+    #: must read them from the tag that answered; empty when nothing was
+    #: asked by manifest at all.
+    listed_in: tuple[str, ...] = ()
     denied: tuple[str, ...] = ()
     fallbacks: tuple[HubFallback, ...] = ()
     fallbacks_known: bool = False
@@ -751,6 +804,7 @@ def inventory(
     timeout: float = 5.0,
     describe: bool = True,
     fallback: bool = True,
+    nearest: bool = True,
 ) -> HubIntentInventory:
     """Everything the hub can be asked, in each language, grouped by skill.
 
@@ -773,11 +827,33 @@ def inventory(
         raise ValueError("inventory() needs at least one language.")
 
     listed: dict[str, list[IntentRegistration]] = {}
+    answered: dict[str, str] = {}
     try:
         for lang in asked:
-            listed[lang] = list_intents(
-                client, lang, timeout=timeout, include_definitions=describe
-            )
+            rows = list_intents(client, lang, timeout=timeout, include_definitions=describe)
+            tag = lang
+            if not rows and nearest:
+                # Listing and asking do not agree about languages. The hub
+                # matches an utterance to the closest language it knows, so a
+                # phone set to en-CA is understood by skills registered under
+                # en-US; the manifest is keyed by exact tag, so the same hub
+                # lists nothing for en-CA. Every client that shows a person
+                # what their hub can do has had to know this and work around
+                # it privately. It is the hub's behaviour, so it belongs
+                # here.
+                #
+                # Once only, and only on an empty listing: a hub that
+                # answered is never asked twice, and a language with no usual
+                # form other than itself has nothing to retry with.
+                usual = usual_form(lang)
+                if usual is not None:
+                    rows = list_intents(
+                        client, usual, timeout=timeout, include_definitions=describe
+                    )
+                    if rows:
+                        tag = usual
+            listed[tag] = rows
+            answered[lang] = tag
     except ThalovantPolicyDeniedError as denied:
         if not fallback or denied.denied_type != EVENT_INTENT_LIST:
             raise
@@ -840,7 +916,12 @@ def inventory(
         for skill_id, intents in sorted(by_skill.items())
     )
     return _with_fallbacks(
-        HubIntentInventory(languages=asked, skills=skills, source=SOURCE_MANIFEST),
+        HubIntentInventory(
+            languages=asked,
+            skills=skills,
+            source=SOURCE_MANIFEST,
+            listed_in=tuple(answered.get(lang, lang) for lang in asked),
+        ),
         client, timeout,
     )
 

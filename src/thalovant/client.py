@@ -1282,6 +1282,7 @@ class ThalovantClient:
         timeout: float = 5.0,
         describe: bool = True,
         fallback: bool = True,
+        nearest: bool = True,
     ) -> HubIntentInventory:
         """Everything the hub can be asked, per language, grouped by skill.
 
@@ -1311,7 +1312,8 @@ class ThalovantClient:
         else:
             chosen = list(languages)
         return _intents.inventory(
-            self, chosen, timeout=timeout, describe=describe, fallback=fallback
+            self, chosen, timeout=timeout, describe=describe, fallback=fallback,
+            nearest=nearest,
         )
 
     def list_intents(
@@ -2013,6 +2015,7 @@ class AsyncThalovantClient:
         timeout: float = 5.0,
         describe: bool = True,
         fallback: bool = True,
+        nearest: bool = True,
     ) -> HubIntentInventory:
         return await asyncio.to_thread(
             self._client.intents,
@@ -2020,6 +2023,7 @@ class AsyncThalovantClient:
             timeout=timeout,
             describe=describe,
             fallback=fallback,
+            nearest=nearest,
         )
 
     async def list_intents(
