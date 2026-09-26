@@ -196,14 +196,21 @@ spellings, which are converted before the request is sent.
   only the fields you mean to change instead of round-tripping a whole hub
   resource. The SDK forwards these fields rather than refusing them locally —
   it cannot know the stored values without another read, and refusing them
-  would reject patches the API accepts.
+  would reject patches the API accepts. A *changed* `spec.image` or
+  `spec.previewBridge.image` follows the same platform-image rule as
+  `release_hub`; sending the stored image back unchanged is always accepted.
 - `delete_hub(hub_id, etag=...)` — `DELETE /v1/hubs/{hub_id}`, HTTP 204. Also
   requires `etag` as `If-Match`, from the same body field. Deletes the hub's
   clients and ACLs with it.
 - `release_hub(hub_id, ...)` — `POST /v1/hubs/{hub_id}/release`. Applies a
   release policy and returns the updated hub. Omitted options fall back to the
   workspace release policy; passing `images` implies `custom` mode unless
-  `mode` is given.
+  `mode` is given. Unless you are a platform administrator, each image must be
+  one the platform releases: a catalog pin of the stable or alpha channel, the
+  hub's current, recommended or release-policy image, the platform's default
+  image, or any tag or digest of `ghcr.io/thalovant/hivemind-listener` for
+  `listener`. Anything else fails with HTTP 403 `platform_image_required`.
+  Platform administrators may pass any image.
 - `set_hub_rating(hub_id, rating)` / `clear_hub_rating(hub_id)` —
   `PUT`/`DELETE /v1/hubs/{hub_id}/rating`, both returning the updated hub.
   These need the `hubs:write` scope but **no paid plan**. Only public hubs can
@@ -247,8 +254,9 @@ spellings, which are converted before the request is sent.
   coordinating writers. Lists are replaced; `personas` is replaced only when passed.
   HTTP failures expose `ThalovantAPIError.status_code`.
 - `release_runtime_group(runtime_group_id, ...)` —
-  `POST /v1/runtime-groups/{id}/release`, with the same options as
-  `release_hub`.
+  `POST /v1/runtime-groups/{id}/release`, with the same options and the same
+  platform-image rule as `release_hub`. For `core`, any tag or digest of
+  `ghcr.io/thalovant/ovos-core` is accepted.
 - `delete_runtime_group(runtime_group_id)` — `DELETE /v1/runtime-groups/{id}`,
   HTTP 204. The API answers HTTP 409 for the default group and for a group
   that still has hubs attached.

@@ -865,6 +865,8 @@ handshake, and transport health.
 - `control.update_hub(hub_id, payload, etag=...)`
 - `control.delete_hub(hub_id, etag=...)`
 - `control.release_hub(hub_id, channel=..., mode=..., version=..., images=..., reason=...)`
+  (`images` must be platform images unless you are a platform administrator;
+  anything else is refused with HTTP 403 `platform_image_required`)
 - `control.set_hub_rating(hub_id, rating)`
 - `control.clear_hub_rating(hub_id)`
 - `control.get_hub_runtime_capabilities(hub_id)`

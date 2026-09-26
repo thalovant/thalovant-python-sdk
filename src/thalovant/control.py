@@ -867,7 +867,11 @@ class ThalovantControlPlane:
 
         Every option is optional; omitted fields fall back to the workspace
         release policy. Passing ``images`` switches the hub to ``custom`` mode
-        unless you also pass ``mode``.
+        unless you also pass ``mode``. Unless you are a platform
+        administrator, those must be platform images: a catalog, current or
+        recommended image, or any tag or digest of
+        ``ghcr.io/thalovant/hivemind-listener`` for ``listener``. The API
+        refuses anything else with HTTP 403 ``platform_image_required``.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
@@ -1101,7 +1105,9 @@ class ThalovantControlPlane:
     ) -> dict[str, Any]:
         """Apply a runtime image policy and return the updated runtime group.
 
-        Options behave like :meth:`release_hub`.
+        Options behave like :meth:`release_hub`, including the platform-image
+        rule; here any tag or digest of ``ghcr.io/thalovant/ovos-core`` is
+        accepted for ``core``.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
