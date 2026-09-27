@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "source": "thalovant-node-sdk test/noise.test.ts (origin/main c4b3144) and thalovant-go-sdk noise_test.go. Produced by the reference implementation: poorman-handshake 2.0.0a3 / hivemind-bus-client 1.1.1a1 for the pre-shared key, canonical JSON and prologue; noiseprotocol 0.3.1 for the transport ciphertexts.",
+  "contract": "A peer whose pre-shared key, canonical JSON, prologue or transport nonce differs by one byte fails the handshake exactly as a wrong password does, so these are checked against the reference's own outputs rather than by round-tripping against ourselves.",
+  "psk": {
+    "kdf": "argon2id(password, salt=sha256(node_id), t=3, m=65536 KiB, p=1, len=32)",
+    "cases": [
+      {
+        "password": "Tr0ub4dor-Horse-Battery-91x",
+        "node_id": "node-alpha",
+        "psk": "ce6825b343771aed1833233c8d1af4ce4e470cee89b625065402def527f900ce"
+      },
+      {
+        "password": "",
+        "node_id": "",
+        "psk": "38bedc40c2ce3b79cd5ccf53745e029363f5ba1948cb21f018bcce6eb0869876"
+      },
+      {
+        "password": "passé-wörd",
+        "node_id": "hub-ümläut",
+        "psk": "988418601dbad183fbd6116e7981e9ab8ffe93be3f3f45c27eb0b70c325f9cd8"
+      }
+    ]
+  },
+  "transport": {
+    "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "plaintext_utf8": "noise-transport-vector",
+    "associated_data": "",
+    "cases": [
+      {
+        "suite": "25519_AESGCM_SHA256",
+        "counter": 0,
+        "nonce": "000000000000000000000000",
+        "ciphertext": "60d3dcadd001f7cf69c6da45775ee5b4a426352747f338bb2af87fdc1579d700c91a945fb6f8"
+      },
+      {
+        "suite": "25519_AESGCM_SHA256",
+        "counter": 1,
+        "nonce": "000000000000000000000001",
+        "ciphertext": "7bb9d68f21d9446c6f40224983d44eda63fa7f200bc0fffcd5d4c0be724d78c6ff213aeed524"
+      },
+      {
+        "suite": "25519_AESGCM_SHA256",
+        "counter": 258,
+        "nonce": "000000000000000000000102",
+        "ciphertext": "634779e501b1642347721a75d47243559573cbfac3370330645b209d163adf1c04f90a6a4bc2"
+      },
+      {
+        "suite": "25519_ChaChaPoly_SHA256",
+        "counter": 0,
+        "nonce": "000000000000000000000000",
+        "ciphertext": "76d72b42c8cbd2a3720f2f11c0313a0a8ed490818edfa398489a90977d28e1e804160e81b654"
+      },
+      {
+        "suite": "25519_ChaChaPoly_SHA256",
+        "counter": 1,
+        "nonce": "000000000100000000000000",
+        "ciphertext": "f1389a2cd007db6a48d8dd2c3de7edaab318887a2819064363d7678f8b9eea0e2ddfba8dc3d3"
+      },
+      {
+        "suite": "25519_ChaChaPoly_SHA256",
+        "counter": 258,
+        "nonce": "000000000201000000000000",
+        "ciphertext": "73da914e74a79fe130e33c0c5adf0eab01c818746c83c7b909d0302385d6735a45edfcacd811"
+      }
+    ]
+  },
+  "canonical_json": [
+    {
+      "input": {
+        "b": 1,
+        "a": [
+          1,
+          2
+        ],
+        "c": {
+          "z": true,
+          "y": null
+        }
+      },
+      "output": "{\"a\":[1,2],\"b\":1,\"c\":{\"y\":null,\"z\":true}}"
+    },
+    {
+      "input": {
+        "binarize": false,
+        "encodings": []
+      },
+      "output": "{\"binarize\":false,\"encodings\":[]}"
+    },
+    {
+      "input": {
+        "unicode": "café über",
+        "amp": "a<b>c&d"
+      },
+      "output": "{\"amp\":\"a<b>c&d\",\"unicode\":\"café über\"}"
+    },
+    {
+      "input": {
+        "nested": {
+          "deep": [
+            {
+              "k": "v"
+            },
+            2,
+            null
+          ]
+        },
+        "num": 3
+      },
+      "output": "{\"nested\":{\"deep\":[{\"k\":\"v\"},2,null]},\"num\":3}"
+    },
+    {
+      "input": {
+        "s": "quote\" back\\slash\nnewline\ttab",
+        "ctrl": "\u0001\u001f"
+      },
+      "output": "{\"ctrl\":\"\\u0001\\u001f\",\"s\":\"quote\\\" back\\\\slash\\nnewline\\ttab\"}"
+    },
+    {
+      "input": {
+        "zebra": 1,
+        "apple": 2,
+        "Mango": 3
+      },
+      "output": "{\"Mango\":3,\"apple\":2,\"zebra\":1}"
+    }
+  ],
+  "prologue": {
+    "hello": {
+      "node_id": "node-alpha",
+      "pubkey": "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----"
+    },
+    "handshake": {
+      "max_protocol_version": 3,
+      "noise": {
+        "patterns": [
+          "XXpsk2"
+        ],
+        "suites": [
+          "25519_ChaChaPoly_SHA256"
+        ]
+      }
+    },
+    "pattern": "XXpsk2",
+    "suite": "25519_ChaChaPoly_SHA256",
+    "protocol_name": "Noise_XXpsk2_25519_ChaChaPoly_SHA256",
+    "bytes": "7b226e6f64655f6964223a226e6f64652d616c706861222c227075626b6579223a222d2d2d2d2d424547494e205055424c4943204b45592d2d2d2d2d5c6e6162635c6e2d2d2d2d2d454e44205055424c4943204b45592d2d2d2d2d227d7b226d61785f70726f746f636f6c5f76657273696f6e223a332c226e6f697365223a7b227061747465726e73223a5b22585870736b32225d2c22737569746573223a5b2232353531395f436861436861506f6c795f534841323536225d7d7d4e6f6973655f585870736b325f32353531395f436861436861506f6c795f534841323536"
+  },
+  "selection": [
+    {
+      "patterns": [
+        "KKpsk0",
+        "XXpsk2"
+      ],
+      "suites": [
+        "25519_ChaChaPoly_SHA256"
+      ],
+      "pinned": false,
+      "expect": [
+        "XXpsk2",
+        "25519_ChaChaPoly_SHA256"
+      ]
+    },
+    {
+      "patterns": [
+        "KKpsk0",
+        "XXpsk2"
+      ],
+      "suites": [
+        "25519_ChaChaPoly_SHA256"
+      ],
+      "pinned": true,
+      "expect": [
+        "KKpsk0",
+        "25519_ChaChaPoly_SHA256"
+      ]
+    },
+    {
+      "patterns": [
+        "XXpsk2"
+      ],
+      "suites": [
+        "25519_ChaChaPoly_SHA256"
+      ],
+      "pinned": true,
+      "expect": [
+        "XXpsk2",
+        "25519_ChaChaPoly_SHA256"
+      ]
+    },
+    {
+      "patterns": [
+        "XXpsk2"
+      ],
+      "suites": [
+        "25519_AESGCM_SHA256",
+        "25519_ChaChaPoly_SHA256"
+      ],
+      "pinned": false,
+      "expect": [
+        "XXpsk2",
+        "25519_ChaChaPoly_SHA256"
+      ]
+    },
+    {
+      "patterns": [
+        "XXpsk2"
+      ],
+      "suites": [
+        "25519_AESGCM_SHA256"
+      ],
+      "pinned": false,
+      "expect": [
+        "XXpsk2",
+        "25519_AESGCM_SHA256"
+      ]
+    },
+    {
+      "patterns": [
+        "XXpsk2"
+      ],
+      "suites": [
+        "448_ChaChaPoly_BLAKE2b"
+      ],
+      "pinned": false,
+      "expect": null
+    },
+    {
+      "patterns": [
+        "NNpsk0"
+      ],
+      "suites": [
+        "25519_ChaChaPoly_SHA256"
+      ],
+      "pinned": false,
+      "expect": null
+    },
+    {
+      "patterns": [],
+      "suites": [],
+      "pinned": false,
+      "expect": null
+    }
+  ]
+}
