@@ -1,7 +1,7 @@
 """SDK exception hierarchy."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 
 class ThalovantError(Exception):
@@ -175,11 +175,67 @@ class ThalovantUnansweredError(ThalovantRuntimeError):
 
 
 class ThalovantAPIError(ThalovantError):
-    """Raised when the control-plane request fails, with its HTTP status if known."""
+    """Raised when a control-plane request fails.
 
-    def __init__(self, *args: object, status_code: int | None = None) -> None:
+    ``status_code`` is the HTTP status when the API answered. Everything else
+    the API said rides beside the message rather than inside it:
+
+    * ``problem`` is the whole error body, parsed, when it is a JSON object --
+      the Problem+JSON document every Thalovant API refusal is. A structured
+      field the API adds is reachable here without a new SDK release:
+      ``refused_images``, ``allowed_images`` and ``allowed_repositories`` on a
+      ``platform_image_required`` refusal, ``resource``, ``limit`` and ``used``
+      on a ``plan_limit`` one.
+    * ``code`` is the body's machine-readable code, for branching without
+      reading the prose.
+    * ``detail`` is the API's own sentence, whole, exactly as sent.
+
+    The message is a single bounded line for display; it can be shortened, so
+    it is never where to read what the API said. A value the body echoed back
+    from the request never reaches the message, only ``problem``.
+
+    Passing ``problem`` alone derives ``code`` and ``detail`` from it; an
+    explicit ``code`` or ``detail`` wins. All three are ``None`` for a local
+    failure, such as a missing token or an unexpected response shape.
+    """
+
+    def __init__(
+        self,
+        *args: object,
+        status_code: int | None = None,
+        code: str | None = None,
+        detail: str | None = None,
+        problem: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(*args)
         self.status_code = status_code
+        self.problem: dict[str, Any] | None = dict(problem) if isinstance(problem, Mapping) else None
+        read_code, read_detail = _problem_fields(self.problem)
+        self.code = code if code is not None else read_code
+        self.detail = detail if detail is not None else read_detail
+
+
+def _problem_text(value: Any) -> str | None:
+    """A string with something in it, exactly as sent; anything else is absent."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _problem_fields(problem: Mapping[str, Any] | None) -> tuple[str | None, str | None]:
+    """The ``code`` and ``detail`` of an API error body.
+
+    Read from the body's own members first. When ``detail`` is itself an
+    object, it is FastAPI's envelope around a structured refusal -- what the
+    API sends when its Problem+JSON handler has not lifted that object's
+    members to the top -- so the code and the sentence are read from inside it.
+    Nothing is trimmed or shortened: ``detail`` is the whole sentence.
+    """
+    if problem is None:
+        return None, None
+    member = problem.get("detail")
+    nested: Mapping[str, Any] = member if isinstance(member, Mapping) else {}
+    code = _problem_text(problem.get("code")) or _problem_text(nested.get("code"))
+    detail = _problem_text(member) or _problem_text(nested.get("detail"))
+    return code, detail
 
 
 class ThalovantUnsupportedProtocolError(ThalovantError):

@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "description": "What a control-plane error carries when the API answers a request with an error status. The API answers every refusal with a Problem+JSON body, and many carry structured fields beside their sentence -- a platform_image_required 403 names refused_images, allowed_images and allowed_repositories; a plan_limit 403 names resource, limit and used. Every SDK's API error exposes: status, the HTTP status; problem, the whole body parsed, exactly when it is a JSON object (null for a body that is empty, not JSON, or JSON that is not an object), so any structured field is reachable without a new SDK release; code, the body's code when it is a string with a non-whitespace character, else the code inside a detail that is itself an object (FastAPI's own envelope, which the API's Problem+JSON handler normally lifts), else null; and detail, read the same way from the detail member -- the whole sentence exactly as sent, never trimmed, collapsed or shortened. A message built for display may be shortened, but it never carries a value the body echoed back from the request: every string in message_excludes must be absent from the error's message and its string form. Each case's response is the status, the Content-Type and the body text the API sent; expect is what the SDK's error exposes, recorded as {status, code, detail, problem}.",
+  "source": "thalovant-api app/middleware/errors.py setup_exception_handlers; app/services/release_policies.py refuse_custom_release_images; app/services/plans.py enforce_plan_limit",
+  "cases": [
+    {
+      "name": "a refused custom image keeps its code, its whole sentence and every list",
+      "response": {
+        "status": 403,
+        "content_type": "application/problem+json",
+        "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":403,\"instance\":\"urn:problem:5f0c2d4e-8a61-4c1f-9d2b-3e7a9c0b1f24\",\"detail\":\"Only an administrator can run an image the platform does not release: bus may be one of ghcr.io/thalovant/ovos-messagebus:2026.09.2, ghcr.io/thalovant/ovos-messagebus:2026.09.3-alpha.1, ghcr.io/thalovant/ovos-messagebus:2026.08.7; core may be any tag or digest of ghcr.io/thalovant/ovos-core.\",\"code\":\"platform_image_required\",\"component\":\"runtime_group\",\"refused_images\":{\"bus\":\"docker.io/example/ovos-messagebus:custom\",\"core\":\"docker.io/example/ovos-core:custom\"},\"allowed_images\":{\"bus\":[\"ghcr.io/thalovant/ovos-messagebus:2026.08.7\",\"ghcr.io/thalovant/ovos-messagebus:2026.09.2\",\"ghcr.io/thalovant/ovos-messagebus:2026.09.3-alpha.1\"],\"core\":[\"ghcr.io/thalovant/ovos-core:2026.09.2\",\"ghcr.io/thalovant/ovos-core:2026.09.3-alpha.1\"]},\"allowed_repositories\":{\"core\":\"ghcr.io/thalovant/ovos-core\"}}"
+      },
+      "expect": {
+        "status": 403,
+        "code": "platform_image_required",
+        "detail": "Only an administrator can run an image the platform does not release: bus may be one of ghcr.io/thalovant/ovos-messagebus:2026.09.2, ghcr.io/thalovant/ovos-messagebus:2026.09.3-alpha.1, ghcr.io/thalovant/ovos-messagebus:2026.08.7; core may be any tag or digest of ghcr.io/thalovant/ovos-core.",
+        "problem": {
+          "type": "about:blank",
+          "title": "HTTPException",
+          "status": 403,
+          "instance": "urn:problem:5f0c2d4e-8a61-4c1f-9d2b-3e7a9c0b1f24",
+          "detail": "Only an administrator can run an image the platform does not release: bus may be one of ghcr.io/thalovant/ovos-messagebus:2026.09.2, ghcr.io/thalovant/ovos-messagebus:2026.09.3-alpha.1, ghcr.io/thalovant/ovos-messagebus:2026.08.7; core may be any tag or digest of ghcr.io/thalovant/ovos-core.",
+          "code": "platform_image_required",
+          "component": "runtime_group",
+          "refused_images": {
+            "bus": "docker.io/example/ovos-messagebus:custom",
+            "core": "docker.io/example/ovos-core:custom"
+          },
+          "allowed_images": {
+            "bus": [
+              "ghcr.io/thalovant/ovos-messagebus:2026.08.7",
+              "ghcr.io/thalovant/ovos-messagebus:2026.09.2",
+              "ghcr.io/thalovant/ovos-messagebus:2026.09.3-alpha.1"
+            ],
+            "core": [
+              "ghcr.io/thalovant/ovos-core:2026.09.2",
+              "ghcr.io/thalovant/ovos-core:2026.09.3-alpha.1"
+            ]
+          },
+          "allowed_repositories": {
+            "core": "ghcr.io/thalovant/ovos-core"
+          }
+        }
+      }
+    },
+    {
+      "name": "a plan limit keeps its numbers beside its sentence",
+      "response": {
+        "status": 403,
+        "content_type": "application/problem+json",
+        "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":403,\"instance\":\"urn:problem:0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"detail\":\"Free plan allows up to 1 connection.\",\"code\":\"plan_limit\",\"resource\":\"client\",\"limit\":1,\"used\":1,\"plan\":\"Free\"}"
+      },
+      "expect": {
+        "status": 403,
+        "code": "plan_limit",
+        "detail": "Free plan allows up to 1 connection.",
+        "problem": {
+          "type": "about:blank",
+          "title": "HTTPException",
+          "status": 403,
+          "instance": "urn:problem:0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+          "detail": "Free plan allows up to 1 connection.",
+          "code": "plan_limit",
+          "resource": "client",
+          "limit": 1,
+          "used": 1,
+          "plan": "Free"
+        }
+      }
+    },
+    {
+      "name": "a detail alone is the detail, and there is no code",
+      "response": {
+        "status": 404,
+        "content_type": "application/json",
+        "body": "{\"detail\":\"Hub not found\"}"
+      },
+      "expect": {
+        "status": 404,
+        "code": null,
+        "detail": "Hub not found",
+        "problem": {
+          "detail": "Hub not found"
+        }
+      }
+    },
+    {
+      "name": "a sentence is kept exactly as sent: its line break, its spacing and its accents",
+      "response": {
+        "status": 409,
+        "content_type": "application/problem+json",
+        "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":409,\"instance\":\"urn:problem:7d3a9e20-51b6-4f08-a1c4-2e8b6f9d0c13\",\"detail\":\"La version 1.2.0 de skill-météo est déjà installée.\\nChoisissez-en une autre  — ou désinstallez-la d'abord.\",\"code\":\"skill_version_already_installed\"}"
+      },
+      "expect": {
+        "status": 409,
+        "code": "skill_version_already_installed",
+        "detail": "La version 1.2.0 de skill-météo est déjà installée.\nChoisissez-en une autre  — ou désinstallez-la d'abord.",
+        "problem": {
+          "type": "about:blank",
+          "title": "HTTPException",
+          "status": 409,
+          "instance": "urn:problem:7d3a9e20-51b6-4f08-a1c4-2e8b6f9d0c13",
+          "detail": "La version 1.2.0 de skill-météo est déjà installée.\nChoisissez-en une autre  — ou désinstallez-la d'abord.",
+          "code": "skill_version_already_installed"
+        }
+      }
+    },
+    {
+      "name": "a code alone is the code, and there is no detail",
+      "response": {
+        "status": 409,
+        "content_type": "application/json",
+        "body": "{\"code\":\"skill_version_already_installed\"}"
+      },
+      "expect": {
+        "status": 409,
+        "code": "skill_version_already_installed",
+        "detail": null,
+        "problem": {
+          "code": "skill_version_already_installed"
+        }
+      }
+    },
+    {
+      "name": "a validation failure keeps its errors, and the message never repeats what was sent",
+      "response": {
+        "status": 422,
+        "content_type": "application/problem+json",
+        "body": "{\"type\":\"about:blank\",\"title\":\"RequestValidationError\",\"status\":422,\"instance\":\"urn:problem:c41f0e6b-9a27-4d83-b5e1-0f2a7c6d8e39\",\"detail\":\"Request validation failed\",\"errors\":[{\"type\":\"missing\",\"loc\":[\"body\",\"name\"],\"msg\":\"Field required\",\"input\":{\"password\":\"pw-ECHOED-SECRET-1\",\"spec\":{}}}]}"
+      },
+      "expect": {
+        "status": 422,
+        "code": null,
+        "detail": "Request validation failed",
+        "problem": {
+          "type": "about:blank",
+          "title": "RequestValidationError",
+          "status": 422,
+          "instance": "urn:problem:c41f0e6b-9a27-4d83-b5e1-0f2a7c6d8e39",
+          "detail": "Request validation failed",
+          "errors": [
+            {
+              "type": "missing",
+              "loc": [
+                "body",
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "password": "pw-ECHOED-SECRET-1",
+                "spec": {}
+              }
+            }
+          ]
+        }
+      },
+      "message_excludes": [
+        "pw-ECHOED-SECRET-1"
+      ]
+    },
+    {
+      "name": "FastAPI's own envelope: a structured detail the API did not lift still gives its code and sentence",
+      "response": {
+        "status": 403,
+        "content_type": "application/json",
+        "body": "{\"detail\":{\"detail\":\"Free plan allows up to 1 connection.\",\"code\":\"plan_limit\",\"resource\":\"client\",\"limit\":1,\"used\":1,\"plan\":\"Free\"}}"
+      },
+      "expect": {
+        "status": 403,
+        "code": "plan_limit",
+        "detail": "Free plan allows up to 1 connection.",
+        "problem": {
+          "detail": {
+            "detail": "Free plan allows up to 1 connection.",
+            "code": "plan_limit",
+            "resource": "client",
+            "limit": 1,
+            "used": 1,
+            "plan": "Free"
+          }
+        }
+      }
+    },
+    {
+      "name": "FastAPI's validation list is not a sentence, and the message never repeats what was sent",
+      "response": {
+        "status": 422,
+        "content_type": "application/json",
+        "body": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"name\"],\"msg\":\"Field required\",\"input\":{\"password\":\"pw-ECHOED-SECRET-2\"}}]}"
+      },
+      "expect": {
+        "status": 422,
+        "code": null,
+        "detail": null,
+        "problem": {
+          "detail": [
+            {
+              "type": "missing",
+              "loc": [
+                "body",
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "password": "pw-ECHOED-SECRET-2"
+              }
+            }
+          ]
+        }
+      },
+      "message_excludes": [
+        "pw-ECHOED-SECRET-2"
+      ]
+    },
+    {
+      "name": "a blank sentence or code is no sentence or code",
+      "response": {
+        "status": 400,
+        "content_type": "application/json",
+        "body": "{\"detail\":\"   \",\"code\":\"\"}"
+      },
+      "expect": {
+        "status": 400,
+        "code": null,
+        "detail": null,
+        "problem": {
+          "detail": "   ",
+          "code": ""
+        }
+      }
+    },
+    {
+      "name": "a code that is not a string is no code",
+      "response": {
+        "status": 400,
+        "content_type": "application/json",
+        "body": "{\"detail\":\"Bad request\",\"code\":42}"
+      },
+      "expect": {
+        "status": 400,
+        "code": null,
+        "detail": "Bad request",
+        "problem": {
+          "detail": "Bad request",
+          "code": 42
+        }
+      }
+    },
+    {
+      "name": "a body that is not JSON has no problem",
+      "response": {
+        "status": 502,
+        "content_type": "text/html",
+        "body": "<html><body><h1>502 Bad Gateway</h1></body></html>"
+      },
+      "expect": {
+        "status": 502,
+        "code": null,
+        "detail": null,
+        "problem": null
+      }
+    },
+    {
+      "name": "an empty body has no problem",
+      "response": {
+        "status": 503,
+        "content_type": "text/plain",
+        "body": ""
+      },
+      "expect": {
+        "status": 503,
+        "code": null,
+        "detail": null,
+        "problem": null
+      }
+    },
+    {
+      "name": "JSON that is not an object has no problem",
+      "response": {
+        "status": 500,
+        "content_type": "application/json",
+        "body": "[\"unexpected\"]"
+      },
+      "expect": {
+        "status": 500,
+        "code": null,
+        "detail": null,
+        "problem": null
+      }
+    }
+  ]
+}

@@ -209,7 +209,8 @@ and explicitly supplied `personas` are replaced, not appended or merged.
 Version 0.6.3 requires API support for configuration revisions and conditional
 `PUT` when merging. Older servers fail without a write. Network failures and
 other HTTP errors are not retried. Inspect `ThalovantAPIError.status_code` for a
-final HTTP failure. Pass `merge=False` only to replace the complete configuration
+final HTTP failure (and `code`, `detail` and `problem`; see
+[Reading An API Error](#reading-an-api-error)). Pass `merge=False` only to replace the complete configuration
 with an unconditional `PATCH`; that mode requires coordinating concurrent writers.
 
 ```python
@@ -848,6 +849,39 @@ handshake, and transport health.
   `retry_after_seconds` pointing at the next UTC day or month. The SDK does
   not retry either 429 for you.
 
+## Reading An API Error
+
+A refused control-plane request raises `ThalovantAPIError`. Its message is one
+line for display and can be shortened, so read what the API said from the
+error itself:
+
+- `status_code`: the HTTP status.
+- `code`: the machine-readable code, such as `platform_image_required` or
+  `plan_limit`, or `None`.
+- `detail`: the API's whole sentence, exactly as sent, or `None`.
+- `problem`: the whole error body as a `dict` when it is a JSON object, or
+  `None`. Every structured field the API sends is here, including ones added
+  after this SDK was released.
+
+```python
+from thalovant import ThalovantAPIError
+
+try:
+    api.release_runtime_group(group["id"], images={"core": "docker.io/me/ovos-core:dev"})
+except ThalovantAPIError as error:
+    if error.code == "platform_image_required":
+        print(error.detail)
+        print(error.problem["allowed_images"])        # per image key
+        print(error.problem["allowed_repositories"])  # any tag or digest of these
+    elif error.code == "plan_limit":
+        print(error.problem["resource"], error.problem["used"], error.problem["limit"])
+    else:
+        raise
+```
+
+A value the body echoes back from your request (a validation error repeats
+what it was sent) is only ever in `problem`, never in the message.
+
 ## API Shape
 
 - `ThalovantControlPlane()`
@@ -865,8 +899,11 @@ handshake, and transport health.
 - `control.update_hub(hub_id, payload, etag=...)`
 - `control.delete_hub(hub_id, etag=...)`
 - `control.release_hub(hub_id, channel=..., mode=..., version=..., images=..., reason=...)`
-  (`images` must be platform images unless you are a platform administrator;
-  anything else is refused with HTTP 403 `platform_image_required`)
+  (unless you are a platform administrator, each image must be a catalog pin
+  of the stable or alpha channel, the hub's current, recommended or
+  release-policy image, the platform's default image, or for `listener` any
+  tag or digest of `ghcr.io/thalovant/hivemind-listener`; anything else is
+  refused with HTTP 403 `platform_image_required`)
 - `control.set_hub_rating(hub_id, rating)`
 - `control.clear_hub_rating(hub_id)`
 - `control.get_hub_runtime_capabilities(hub_id)`
@@ -877,6 +914,8 @@ handshake, and transport health.
 - `control.get_runtime_group_config(runtime_group_id)`
 - `control.update_runtime_group_config(runtime_group_id, config, *, personas=None, merge=True)`
 - `control.release_runtime_group(runtime_group_id, channel=..., ...)`
+  (the same rule for `images`, except that `core` accepts any tag or digest of
+  `ghcr.io/thalovant/ovos-core` and `bus` only the images listed above)
 - `control.delete_runtime_group(runtime_group_id)`
 - `control.install_runtime_group_skill(runtime_group_id, skill_id, ...)`
 - `control.uninstall_runtime_group_skill(runtime_group_id, skill_id)`

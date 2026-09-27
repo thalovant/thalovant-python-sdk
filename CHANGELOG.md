@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.7 — 2026-09-26
+
+- `ThalovantAPIError` carries what the API said, not only the line built from it. `problem` is the whole error body parsed, when it is a JSON object; `code` is its machine-readable code; `detail` is its sentence whole, exactly as sent. The message was the only place any of this reached a caller, and it is cut at 200 characters: a `platform_image_required` refusal names every image each refused key may be instead, which is longer than that, so the list a caller needed was the part cut off -- and `refused_images`, `allowed_images` and `allowed_repositories` never reached anybody at all. The same held for every structured refusal, `plan_limit`'s `resource`, `limit` and `used` included. The message itself is unchanged, and still never repeats a value the body echoed back from the request.
+- `code` and `detail` are also read from inside a `detail` that is itself an object -- FastAPI's own envelope, which the API's Problem+JSON handler normally lifts -- as the Kotlin, Swift and .NET SDKs already did for one or the other.
+- New `api-errors` capability in the parity contract, with `contracts/conformance/api-error-vectors.json`: thirteen responses, from the image and plan refusals the API sends to a body that is HTML, empty, or JSON that is not an object. Every SDK and the MCP server run them through their real HTTP path and record what they produced.
+
 ## 0.8.3 — 2026-09-18
 
 - A refusal ends an `ask()` at once instead of letting it run to the deadline. The hub sends `hive.policy.denied` the instant it refuses, built with source and destination context only -- no request id -- so the request-id gate dropped it and the ask waited out its whole budget. Production showed pairs of denials 13.4 s apart behind "your hub did not answer in time", about a question the hub had refused at once and explained. A denial with no request id is now taken when it names the type this ask sent **and** this ask is the only utterance the client has out; with a second ask or a query in flight either could be the one refused, so neither takes it. A fire-and-forget utterance -- `send_utterance()`, `send_action()`, `send_code()`, or `emit()` of `recognizer_loop:utterance` -- has no reply to wait on, so it counts as in flight for `UNTRACKED_UTTERANCE_GRACE_SECONDS` (10 s) after it is sent -- recorded once the connection is up and immediately before the publish, since connecting can take seconds and starting the window on a handshake would leave a denial to land after it; a connect that fails records nothing, and a publish that errors keeps its record, because the transport can fail after the hub already holds the frame: its refusal could arrive while an ask waits.
@@ -338,7 +344,7 @@ built each of these for itself against the SDK's public surface.
 - Add `ThalovantPolicyDeniedError` (a `ThalovantRuntimeError`), raised at once from the hub's `hive.policy.denied` with `denied_type`, `code`, `reason` and the `allowed` list, instead of waiting for a timeout. `intents(fallback=True)`, the default, falls back to the engines' own manifests (`intent.service.adapt.manifest.get` / `intent.service.padatious.manifest.get`) when `ovos.intent.list` is refused; the result then carries names only and `source="engine-manifests"`.
 - A runtime that attaches each row's `definition` to `ovos.intent.list` when asked with `include_definitions` is used as such; one that does not is described row by row.
 
-## Unreleased
+## 0.8.7 — 2026-09-26
 
 Security hardening, plus a HiveMind MQTT data-plane topic migration. The security fixes below change no wire-protocol or identity-file behavior: API request bodies, `as_dict(include_secrets=True)`, and identity-file round-trips still carry the real secret values.
 

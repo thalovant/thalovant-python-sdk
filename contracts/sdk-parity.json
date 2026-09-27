@@ -1,5 +1,48 @@
 {
   "capabilities": {
+    "api-errors": {
+      "description": "What a failed control-plane request carries: its HTTP status, the whole error body parsed when it is a JSON object, the body's code, and its detail whole -- never the truncated line the message is -- so a structured refusal such as platform_image_required or plan_limit is readable without a new SDK release; and a message that never repeats what the body echoed",
+      "files": [
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client, so no API error ever reaches it.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_api_error_vectors.py"
+      ],
+      "vectors": [
+        "api-error-vectors.json"
+      ]
+    },
     "binary": {
       "description": "Receiving binary frames: speech a hub rendered, and files",
       "files": [
@@ -471,6 +514,7 @@
   },
   "reference": {
     "conformance": {
+      "api-error-vectors.json": "fbe53320afa5501f7da200a04dafa6f6e3345d86d874288b3e2333ed5396d26e",
       "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
       "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
       "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
@@ -506,9 +550,9 @@
       "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
       "src/thalovant/client.py": "86d435e82907881f758a7636dff73dad11bfa405870e520ad61e4f67819cb160",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "ddb7fa9a505ef2e4dd03b33f7026dd91137c6ada1f2e8f153f828549bbb48a51",
+      "src/thalovant/control.py": "4b4bc1e1ce6af4a7d241344dc99dee27e7c6c2a49e15545f0f66cc18879f8411",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "6972a23f1b9e5b2c45826335cbabd21b416532dcbd6437a8aef5855fc455a844",
+      "src/thalovant/errors.py": "0d8e971c314e2ca159fe29d86833aaaef8eec6152562b9cf76bf4fc54840e8fc",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
@@ -555,7 +599,8 @@
     "6f5f697b07eb86da6877faf8aa27138430f886495ac965d08a28fba780e411cd",
     "2377330566e575bb3fda77998d943667bf0795940f9d569a5b8bc7f4f0e5e486",
     "76bc1eb9957da5a6fdf03e89f3905f8d37d3ef2fe7c841ba751718105ca30a45",
-    "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16"
+    "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16",
+    "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d"
   ],
   "schema_version": 1
 }
