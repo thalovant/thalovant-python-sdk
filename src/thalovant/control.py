@@ -620,7 +620,7 @@ class ThalovantControlPlane:
                     status_code=response.status_code,
                 )
             elif error != "authorization_pending":
-                raise ThalovantAPIError(_error_detail(response), status_code=response.status_code)
+                raise _api_error(response)
             remaining = deadline - clock()
             if remaining <= 0:
                 raise ThalovantTimeoutError(
@@ -868,10 +868,14 @@ class ThalovantControlPlane:
         Every option is optional; omitted fields fall back to the workspace
         release policy. Passing ``images`` switches the hub to ``custom`` mode
         unless you also pass ``mode``. Unless you are a platform
-        administrator, those must be platform images: a catalog, current or
-        recommended image, or any tag or digest of
-        ``ghcr.io/thalovant/hivemind-listener`` for ``listener``. The API
-        refuses anything else with HTTP 403 ``platform_image_required``.
+        administrator, each image must be one the platform releases for its
+        key: a catalog pin of the stable or alpha channel, the hub's current,
+        recommended or release-policy image, or the platform's default image.
+        ``listener`` also accepts any tag or digest of
+        ``ghcr.io/thalovant/hivemind-listener``; ``preview_bridge`` takes only
+        those images. The API refuses anything else with HTTP 403
+        ``platform_image_required``, and the error's ``problem`` names what
+        each refused key may be instead.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
@@ -1106,8 +1110,9 @@ class ThalovantControlPlane:
         """Apply a runtime image policy and return the updated runtime group.
 
         Options behave like :meth:`release_hub`, including the platform-image
-        rule; here any tag or digest of ``ghcr.io/thalovant/ovos-core`` is
-        accepted for ``core``.
+        rule: ``core`` also accepts any tag or digest of
+        ``ghcr.io/thalovant/ovos-core``, and ``bus`` takes only the images the
+        platform releases for it.
 
         Requires a paid plan and a token with the ``hubs:write`` scope.
         """
@@ -1649,7 +1654,7 @@ class ThalovantControlPlane:
     ) -> dict[str, Any]:
         response = self._send(method, path, json=json, params=params, headers=headers, auth=auth)
         if response.status_code < 200 or response.status_code >= 300:
-            raise ThalovantAPIError(_error_detail(response), status_code=response.status_code)
+            raise _api_error(response)
         if not response.text.strip():
             return {}
         try:
@@ -1906,20 +1911,36 @@ _ERROR_DETAIL_MAX_CHARS = 200
 _PROBLEM_CODE = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
 
 
-def _error_detail(response: requests.Response) -> str:
+def _api_error(response: requests.Response) -> ThalovantAPIError:
+    """The error for a response the API answered with a failure status.
+
+    The body is parsed once. When it is a JSON object it rides on the error
+    whole, as ``problem``, with its ``code`` and its unshortened ``detail``
+    read out of it; the message stays the bounded line it always was.
+    """
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    return ThalovantAPIError(
+        _error_message(response.status_code, body),
+        status_code=response.status_code,
+        problem=body if isinstance(body, dict) else None,
+    )
+
+
+def _error_message(status_code: int, body: Any) -> str:
     """Build a bounded error message that never includes the raw response body.
 
     Error bodies can echo the request back (for ``POST /v1/clients`` that
     request carries freshly generated credentials) and are attacker-sized, so
     only a short server-provided ``detail``/``message``/``error`` *string* is
-    kept, newline-collapsed and truncated; never the whole body.
+    kept, newline-collapsed and truncated; never the whole body. What the API
+    said in full is on the error itself (see :func:`_api_error`).
     """
 
     detail: str | None = None
-    try:
-        body = response.json()
-    except ValueError:
-        body = None
     if isinstance(body, dict):
         for key in ("detail", "message", "error"):
             value = body.get(key)
@@ -1934,11 +1955,11 @@ def _error_detail(response: requests.Response) -> str:
         code = None
     if detail is None:
         if code is None:
-            return f"Thalovant API request failed with HTTP {response.status_code}."
-        return f"Thalovant API request failed with HTTP {response.status_code}: ({code})"
+            return f"Thalovant API request failed with HTTP {status_code}."
+        return f"Thalovant API request failed with HTTP {status_code}: ({code})"
     detail = " ".join(detail.split())
     if len(detail) > _ERROR_DETAIL_MAX_CHARS:
         detail = detail[:_ERROR_DETAIL_MAX_CHARS] + "..."
     if code is not None and code != detail:
         detail = f"{detail} ({code})"
-    return f"Thalovant API request failed with HTTP {response.status_code}: {detail}"
+    return f"Thalovant API request failed with HTTP {status_code}: {detail}"

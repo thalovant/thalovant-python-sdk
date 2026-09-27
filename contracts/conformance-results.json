@@ -1,5 +1,23 @@
 {
   "results": {
+    "api-error-vectors.json": {
+      "cases": {
+        "FastAPI's own envelope: a structured detail the API did not lift still gives its code and sentence": "e37b5e6c4bdb1197e4467ca91430f143999ff673cbda5f672853af1780aad2af",
+        "FastAPI's validation list is not a sentence, and the message never repeats what was sent": "f84c10a63ddfba59a5d49aa3603091ebd6890c033edb939951ca40d2860af247",
+        "JSON that is not an object has no problem": "86676db83f0bea79658c1d351268b3d36ebb81a896b7eb1bdeb290c13ab8c0fd",
+        "a blank sentence or code is no sentence or code": "f7cd6fc54fccaabe0faa4f751b78a337cb44bb0db4521942b31748ca5760b3b5",
+        "a body that is not JSON has no problem": "4f91a04465718152ed38064ed2e0e3684a22c81d8be1e34c3f2307e85286d4eb",
+        "a code alone is the code, and there is no detail": "c232cbdb0a3645913c39cdf1687004f29fae1a83ce3dddb507b6012a92801a9d",
+        "a code that is not a string is no code": "afdeaf9a06c8d57fb241ef31bd228bfb51c4bc889a2f8ff14ad28f3f2f0d7ae8",
+        "a detail alone is the detail, and there is no code": "d57c5331165e6f7274edd9ae785e1b7ae57d1c261c64761f298cc271dd104e38",
+        "a plan limit keeps its numbers beside its sentence": "03c163b51611e4324ad96b89817d750db2ed97b1d941d0092322ee248b2c6827",
+        "a refused custom image keeps its code, its whole sentence and every list": "c8c0ee8ef09d41244e3df343825f4a2a40b60723a46806df5955ba9eff08ac73",
+        "a sentence is kept exactly as sent: its line break, its spacing and its accents": "b2a14988c63acf24d5c7d9919e4a61eaf4764b20ac8510c71235c2b7f3663371",
+        "a validation failure keeps its errors, and the message never repeats what was sent": "7ca7788739fb0a722fdbd480b4b59cdf6025108ef7cd4a373af8fcfe8e6aad09",
+        "an empty body has no problem": "0228b34361be5e56ea04e11ced54ea93919129b95d8ad85a9be0ba09f6a67f88"
+      },
+      "digest": "0a7d093430093467db8c54cd746687b694c916fea798404633bd756e19aaa809"
+    },
     "binary-vectors.json": {
       "cases": {
         "a file carries only its name": "4728cbc8f472ff4bacd059a87d75fb365d84049b39b449ea9b0a075122c5d01d",

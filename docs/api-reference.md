@@ -209,8 +209,9 @@ spellings, which are converted before the request is sent.
   one the platform releases: a catalog pin of the stable or alpha channel, the
   hub's current, recommended or release-policy image, the platform's default
   image, or any tag or digest of `ghcr.io/thalovant/hivemind-listener` for
-  `listener`. Anything else fails with HTTP 403 `platform_image_required`.
-  Platform administrators may pass any image.
+  `listener`; `preview_bridge` takes only those listed images. Anything else
+  fails with HTTP 403 `platform_image_required`, whose `problem` names what
+  each refused key may be instead. Platform administrators may pass any image.
 - `set_hub_rating(hub_id, rating)` / `clear_hub_rating(hub_id)` —
   `PUT`/`DELETE /v1/hubs/{hub_id}/rating`, both returning the updated hub.
   These need the `hubs:write` scope but **no paid plan**. Only public hubs can
@@ -252,11 +253,13 @@ spellings, which are converted before the request is sent.
   not retried. Older APIs without revisions or conditional PUT fail without a
   write. `merge=False` uses legacy unconditional PATCH replacement and requires
   coordinating writers. Lists are replaced; `personas` is replaced only when passed.
-  HTTP failures expose `ThalovantAPIError.status_code`.
+  HTTP failures expose `ThalovantAPIError.status_code`, `code`, `detail`
+  and `problem`.
 - `release_runtime_group(runtime_group_id, ...)` —
   `POST /v1/runtime-groups/{id}/release`, with the same options and the same
   platform-image rule as `release_hub`. For `core`, any tag or digest of
-  `ghcr.io/thalovant/ovos-core` is accepted.
+  `ghcr.io/thalovant/ovos-core` is also accepted; `bus` takes only the listed
+  images.
 - `delete_runtime_group(runtime_group_id)` — `DELETE /v1/runtime-groups/{id}`,
   HTTP 204. The API answers HTTP 409 for the default group and for a group
   that still has hubs attached.
@@ -621,7 +624,14 @@ Diagnostic report:
 ## Exceptions
 
 - `ThalovantError`
-- `ThalovantAPIError`
+- `ThalovantAPIError`: a failed control-plane request. `status_code` is the
+  HTTP status; `problem` is the whole error body as a `dict` when it is a JSON
+  object; `code` is its machine-readable code and `detail` its whole
+  sentence, exactly as sent. The message is a bounded display line and never
+  repeats a value the body echoed back from the request. A structured refusal
+  keeps its fields in `problem`: `refused_images`, `allowed_images` and
+  `allowed_repositories` for `platform_image_required`; `resource`, `limit`,
+  `used` and `plan` for `plan_limit`.
 - `ThalovantIdentityError`
 - `ThalovantConnectionError`
 - `ThalovantTimeoutError`
