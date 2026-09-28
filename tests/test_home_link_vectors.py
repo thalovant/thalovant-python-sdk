@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import time
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from thalovant import (
     ThalovantAdmissionTimeoutError,
     ThalovantAlreadyLinkedError,
     ThalovantAPIError,
+    ThalovantAPIUnreachableError,
     ThalovantAuthError,
     ThalovantConnectionError,
     ThalovantControlPlane,
@@ -40,7 +42,7 @@ from thalovant import (
 from thalovant.client import reply_context
 from thalovant.control import DeviceAuthorization, OperationResource
 from thalovant.events import ThalovantEvent
-from thalovant.home import HOME_REQUEST, HOME_RESPONSE, HomeAnswer, answer_home_request
+from thalovant.home import HOME_REQUEST, HOME_RESPONSE, HomeAnswer, answer_home_request, plain_speech
 
 CONFORMANCE = Path(__file__).resolve().parents[1] / "contracts" / "conformance"
 
@@ -101,11 +103,10 @@ class ScriptedApi:
         if "authorization" in expected and request.headers.get("Authorization") != expected["authorization"]:
             self.mismatches.append("wrong Authorization header")
         response = exchange["response"]
-        return web.Response(
-            status=response["status"],
-            body=response["body"].encode("utf-8"),
-            headers={"Content-Type": response["content_type"]} if response["body"] else None,
-        )
+        headers = dict(response.get("headers") or {})
+        if response["body"]:
+            headers["Content-Type"] = response["content_type"]
+        return web.Response(status=response["status"], body=response["body"].encode("utf-8"), headers=headers or None)
 
 
 def _contains(value: Any, subset: Any) -> bool:
@@ -281,12 +282,29 @@ def test_connection_kinds_vectors(case: dict[str, Any], plane_cls: type) -> None
 # -- admission ----------------------------------------------------------------
 
 
+def _closed_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _placed(value: Any, host: str, port: int) -> Any:
+    """The case's operation with {api_host} and {api_port} filled in."""
+    if isinstance(value, str):
+        return value.replace("{api_host}", host).replace("{api_port}", str(port))
+    if isinstance(value, dict):
+        return {key: _placed(item, host, port) for key, item in value.items()}
+    return value
+
+
 async def _admission_case(case: dict[str, Any]) -> tuple[dict[str, Any], ScriptedApi]:
     call = case["call"]
     expect = case["expect"]
     async with ScriptedApi(case["exchanges"]) as api:
-        plane = AsyncThalovantControlPlane(api.url, access_token="synthetic-token")
-        operation = call["operation"]
+        assert api.server is not None
+        url = f"http://127.0.0.1:{_closed_port()}" if call.get("api") == "unreachable" else api.url
+        plane = AsyncThalovantControlPlane(url, access_token="synthetic-token")
+        operation = _placed(call["operation"], "127.0.0.1", api.server.port)
         started = time.monotonic()
         try:
             await plane.wait_for_admission(
@@ -295,11 +313,19 @@ async def _admission_case(case: dict[str, Any]) -> tuple[dict[str, Any], Scripte
             )
         except ThalovantAdmissionTimeoutError as error:
             assert isinstance(error, ThalovantConnectionError) and isinstance(error, ThalovantTimeoutError)
+            assert str(error).endswith("it may still admit it later.")
             produced: dict[str, Any] = {"outcome": "timeout"}
             if "polls" in expect:
                 produced["polls"] = len(api.sent)
         except ThalovantAdmissionFailedError as error:
-            produced = {"outcome": "failed", "error_code": error.error_code, "polls": len(api.sent)}
+            produced = {"outcome": "failed", "error_code": error.error_code, "status": error.status_code}
+            if error.status_code is not None:
+                produced.update(code=error.code, detail=error.detail)
+            produced["polls"] = len(api.sent)
+        except ThalovantAPIUnreachableError:
+            produced = {"outcome": "unreachable", "polls": len(api.sent)}
+        except ThalovantAuthError as error:
+            produced = {"outcome": "auth", "status": error.status_code, "polls": len(api.sent)}
         except ThalovantAPIError:
             produced = {"outcome": "error", "polls": len(api.sent)}
         else:
@@ -349,10 +375,44 @@ def _handler(spec: dict[str, Any]) -> Any:
     return handle
 
 
+class SlowReplies(Replies):
+    """A transport that takes ``send_ms`` to put a reply on the wire."""
+
+    def __init__(self, send_ms: int) -> None:
+        super().__init__()
+        self.send_ms = send_ms
+
+    async def reply(self, event: Any, msg_type: str, data: dict[str, Any]) -> None:
+        await asyncio.sleep(self.send_ms / 1000)
+        await super().reply(event, msg_type, data)
+
+
 @pytest.mark.parametrize("case", HOME["cases"], ids=lambda case: case["name"])
 def test_home_link_vectors(case: dict[str, Any]) -> None:
     if case["kind"] == "reply_context":
         produced: Any = reply_context(case["context"])
+    elif case["kind"] == "speech":
+        produced = plain_speech(case["text"])
+    elif case["kind"] == "deadline":
+        replies = SlowReplies(case["send_ms"])
+        event = ThalovantEvent(name=HOME_REQUEST, data=case["request"], context={"source": "skill"}, raw=None)
+        hub_timeout = case["hub_timeout_ms"] / 1000
+
+        async def answer() -> Any:
+            started = time.monotonic()
+            sent = await answer_home_request(
+                replies, event, _handler(case["handler"]),
+                timeout=case["timeout_ms"] / 1000, hub_timeout=hub_timeout,
+            )
+            # Never past the hub's bound, whatever the handler or the transport did.
+            assert time.monotonic() - started <= hub_timeout + 0.1
+            return sent
+
+        sent = asyncio.run(answer())
+        produced = {"replied": sent is not None}
+        if sent is not None:
+            assert [(msg_type, data) for _, msg_type, data in replies.sent] == [(HOME_RESPONSE, sent)]
+            produced["response"] = sent
     else:
         replies = Replies()
         event = ThalovantEvent(name=HOME_REQUEST, data=case["request"], context={"source": "skill"}, raw=None)
@@ -375,3 +435,47 @@ def test_the_contract_lists_match_the_sdk() -> None:
     from thalovant import HOME_ASSISTANT_SCOPES
 
     assert list(HOME_ASSISTANT_SCOPES) == DEVICE["home_assistant_scopes"]
+
+
+def test_a_handler_that_ignores_cancellation_does_not_hold_the_answer_back() -> None:
+    """``asyncio.wait_for`` waits for a cancelled task to finish; the answer must not."""
+
+    async def stubborn(_request: Any) -> HomeAnswer:
+        try:
+            await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            await asyncio.sleep(2)  # swallows the cancellation and carries on
+        return HomeAnswer(speech="Too late.")
+
+    async def exercise() -> tuple[Any, float, Replies]:
+        replies = Replies()
+        event = ThalovantEvent(name=HOME_REQUEST, data={"request_id": "s1", "utterance": "x"}, context={}, raw=None)
+        started = time.monotonic()
+        sent = await answer_home_request(replies, event, stubborn, timeout=0.1, hub_timeout=1.0)
+        return sent, time.monotonic() - started, replies
+
+    sent, took, replies = asyncio.run(exercise())
+    assert took < 0.5
+    assert sent is not None and sent["error_code"] == "timeout"
+    assert len(replies.sent) == 1
+
+
+def test_a_wait_the_api_asked_for_is_never_cut_short(monkeypatch) -> None:
+    from thalovant import control
+
+    naps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def early_sleep(seconds: float) -> None:
+        naps.append(seconds)
+        await real_sleep(max(0.0, seconds - 0.03))  # wakes 30 ms early, as a coarse clock can
+
+    monkeypatch.setattr(control.asyncio, "sleep", early_sleep)
+
+    async def exercise() -> float:
+        started = time.monotonic()
+        await control._sleep_at_least(0.2)
+        return time.monotonic() - started
+
+    assert asyncio.run(exercise()) >= 0.2
+    assert len(naps) >= 2

@@ -782,8 +782,8 @@ class AsyncThalovantControlPlane:
     ) -> DeviceAuthorization:
         """Start a device sign-in: a code for a person to approve in a browser.
 
-        ``scopes`` are what the token will carry; the API defaults to
-        ``hubs:read`` and ``clients:write``. A Free plan can approve only
+        ``scopes`` are what the token will carry; none, or an empty list, asks
+        for the API's default, ``hubs:read`` and ``clients:write``. A Free plan can approve only
         ``hubs:read``, ``clients:read`` and ``clients:write``. Show the person
         ``verification_uri`` and ``user_code`` (or ``verification_uri_complete``,
         which carries the code), then call :meth:`poll_device_login` every
@@ -791,8 +791,12 @@ class AsyncThalovantControlPlane:
         """
 
         payload: dict[str, Any] = {}
-        if scopes is not None:
-            payload["scopes"] = list(scopes)
+        requested = list(scopes) if scopes is not None else []
+        if requested:
+            # An empty list is left out rather than sent: the API requires at
+            # least one scope and answers [] with a 422, and leaving the field
+            # out is how a caller asks for its default.
+            payload["scopes"] = requested
         if client_name:
             payload["client_name"] = client_name
         grant = await self._request("POST", "/v1/auth/device/authorize", json=payload, auth=False)
@@ -1969,10 +1973,18 @@ class AsyncThalovantControlPlane:
         while True:
             wait = poll_interval
             try:
-                current = await self.get_operation(operation_id)
+                # Every read is bounded by what is left of the wait: a read
+                # the API is slow to answer must not carry the wait past it.
+                current = await asyncio.wait_for(
+                    self.get_operation(operation_id), max(0.0, deadline - loop.time())
+                )
+            except asyncio.TimeoutError:
+                raise ThalovantTimeoutError(
+                    f"Operation {operation_id} did not finish within {timeout:g}s."
+                ) from None
             except ThalovantAPIError as error:
                 if error.status_code == 429:
-                    wait = max(poll_interval, _retry_after_seconds(error.problem) or 0.0)
+                    wait = max(poll_interval, error.retry_after_seconds or 0.0)
                     if wait > deadline - loop.time():
                         # The API asks for longer than is left: waiting it out
                         # would only end in the same timeout, later.
@@ -1998,7 +2010,7 @@ class AsyncThalovantControlPlane:
                 raise ThalovantTimeoutError(
                     f"Operation {operation_id} did not finish within {timeout:g}s."
                 )
-            await asyncio.sleep(min(wait, remaining))
+            await _sleep_at_least(min(wait, remaining))
 
     async def wait_for_admission(
         self,
@@ -2013,12 +2025,18 @@ class AsyncThalovantControlPlane:
         ``operation`` (the object, its dict, id or ``links.self``). Returns at
         once when there is nothing to wait on: no operation, or one the API no
         longer tracks (HTTP 404). Raises :class:`ThalovantAdmissionFailedError`
-        when the operation failed or timed out on the platform, and
-        :class:`ThalovantAdmissionTimeoutError` -- a
-        :class:`ThalovantConnectionError` and a :class:`ThalovantTimeoutError`
-        -- when ``timeout`` passes first; the connection may still be admitted
-        after that. A hub that refuses the credentials inside this window is
-        not admitting them yet, not refusing them.
+        when the operation failed or timed out on the platform (``error_code``)
+        or the API refused the wait itself (``status_code``, ``code``,
+        ``detail``, ``problem``), and :class:`ThalovantAdmissionTimeoutError`
+        -- a :class:`ThalovantConnectionError` and a
+        :class:`ThalovantTimeoutError` -- when ``timeout`` passes first; the
+        connection may still be admitted after that. A 401 or 403 is raised as
+        the API's own error (:class:`ThalovantAuthError` and its kin), and an
+        API out of reach as :class:`ThalovantAPIUnreachableError`: neither says
+        anything about the connection. A 5xx, and a 429 for the time it names,
+        are ridden out, and no read runs past ``timeout``. A hub that refuses
+        the credentials inside this window is not admitting them yet, not
+        refusing them.
         """
 
         operation = connection.operation if isinstance(connection, BootstrapIdentityResult) else connection
@@ -2028,15 +2046,15 @@ class AsyncThalovantControlPlane:
         if isinstance(operation, Mapping):
             links = operation.get("links")
             link = links.get("self") if isinstance(links, Mapping) else None
-        if isinstance(link, str) and link.startswith(("http://", "https://")):
-            if urlsplit(link).netloc != urlsplit(self.api_url).netloc:
-                # The token goes to the API's own origin and nowhere else.
-                raise ThalovantAPIError("The admission operation points outside the Thalovant API.")
+        if isinstance(link, str) and "://" in link and _origin(link) != _origin(self.api_url):
+            # The token goes to the API's own origin -- scheme, host and port
+            # -- and nowhere else.
+            raise ThalovantAPIError("The admission operation points outside the Thalovant API.")
         try:
             await self.wait_for_operation(operation, timeout=timeout, poll_interval=poll_interval)
         except ThalovantTimeoutError:
             raise ThalovantAdmissionTimeoutError(
-                f"The hub did not admit the connection within {timeout:g}s; it may still."
+                f"The hub did not admit the connection within {timeout:g}s; it may still admit it later."
             ) from None
         except ThalovantAPIUnreachableError:
             # The API is out of reach, which says nothing about the hub: the
@@ -2045,8 +2063,16 @@ class AsyncThalovantControlPlane:
         except ThalovantAPIError as error:
             if error.status_code == 404:
                 return
+            if error.status_code in (401, 403):
+                # The token, not the connection: signing in again fixes it.
+                raise
             raise ThalovantAdmissionFailedError(
-                f"The hub could not admit the connection: {error}", error_code=error.code
+                f"The hub could not admit the connection: {error}",
+                error_code=error.code if error.status_code is None else None,
+                status_code=error.status_code,
+                code=error.code,
+                detail=error.detail,
+                problem=error.problem,
             ) from error
 
     def require_runtime_protocol(
@@ -2456,8 +2482,8 @@ class ThalovantControlPlane:
     ) -> DeviceAuthorization:
         """Start a device sign-in: a code for a person to approve in a browser.
 
-        ``scopes`` are what the token will carry; the API defaults to
-        ``hubs:read`` and ``clients:write``. A Free plan can approve only
+        ``scopes`` are what the token will carry; none, or an empty list, asks
+        for the API's default, ``hubs:read`` and ``clients:write``. A Free plan can approve only
         ``hubs:read``, ``clients:read`` and ``clients:write``. Show the person
         ``verification_uri`` and ``user_code`` (or ``verification_uri_complete``,
         which carries the code), then call :meth:`poll_device_login` every
@@ -3174,12 +3200,18 @@ class ThalovantControlPlane:
         ``operation`` (the object, its dict, id or ``links.self``). Returns at
         once when there is nothing to wait on: no operation, or one the API no
         longer tracks (HTTP 404). Raises :class:`ThalovantAdmissionFailedError`
-        when the operation failed or timed out on the platform, and
-        :class:`ThalovantAdmissionTimeoutError` -- a
-        :class:`ThalovantConnectionError` and a :class:`ThalovantTimeoutError`
-        -- when ``timeout`` passes first; the connection may still be admitted
-        after that. A hub that refuses the credentials inside this window is
-        not admitting them yet, not refusing them.
+        when the operation failed or timed out on the platform (``error_code``)
+        or the API refused the wait itself (``status_code``, ``code``,
+        ``detail``, ``problem``), and :class:`ThalovantAdmissionTimeoutError`
+        -- a :class:`ThalovantConnectionError` and a
+        :class:`ThalovantTimeoutError` -- when ``timeout`` passes first; the
+        connection may still be admitted after that. A 401 or 403 is raised as
+        the API's own error (:class:`ThalovantAuthError` and its kin), and an
+        API out of reach as :class:`ThalovantAPIUnreachableError`: neither says
+        anything about the connection. A 5xx, and a 429 for the time it names,
+        are ridden out, and no read runs past ``timeout``. A hub that refuses
+        the credentials inside this window is not admitting them yet, not
+        refusing them.
         """
         return self._run(self._core.wait_for_admission(connection, timeout=timeout, poll_interval=poll_interval))
 
@@ -3406,11 +3438,58 @@ def _api_error(response: Any) -> ThalovantAPIError:
     message = _error_message(response.status_code, body)
     kind = _error_kind(response.status_code, problem)
     if kind is ThalovantAlreadyLinkedError:
-        return ThalovantAlreadyLinkedError(
+        error: ThalovantAPIError = ThalovantAlreadyLinkedError(
             message, status_code=response.status_code, problem=problem,
             client_id=_linked_client_id(problem),
         )
-    return kind(message, status_code=response.status_code, problem=problem)
+    else:
+        error = kind(message, status_code=response.status_code, problem=problem)
+    if error.retry_after_seconds is None:
+        error.retry_after_seconds = _retry_after_header(getattr(response, "headers", None))
+    return error
+
+
+async def _sleep_at_least(seconds: float) -> None:
+    """Sleep the whole of *seconds* on the monotonic clock, never less.
+
+    asyncio runs a timer up to the clock's resolution early -- about 16 ms on
+    Windows -- so a wait the API asked for could end before it was up.
+    """
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:  # noqa: ASYNC110 - a deadline, not a condition to wait on
+        await asyncio.sleep(left)
+
+
+def _retry_after_header(headers: Any) -> float | None:
+    """``Retry-After`` in seconds, else ``RateLimit-Reset``, from a response's headers.
+
+    The API's own rate limiter answers a 429 in plain text, with only
+    ``RateLimit-Reset`` (seconds until the window resets) to say how long.
+    An HTTP-date ``Retry-After`` is not read.
+    """
+    if not headers:
+        return None
+    for name in ("Retry-After", "RateLimit-Reset"):
+        try:
+            value = headers.get(name)
+        except Exception:  # noqa: BLE001 - a header mapping that cannot be read has no answer
+            return None
+        if isinstance(value, str) and value.strip().isdigit():
+            return float(int(value.strip()))
+    return None
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    """A URL's origin: scheme, host and port, the default port spelled out."""
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        return (scheme, "\0invalid", None)
+    if port is None:
+        port = {"https": 443, "http": 80}.get(scheme)
+    return (scheme, (parts.hostname or "").lower(), port)
 
 
 def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[ThalovantAPIError]:
@@ -3468,22 +3547,6 @@ def _refuses_connection_type(error: ThalovantAPIError) -> bool:
             if isinstance(entry.get("msg"), str):
                 said.append(entry["msg"])
     return any("connection_type" in text or "connectionType" in text for text in said)
-
-
-def _retry_after_seconds(problem: Mapping[str, Any] | None) -> float | None:
-    """The ``retry_after_seconds`` of a 429, at the top of the problem or in a detail object.
-
-    The API sends it inside ``detail`` (its 429s are FastAPI's envelope around
-    a structured refusal), as the ``api-errors`` contract reads ``code``.
-    """
-    if not isinstance(problem, Mapping):
-        return None
-    nested = problem.get("detail")
-    for source in (problem, nested if isinstance(nested, Mapping) else {}):
-        value = source.get("retry_after_seconds")
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-            return float(value)
-    return None
 
 
 def json_dumps(value: Any) -> str:

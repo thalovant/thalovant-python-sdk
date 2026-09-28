@@ -132,7 +132,7 @@
       }
     },
     "connection-admission": {
-      "description": "Waiting for a hub to admit a new connection by following the operation the create returned: ready is admitted, failed and timed_out are a failure with the operation's code, 404 and no operation at all are admitted at once, a 5xx is ridden out, a 429 is waited out for the retry_after_seconds it names unless that is longer than the time left, the deadline is a timeout that is both a connection error and a timeout, and a link to another origin than the API's is never fetched.",
+      "description": "Waiting for a hub to admit a new connection by following the operation the create returned, no read running past the wait's deadline: ready is admitted, failed and timed_out are a failure with the operation's code, 404 and no operation at all are admitted at once, a 5xx is ridden out, a 429 is waited out for the retry_after_seconds it names (inside the problem's detail object, where the API puts it), else its Retry-After or RateLimit-Reset header, unless that is longer than the time left; a 401 or 403 is the API's own authentication error passed through, any other refusal of the wait a failure that keeps the status, code and detail, and an API out of reach the SDK's unreachable error; the deadline is a timeout that is both a connection error and a timeout and says the hub may still admit it later; and a link whose origin (scheme, host and port) is not the API's is never fetched.",
       "files": [
         "src/thalovant/control.py",
         "src/thalovant/errors.py"
@@ -301,7 +301,7 @@
       ]
     },
     "device-login": {
-      "description": "Device sign-in one step at a time for a caller that runs its own loop: begin returns the code to show and the poll interval; one poll is pending (with the interval, lengthened by five seconds for good on slow_down), expired, denied, or the approved token with its scopes, expiry and id, which the SDK keeps; any other failure carries the api-errors fields. The token a device login minted can revoke itself, and revoking it is idempotent: a 401 on its own revoke means it is already dead, and it is forgotten either way. Every sign-in sets the token id from its own answer, so a default revoke never reaches a token the SDK no longer holds. Verification URLs with credentials are refused, and neither the device code nor the token appears in an error.",
+      "description": "Device sign-in one step at a time for a caller that runs its own loop: begin returns the code to show and the poll interval, and leaves an empty scope list out of the request (the API requires at least one; none asks for its default); one poll is pending (with the interval, lengthened by five seconds for good on slow_down), expired, denied, or the approved token with its scopes, expiry and id, which the SDK keeps; any other failure carries the api-errors fields. The token a device login minted can revoke itself, and revoking it is idempotent: a 401 on its own revoke means it is already dead, and it is forgotten either way. Every sign-in sets the token id from its own answer, so a default revoke never reaches a token the SDK no longer holds. Verification URLs with credentials are refused, and neither the device code nor the token appears in an error.",
       "files": [
         "src/thalovant/control.py",
         "src/thalovant/errors.py"
@@ -344,12 +344,14 @@
       ]
     },
     "home-link": {
-      "description": "The Home Assistant link on the data plane: every thalovant.home.request is answered with one thalovant.home.response, sent as an OVOS-MSG-1 §5.2 reply built from the context as the hub sent it (deep copy, destination the old source, source the old destination's first entry), in plain text, within the hub's 10 s; response_type and error_code come from the contract's lists, and a handler that raises, is too slow or answers outside them is failed_to_handle, timeout or unknown with empty speech. A long-lived link reconnects on a ladder, treats refusals as not-yet-admitted for a grace period, and reads a close right after the handshake as a refusal.",
+      "description": "The Home Assistant link on the data plane: every thalovant.home.request is answered at most once with a thalovant.home.response, sent as an OVOS-MSG-1 §5.2 reply built from the context as the hub sent it (deep copy, destination the old source, source the old destination's first entry; no source means no destination); response_type and error_code come from the contract's lists, and a handler that raises, is too slow or answers outside them is failed_to_handle, timeout or unknown with empty speech. Everything happens within the hub's 10 s: the handler gets its timeout or what is left, the reply what the handler left, and a reply that would arrive late is never sent. speech is plain text made by one portable rule: real tags, comments and processing instructions removed (a '<' not opening one is text), then numeric references, the five XML entities and &nbsp; decoded once and nothing else, then Unicode White_Space runs collapsed. Keeping the link up (link-keeping-vectors): a close with 1000, 1005 or 1008 during the handshake or within 750 ms after it is a refusal, its code allowed to surface up to 250 ms late; a Noise message that does not authenticate is a refusal, a failed KK attempt is followed at once by XX, and a hub key that is not the pinned one is a key-changed connection error, never a refusal; the supervisor retries failures and refusals on a 10 s ladder doubling to 120 s, dials again at once after a drop, gives up on refusals that last 600 s, and stops at once on a changed key.",
       "files": [
         "src/thalovant/home.py",
         "src/thalovant/client.py",
         "src/thalovant/session.py",
-        "src/thalovant/_hive.py"
+        "src/thalovant/_hive.py",
+        "src/thalovant/_noise_runtime.py",
+        "src/thalovant/rich.py"
       ],
       "scope": {
         "thalovant-dotnet-sdk": {
@@ -384,10 +386,12 @@
       },
       "tests": [
         "tests/test_home_link_vectors.py",
-        "tests/test_async_hub_session.py"
+        "tests/test_async_hub_session.py",
+        "tests/test_link_keeping_vectors.py"
       ],
       "vectors": [
-        "home-link-vectors.json"
+        "home-link-vectors.json",
+        "link-keeping-vectors.json"
       ]
     },
     "identity": {
@@ -702,12 +706,13 @@
       "api-error-vectors.json": "fbe53320afa5501f7da200a04dafa6f6e3345d86d874288b3e2333ed5396d26e",
       "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
       "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
-      "connection-admission-vectors.json": "6dceea87d7e334023d27a267aee9eb28a02239107daad09e79621564a742f069",
+      "connection-admission-vectors.json": "a190ebe48fd28d0dc0db0927418ee8d4d2e1a0845580d91c81ed52c75568eec4",
       "connection-kinds-vectors.json": "87a0b76dbfd8b45e43b0e1685fb8271517cb1c6c0e0ea6b589f30406d4ca86a4",
       "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
-      "device-login-vectors.json": "5fef9c3406a7bb9312a69dfe289546cec941108fc35d2a469384544a69460ca0",
-      "home-link-vectors.json": "66f5979e39651c6333a43375ebf9ff874b1a5ba57d28001c8d774f28e6789308",
+      "device-login-vectors.json": "c62b6fe73009c9ffcd478023cceb310d847b5823c06c5e6c673d7b6b2d44cb98",
+      "home-link-vectors.json": "544e4380f4195dfe4f7ed81724bf59c96d1e8a4dc6e944f87acf68aab18e2daf",
       "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
+      "link-keeping-vectors.json": "55abf1de23cbba2318cea6a469025e336099223fb348d47a277be1210ca7c255",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
       "refusal-vectors.json": "8388f62c4618613d0e262ba3f5367e4a83215b70a5834c7e7ec0516934fc57e0",
@@ -733,25 +738,25 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "dfc535835ba2e441523c92504bd0e1273ceaac6a0bc7326ddd3f01d016fc070e",
+      "src/thalovant/__init__.py": "3a608fa7e13eeb2981d936fe907ecef1769dd75825bf39943946077bdf729ad8",
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
-      "src/thalovant/_hive.py": "b6fac803a997c15a81fc77f2226bd6c99340380cbfecffa5d154483862f81a7f",
+      "src/thalovant/_hive.py": "7bb32df1a2c11f26bb1e99ac6ac4302783a4904f30d95535fb3ecad52fc18e06",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
       "src/thalovant/_link.py": "1b483dfca852f73d1e1797cfc6f82bc9596952f2efe6dd865377026fbc902470",
       "src/thalovant/_loop.py": "a722d2618063286781cc5b44fbd5240c8d043fef862c52189ec36da54f2d19d2",
       "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
-      "src/thalovant/_noise_runtime.py": "e6c30541ce66dfa09ae2d75badde63c6fd1b6280b126121bfa75277ff07027ec",
+      "src/thalovant/_noise_runtime.py": "79fc6423b8f2d2aaeafbabcdfbbd5d94145f448a2da727087a9952565b56aec3",
       "src/thalovant/_wire.py": "72ce5c3cd475c2e7e66f3901f8995c4839f85822444cb5199b2725b911826c3e",
       "src/thalovant/_yaml.py": "54786940b7a3688fcca9d9e93e8ada950f1f1b1b82034a565bdb347b3fd44eaa",
       "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
-      "src/thalovant/client.py": "7a1cca78992cd69db9de4a0e1b55e28328959b7ed35359a5fff7079c59a0cde5",
+      "src/thalovant/client.py": "490ad30b66cd8623190fcb23630cb7cda6983f1913ec8b73b021674e8453f5de",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "02ec4d01e45b0e599264f846ef9612532911c4131f6d434e86c9a97ace3b657e",
+      "src/thalovant/control.py": "f73a396ca76d07d7748cd69d9ca7f5f25c928945801f238735e4799861ca79e8",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "a2d4b447e7da3bb1ee469c34e2d8a96d2d64a5609b7423f55732f44dffbc44c6",
+      "src/thalovant/errors.py": "effb57d38d2b5ec6a5016add6f7bd6262ce7ad2c526bc0ada5a3b273f622004d",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
-      "src/thalovant/home.py": "0fdd135843bab34ddccbd0d8bc1387a72a29a25512b86cbe143dbf9fb91f6274",
+      "src/thalovant/home.py": "74f9f1a40efa3111f2f0aceaf8ee2089063d121416198952d681f170b1370630",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "dbce0fc107197ef211d5eccf68f9e0ef163211395b6759c6688ddb8b18f2f5c3",
       "src/thalovant/intents.py": "297df8fbceff0627765e4358970d5b916bbaf3cd981d0a4e41f07a0ad38d6084",
@@ -760,8 +765,8 @@
       "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
       "src/thalovant/native_auth.py": "86f04a39d04aedc580101d72fc4100b65da168d920d05f1b08de2dea91bf8aa8",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
-      "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
-      "src/thalovant/session.py": "473c547eadabc731ba113a0ddc436f18f39fc88d5e884bde99a0121275056591",
+      "src/thalovant/rich.py": "2bbc769be258ca114e7afe41a2b7b88851715ebfa847e313f3611b1bf110897c",
+      "src/thalovant/session.py": "1e15647f0d07dc1bd8188b551db1d8ea50ac5353b443a8f3a0b60bb0bd013896",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
       "src/thalovant/transport.py": "32358b00b2225bfefdceabc8d70efa79eb2ffa61a0feccab6edf2e35150348b7"
     }
@@ -801,7 +806,8 @@
     "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d",
     "b16579bd501d18147e6b74b02d67d98ce6aeb850f369de2138fbdfb598469b7c",
     "f859eae591c57dfb82c8241c44cc7d46ba52ef2dcd0cafaa6bd0187c2d11f459",
-    "f1593522f0af94b56d35ea92909d8bd71d1ae5fc7f6596b6212a0cc4c01c0329"
+    "f1593522f0af94b56d35ea92909d8bd71d1ae5fc7f6596b6212a0cc4c01c0329",
+    "3cdc3e21b6f5505794d2d0988ea92febe3c4acce228429e84e87e93da07c4bab"
   ],
   "schema_version": 1
 }

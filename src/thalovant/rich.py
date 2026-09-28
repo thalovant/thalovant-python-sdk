@@ -8,7 +8,16 @@ import re
 from typing import Any, Iterable, Mapping
 
 
-_SSML_RE = re.compile(r"<{1}/?[^>]*>{1}")
+#: A markup construct: a tag -- ``<`` or ``</`` immediately followed by a
+#: name that starts with a letter, then attributes, then ``>`` or ``/>`` --
+#: a comment, or a processing instruction. A ``<`` that does not open one is
+#: text: "5 < 6 and 7 > 3" is a sentence, not a tag.
+_SSML_RE = re.compile(
+    r"<!--.*?-->"
+    r"|<\?.*?\?>"
+    r"|</?[A-Za-z][A-Za-z0-9._:-]*(?:\s+(?:[^<>\"']|\"[^\"]*\"|'[^']*')*)?\s*/?>",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -36,7 +45,12 @@ class ThalovantDisplayItem:
 
 
 def strip_ssml(text: str) -> str:
-    """Remove simple SSML/XML tags from display text."""
+    """Remove SSML/XML tags, comments and processing instructions from display text.
+
+    Only real markup goes: a ``<`` not followed by a tag name, ``/`` and a tag
+    name, ``!--`` or ``?`` is kept, so "5 < 6 and 7 > 3" survives whole.
+    Entities are left as they are.
+    """
 
     return _SSML_RE.sub("", text)
 

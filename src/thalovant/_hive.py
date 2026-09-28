@@ -35,6 +35,7 @@ from ._loop import OffLoop
 from ._wire import BusMessage, HiveMessage, binary_kind_name
 from .errors import (
     ThalovantConnectionError,
+    ThalovantHubKeyChangedError,
     ThalovantHubRefusedError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
@@ -67,11 +68,42 @@ HIVE_DISPATCHED = frozenset(
     {"query", "cascade", "broadcast", "propagate", "escalate", "intercom", "rendezvous"}
 )
 
-#: A hub closes the socket without a status for an access key it does not
-#: know and after a Noise abort, and with 1008 for a malformed authorization.
-#: Anything else (1011, 1013, a dropped socket) is the hub's trouble or the
-#: network's, not a verdict on the credentials.
-_REFUSAL_CODES = frozenset({0, 1000, 1005, 1008})
+#: The close codes (RFC 6455) a hub turns credentials away with: no status
+#: at all (1005) for an access key it does not know and after a Noise abort,
+#: 1008 for a malformed authorization, and 1000 from hubs that close
+#: politely. Anything else -- 1001, 1011, 1013, a socket that ended with no
+#: close frame at all (1006) -- is the hub's trouble or the network's, not a
+#: verdict on the credentials. Only a close before the link is established
+#: counts: during the handshake, or within REFUSAL_SETTLE_MS after it.
+#: ``link-keeping-vectors.json`` holds every SDK to this.
+REFUSAL_CLOSE_CODES = frozenset({1000, 1005, 1008})
+#: How long after the handshake a close is still the hub's answer to it. A
+#: hub that does not know a client's static key says so only by closing
+#: right after the handshake.
+REFUSAL_SETTLE_MS = 750
+#: How late a transport may learn a close's code and still have it count.
+#: Some (URLSession) report that the socket closed before they report how.
+CLOSE_CODE_GRACE_MS = 250
+_NO_STATUS = 1005
+
+
+def close_refuses(
+    code: int | None,
+    *,
+    closed_after_handshake_ms: int | None = None,
+    code_late_ms: int = 0,
+) -> bool:
+    """Whether a close is the hub refusing the credentials rather than a drop.
+
+    *code* is the RFC 6455 close code, ``None`` when the socket ended without
+    one. *closed_after_handshake_ms* is when the close happened, counted from
+    the end of the handshake, or ``None`` for a close during it: its own time
+    decides, not when the transport reported it. *code_late_ms* is how long
+    after the close the transport learnt the code.
+    """
+    if code is None or code not in REFUSAL_CLOSE_CODES or code_late_ms > CLOSE_CODE_GRACE_MS:
+        return False
+    return closed_after_handshake_ms is None or closed_after_handshake_ms <= REFUSAL_SETTLE_MS
 #: A Noise transport message is at most 64 KiB; a WebSocket frame bigger than
 #: this is not one.
 _MAX_FRAME = 256 * 1024
@@ -176,7 +208,7 @@ class AsyncHiveMindTransport:
         #: The loop this transport runs on, once it has run on one.
         self.owner_loop: asyncio.AbstractEventLoop | None = None
         #: Whether the hub closed the last session the way it refuses
-        #: credentials (no status, 1000, 1005, 1008). A hub that does not know
+        #: credentials (REFUSAL_CLOSE_CODES). A hub that does not know
         #: a client's static key says so only by closing right after the
         #: handshake, so a caller that just connected can tell it from a drop.
         self.closed_refused = False
@@ -453,6 +485,25 @@ class AsyncHiveMindTransport:
             self._own_session = None  # bound to the old loop; a new one is made on demand
 
     async def connect(self) -> None:
+        """Connect and authenticate. One KK attempt that fails is followed at once by XX.
+
+        A KK handshake that does not authenticate -- the hub closing on its
+        first message, or its answer failing here -- means the password or the
+        hub's key is not what was pinned, and only XX can say which: a wrong
+        password is a refusal (:class:`ThalovantHubRefusedError`), a changed
+        hub key a :class:`ThalovantHubKeyChangedError`. The XX attempt's
+        outcome is the connect's.
+        """
+        try:
+            await self._connect_once()
+        except ThalovantHubRefusedError:
+            protocol = self._protocol
+            if protocol is None or not protocol.kk_failed or self._closing:
+                raise
+            log.debug("KK handshake refused; trying XX to tell a wrong password from a changed hub key")
+            await self._connect_once()
+
+    async def _connect_once(self) -> None:
         self._own()
         if self.is_connected():
             return
@@ -541,7 +592,6 @@ class AsyncHiveMindTransport:
         self._check(generation)
         self._mark_transport_open(socket=carrier.is_socket)
         deadline = loop.time() + self.handshake_timeout
-        phase = "hello"
         while not protocol.ready:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -551,7 +601,8 @@ class AsyncHiveMindTransport:
             except asyncio.TimeoutError:
                 raise ThalovantTimeoutError(self.handshake_timeout_message) from None
             except _Closed as closed:
-                if closed.refused and phase != "offer":
+                if closed.refused:
+                    protocol.refused_during_handshake()
                     raise ThalovantHubRefusedError(
                         "The hub refused this connection's credentials."
                     ) from None
@@ -566,16 +617,11 @@ class AsyncHiveMindTransport:
             # application's loop never waits on a disk.
             step = await loop.run_in_executor(None, protocol.receive, raw)
             self._check(generation)
-            if protocol.server_hello is not None and phase == "hello":
-                phase = "offer"
             if step.need_psk is not None:
-                phase = "response"
                 # argon2id: about a tenth of a second of CPU, off the loop.
                 psk = await loop.run_in_executor(None, protocol.derive_psk)
                 self._check(generation)
                 step = await loop.run_in_executor(None, protocol.provide_psk, psk)
-            elif step.send and not protocol.ready:
-                phase = "response"
             for frame in step.send:
                 await carrier.send(frame, self.send_timeout)
             self._check(generation)
@@ -912,7 +958,9 @@ class _WSSCarrier:
         code = message.data if message.type is _aio().WSMsgType.CLOSE else ws.close_code
         if message.type is _aio().WSMsgType.ERROR:
             code = None
-        raise _Closed(code, refused=code in _REFUSAL_CODES)
+        if code == 0:
+            code = _NO_STATUS  # aiohttp's reading of a close frame with no status
+        raise _Closed(code, refused=close_refuses(code))
 
     async def send(self, frame: str | bytes, timeout: float) -> None:
         ws = self._ws
@@ -988,6 +1036,8 @@ class AsyncHiveMindWSSTransport(AsyncHiveMindTransport):
     def _connect_error(self, error: BaseException) -> BaseException:
         if isinstance(error, ThalovantHubRefusedError):
             return ThalovantHubRefusedError("HiveMind WSS connect failed: the hub refused the credentials.")
+        if isinstance(error, ThalovantHubKeyChangedError):
+            return ThalovantHubKeyChangedError("HiveMind WSS connect failed: the hub's Noise key is not the one pinned.")
         return ThalovantConnectionError("HiveMind WSS connect failed.")
 
 
@@ -1247,6 +1297,10 @@ class AsyncHiveMindHTTPTransport(AsyncHiveMindTransport):
         if isinstance(error, ThalovantHubRefusedError):
             return ThalovantHubRefusedError(
                 "Could not establish the HiveMind HTTP Noise session: the hub refused the credentials."
+            )
+        if isinstance(error, ThalovantHubKeyChangedError):
+            return ThalovantHubKeyChangedError(
+                "Could not establish the HiveMind HTTP Noise session: the hub's Noise key is not the one pinned."
             )
         return ThalovantConnectionError("Could not establish the HiveMind HTTP Noise session.")
 

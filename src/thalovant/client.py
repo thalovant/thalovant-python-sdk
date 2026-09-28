@@ -255,7 +255,8 @@ def reply_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
     it said, with the routing turned round: the reply goes to whoever sent the
     request (``destination`` becomes the old ``source``) and comes from whoever
     it was sent to (``source`` becomes the old ``destination``, its first entry
-    when that is a list). A hub uses this to route the answer back to the
+    when that is a list). A request with a destination and no source gets a
+    reply with no destination. A hub uses this to route the answer back to the
     satellite that asked, across bridges and NAT.
     """
 
@@ -268,6 +269,12 @@ def reply_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
         )
     if source is not None:
         swapped["destination"] = source
+    elif destination is not None:
+        # Nobody to send it back to: the request said who it was for but not
+        # who sent it. Keeping the old destination would address the reply to
+        # its own sender, so the reply carries no destination at all and
+        # the hub routes it as it routes any message without one.
+        del swapped["destination"]
     return swapped
 
 

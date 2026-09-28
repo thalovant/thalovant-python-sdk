@@ -946,12 +946,17 @@ await session.close()
 
 `connect()` makes one attempt, so a setup step can report a failure straight
 away. `run()` keeps the link `connect()` opened rather than dialling a second
-one, and after a drop it redials on the same ladder as `HubSession`: 10, 20, 40,
-80, then 120 seconds. A new connection is refused until its hub has admitted
-it, so a refusal is retried for `refusal_grace_seconds` (600 s by default)
-before `run()` raises `ThalovantHubRefusedError`. A hub that cannot be reached
-is retried until `close()`. Every attempt is logged at DEBUG on
-`thalovant.session`.
+one. After a drop it dials again at once, and after a failed attempt it waits
+on the same ladder as `HubSession`: 10, 20, 40, 80, then 120 seconds. A new
+connection is refused until its hub has admitted it, so a refusal is retried
+for `refusal_grace_seconds` (600 s by default) before `run()` raises
+`ThalovantHubRefusedError`. A refusal is a close with 1000, 1005 or 1008
+during the handshake or within 0.75 s after it, a Noise handshake that does
+not authenticate (a wrong password), or an upgrade answered 401 or 403. A hub
+whose Noise key is not the one pinned for it ends `run()` at once with
+`ThalovantHubKeyChangedError`, since retrying cannot change that. A hub that
+cannot be reached is retried until `close()`. Every attempt is logged at DEBUG
+on `thalovant.session`.
 
 ## Home Assistant Link
 
@@ -998,16 +1003,24 @@ runner = asyncio.create_task(session.run())
   `ThalovantAlreadyLinkedError`, whose `client_id` names that link.
 - `wait_for_admission(result)` polls the operation the create returned. It
   returns once the hub has admitted the connection. It raises
-  `ThalovantAdmissionFailedError` when the platform reports a failure, and
+  `ThalovantAdmissionFailedError` when the platform reports a failure or the
+  API refuses the wait (keeping its status and body), and
   `ThalovantAdmissionTimeoutError` when the wait runs out; the timeout error is
   a `ThalovantConnectionError`, so the connection can be kept and the wait
-  tried again later.
-- `answer_home_requests(session, handler)` answers every request exactly once,
-  inside the hub's ten seconds. The answer goes back along the route the
-  request came in on (`client.reply(event, ...)`), and its speech is plain
-  text. A handler that raises, runs out of time, or answers outside the
-  contract produces an `error` answer with an `error_code`; the hub then speaks
-  its own sentence for that code in the device's language.
+  tried again later. A revoked token surfaces as `ThalovantAuthError` and an
+  API out of reach as `ThalovantAPIUnreachableError`, never as a failed
+  admission. A 429 is waited out for the time the API names.
+- `answer_home_requests(session, handler)` answers each request at most once,
+  and never after the hub's ten seconds: the handler gets nine of them, and
+  the reply's sending gets what the handler left. A reply that could only
+  arrive after the hub gave up is not sent, and a handler that ignores
+  cancellation does not hold the answer back. The answer goes back along the
+  route the request came in on (`client.reply(event, ...)`), and its speech is
+  plain text: tags removed, the portable set of character references decoded
+  (numeric, the five XML entities and `&nbsp;`), white space collapsed. A
+  handler that raises, runs out of time, or answers outside the contract
+  produces an `error` answer with an `error_code`; the hub then speaks its own
+  sentence for that code in the device's language.
 - `delete_client(client_id)` removes the connection; it reads the `etag` the
   API needs when you do not pass one. `revoke_api_token()` revokes the token
   from a device login, for when the person removes the integration.

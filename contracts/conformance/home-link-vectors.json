@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "The Home Assistant link on the data plane. A hub skill sends thalovant.home.request {request_id, utterance, lang, conversation_id?}; the SDK answers every one with thalovant.home.response {request_id, speech, response_type, error_code?, continue_conversation, conversation_id?}, sent as a reply (OVOS-MSG-1 §5.2): the request's context, deep-copied, with destination set to the request's source and source to the request's destination (its first entry when a list), read from the context as the hub sent it. response_type is action_done, query_answer or error; error_code, only with error, is one of no_intent_match, no_valid_targets, failed_to_handle, unknown, timeout, agent_unavailable. speech is plain text: markup is removed, entities decoded and whitespace collapsed. The reply always goes out, within the hub's reply_timeout_ms: a handler that raises is failed_to_handle, one that does not answer within timeout_ms (the case's own, else 9000) is timeout, one that answers with an unknown response_type or error_code is unknown -- each with speech \"\" unless the handler had some, since the hub speaks its own sentence for the code in the device's language. A request without a request_id is answered with request_id \"\". conversation_id is echoed when the handler gives none. 'reply_context' cases check the routing alone. Every duration is whole milliseconds.",
+ "description": "The Home Assistant link on the data plane. A hub skill sends thalovant.home.request {request_id, utterance, lang, conversation_id?}; the SDK answers each one at most once with thalovant.home.response {request_id, speech, response_type, error_code?, continue_conversation, conversation_id?}, sent as a reply (OVOS-MSG-1 §5.2): the request's context, deep-copied, with destination set to the request's source and source to the request's destination (its first entry when a list), read from the context as the hub sent it; a context with a destination and no source gets a reply with no destination at all. response_type is action_done, query_answer or error; error_code, only with error, is one of no_intent_match, no_valid_targets, failed_to_handle, unknown, timeout, agent_unavailable. A handler that raises is failed_to_handle, one that does not answer within timeout_ms (the case's own, else 9000) is timeout, one that answers with an unknown response_type or error_code is unknown -- each with speech \"\" unless the handler had some, since the hub speaks its own sentence for the code in the device's language. A request without a request_id is answered with request_id \"\". conversation_id is echoed when the handler gives none. Everything happens within the hub's bound, reply_timeout_ms (a case's hub_timeout_ms overrides it), counted from the request's arrival: the handler gets timeout_ms or what is left of the bound, whichever is less, and the reply's sending gets what the handler left; a reply that cannot be sent within the bound is withdrawn and never sent late ('deadline' cases: send_ms is how long the transport takes to send it, replied whether it went out). speech is plain text, made in this order ('speech' cases): markup is removed -- a tag is '<' or '</' immediately followed by an ASCII letter, then anything up to the next '>' outside a quoted attribute value; a comment is '<!--' to '-->'; a processing instruction '<?' to '?>'; any other '<' is text, so '5 < 6' stays -- then character references are decoded once, left to right: numeric ones (&#decimal; and &#xhex;, except 0, surrogates and anything above U+10FFFF, which stay as written), the five XML entities (&amp; &lt; &gt; &quot; &apos;) and &nbsp;, and no others; then every run of characters with the Unicode White_Space property becomes one space, and the ends are trimmed. 'reply_context' cases check the routing alone. Every duration is whole milliseconds.",
  "source": "Home Assistant contract v1 (Wire messages); OVOS-MSG-1 §5.2; ovos-bus-client Message.reply",
  "request_type": "thalovant.home.request",
  "response_type": "thalovant.home.response",
@@ -52,6 +52,25 @@
    "expect": {
     "source": "ha-peer",
     "destination": "skills"
+   }
+  },
+  {
+   "name": "a destination and no source: the reply has no destination",
+   "kind": "reply_context",
+   "context": {
+    "destination": [
+     "ha-peer",
+     "other"
+    ],
+    "session": {
+     "session_id": "s"
+    }
+   },
+   "expect": {
+    "source": "ha-peer",
+    "session": {
+     "session_id": "s"
+    }
    }
   },
   {
@@ -209,6 +228,95 @@
    }
   },
   {
+   "name": "a reply sent inside the hub's bound goes out",
+   "kind": "deadline",
+   "hub_timeout_ms": 400,
+   "timeout_ms": 300,
+   "send_ms": 50,
+   "request": {
+    "request_id": "d1",
+    "utterance": "turn on the porch light",
+    "lang": "en-US"
+   },
+   "handler": {
+    "sleep_ms": 100,
+    "speech": "Turned on the porch light.",
+    "response_type": "action_done"
+   },
+   "expect": {
+    "replied": true,
+    "response": {
+     "request_id": "d1",
+     "speech": "Turned on the porch light.",
+     "response_type": "action_done",
+     "continue_conversation": false
+    }
+   }
+  },
+  {
+   "name": "a reply that could only arrive after the hub gave up is not sent",
+   "kind": "deadline",
+   "hub_timeout_ms": 400,
+   "timeout_ms": 300,
+   "send_ms": 600,
+   "request": {
+    "request_id": "d2",
+    "utterance": "turn on the porch light",
+    "lang": "en-US"
+   },
+   "handler": {
+    "sleep_ms": 250,
+    "speech": "Turned on the porch light.",
+    "response_type": "action_done"
+   },
+   "expect": {
+    "replied": false
+   }
+  },
+  {
+   "name": "a handler timeout longer than the hub's bound leaves no time to answer",
+   "kind": "deadline",
+   "hub_timeout_ms": 300,
+   "timeout_ms": 1000,
+   "send_ms": 0,
+   "request": {
+    "request_id": "d3",
+    "utterance": "open the garage",
+    "lang": "en-US"
+   },
+   "handler": {
+    "sleep_ms": 2000
+   },
+   "expect": {
+    "replied": false
+   }
+  },
+  {
+   "name": "a handler that times out inside the bound still gets its timeout answer",
+   "kind": "deadline",
+   "hub_timeout_ms": 400,
+   "timeout_ms": 100,
+   "send_ms": 50,
+   "request": {
+    "request_id": "d4",
+    "utterance": "open the garage",
+    "lang": "en-US"
+   },
+   "handler": {
+    "sleep_ms": 2000
+   },
+   "expect": {
+    "replied": true,
+    "response": {
+     "request_id": "d4",
+     "speech": "",
+     "response_type": "error",
+     "error_code": "timeout",
+     "continue_conversation": false
+    }
+   }
+  },
+  {
    "name": "a request without an id",
    "kind": "answer",
    "request": {
@@ -225,6 +333,90 @@
     "response_type": "action_done",
     "continue_conversation": false
    }
+  },
+  {
+   "name": "a less-than sign and a greater-than sign are text",
+   "kind": "speech",
+   "text": "5 < 6 and 7 > 3",
+   "expect": "5 < 6 and 7 > 3"
+  },
+  {
+   "name": "SSML tags go, their text stays",
+   "kind": "speech",
+   "text": "<speak>Hi <break time=\"1s\"/>there, <emphasis level=\"strong\">you</emphasis>.</speak>",
+   "expect": "Hi there, you."
+  },
+  {
+   "name": "an attribute value may hold a greater-than sign",
+   "kind": "speech",
+   "text": "<audio src='a>b.wav'>Ding</audio>",
+   "expect": "Ding"
+  },
+  {
+   "name": "comments and processing instructions go",
+   "kind": "speech",
+   "text": "<?xml version=\"1.0\"?><!-- a note -->Done.",
+   "expect": "Done."
+  },
+  {
+   "name": "a less-than sign right before a letter opens a tag",
+   "kind": "speech",
+   "text": "a<b and c>d",
+   "expect": "ad"
+  },
+  {
+   "name": "an unclosed tag is text",
+   "kind": "speech",
+   "text": "less <b than",
+   "expect": "less <b than"
+  },
+  {
+   "name": "numeric references, decimal and hex",
+   "kind": "speech",
+   "text": "&#72;&#x69;&#X21; &#8364;5",
+   "expect": "Hi! €5"
+  },
+  {
+   "name": "the five XML entities",
+   "kind": "speech",
+   "text": "&lt;b&gt; &quot;q&quot; &apos;a&apos; &amp;",
+   "expect": "<b> \"q\" 'a' &"
+  },
+  {
+   "name": "nbsp is white space",
+   "kind": "speech",
+   "text": "21&nbsp;&nbsp;degrees",
+   "expect": "21 degrees"
+  },
+  {
+   "name": "other named references are left as written",
+   "kind": "speech",
+   "text": "&eacute;t&eacute; &copy; &hellip;",
+   "expect": "&eacute;t&eacute; &copy; &hellip;"
+  },
+  {
+   "name": "references to no character are left as written",
+   "kind": "speech",
+   "text": "&#0; &#xD800; &#x110000;",
+   "expect": "&#0; &#xD800; &#x110000;"
+  },
+  {
+   "name": "a reference without its semicolon is text",
+   "kind": "speech",
+   "text": "&#65 &amp",
+   "expect": "&#65 &amp"
+  },
+  {
+   "name": "decoded once, after the markup is gone",
+   "kind": "speech",
+   "text": "&amp;lt;b&amp;gt; &lt;i&gt;x&lt;/i&gt;",
+   "expect": "&lt;b&gt; <i>x</i>"
+  },
+  {
+   "name": "every Unicode white space collapses, and the ends are trimmed",
+   "kind": "speech",
+   "text": " a\t\n b　c d e  ",
+   "expect": "a b c d e"
   }
  ]
 }

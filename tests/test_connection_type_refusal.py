@@ -55,6 +55,23 @@ def test_another_status_is_never_a_kind_refusal():
     ],
 )
 def test_a_429_names_its_wait_at_the_top_or_inside_detail(problem, seconds):
-    from thalovant.control import _retry_after_seconds
+    error = ThalovantAPIError("slow down", status_code=429, problem=problem)
+    assert error.retry_after_seconds == seconds
 
-    assert _retry_after_seconds(problem) == seconds
+
+@pytest.mark.parametrize(
+    ("headers", "seconds"),
+    [
+        ({"Retry-After": "4"}, 4.0),
+        ({"RateLimit-Reset": "9", "RateLimit-Remaining": "0"}, 9.0),  # the API's own rate limiter
+        ({"Retry-After": "2", "RateLimit-Reset": "9"}, 2.0),
+        ({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, None),
+        ({}, None),
+    ],
+)
+def test_a_plain_429_names_its_wait_in_a_header(headers, seconds):
+    from thalovant.control import _api_error, _Response
+
+    error = _api_error(_Response(429, "Too Many Requests", headers))
+    assert error.status_code == 429 and error.problem is None
+    assert error.retry_after_seconds == seconds

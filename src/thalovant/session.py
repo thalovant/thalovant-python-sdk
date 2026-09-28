@@ -33,6 +33,7 @@ from urllib.parse import urlsplit
 
 from .errors import (
     ThalovantConnectionError,
+    ThalovantHubKeyChangedError,
     ThalovantHubRefusedError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
@@ -45,6 +46,8 @@ __all__ = [
     "AsyncHubSession",
     "HubSession",
     "HubSessionPolicy",
+    "LinkDecision",
+    "LinkSupervisor",
     "OriginPreference",
     "alive",
     "hub_hostname",
@@ -81,6 +84,69 @@ class HubSessionPolicy:
 
     def next_wait(self, current: float) -> float:
         return min(current * 2, self.retry_ceiling_seconds)
+
+
+@dataclass(frozen=True)
+class LinkDecision:
+    """What to do after one outcome of keeping a link up.
+
+    ``action`` is ``"hold"`` (the link is up), ``"retry"`` after
+    ``wait_seconds``, or ``"give_up"`` for ``reason`` -- ``"refused"`` or
+    ``"key_changed"``.
+    """
+
+    action: str
+    wait_seconds: float = 0.0
+    reason: str | None = None
+
+
+class LinkSupervisor:
+    """How a long-lived link is kept up, as a pure function of what happened and when.
+
+    :meth:`AsyncHubSession.run` asks it after every attempt; every SDK follows
+    the same rules (``link-keeping-vectors.json``):
+
+    - ``"up"``: hold, and start the ladder and the refusal clock afresh.
+    - ``"dropped"`` (an established link went down): dial again at once.
+    - ``"failed"`` (the hub or the network could not be reached): wait the
+      ladder's step -- ``retry_seconds``, doubling to
+      ``retry_ceiling_seconds`` -- and stop counting refusals.
+    - ``"refused"``: the hub turned the credentials away. A new connection is
+      refused until its hub admits it, so wait the ladder's step as for a
+      failure, until the refusals have lasted ``refusal_grace_seconds`` since
+      the first of them; then give up.
+    - ``"key_changed"``: the hub's Noise key is not the pinned one. Retrying
+      cannot change that, so give up at once.
+    """
+
+    OUTCOMES = ("up", "dropped", "failed", "refused", "key_changed")
+
+    def __init__(self, policy: HubSessionPolicy | None = None) -> None:
+        self.policy = policy or HubSessionPolicy()
+        self._wait = float(self.policy.retry_seconds)
+        self._refused_since: float | None = None
+
+    def after(self, outcome: str, now: float) -> LinkDecision:
+        """The decision after *outcome*, observed at *now* (seconds, any monotonic origin)."""
+        if outcome == "up":
+            self._wait = float(self.policy.retry_seconds)
+            self._refused_since = None
+            return LinkDecision("hold")
+        if outcome == "dropped":
+            return LinkDecision("retry", 0.0)
+        if outcome == "key_changed":
+            return LinkDecision("give_up", reason="key_changed")
+        if outcome == "refused":
+            if self._refused_since is None:
+                self._refused_since = now
+            if now - self._refused_since >= self.policy.refusal_grace_seconds:
+                return LinkDecision("give_up", reason="refused")
+        elif outcome == "failed":
+            self._refused_since = None
+        else:
+            raise ValueError(f"unknown outcome {outcome!r}")
+        wait, self._wait = self._wait, self.policy.next_wait(self._wait)
+        return LinkDecision("retry", wait)
 
 
 def alive(client: Any) -> bool:
@@ -369,9 +435,14 @@ class AsyncHubSession:
     credentials is retried like any other failure until the refusals have
     lasted ``refusal_grace_seconds`` -- a new connection is refused until its
     hub admits it -- and then :meth:`run` raises
-    :class:`~thalovant.errors.ThalovantHubRefusedError`. Every attempt, drop and
-    recovery is logged at DEBUG on ``thalovant.session``; what deserves more is
-    for the application to say.
+    :class:`~thalovant.errors.ThalovantHubRefusedError`. A hub whose Noise key
+    is not the pinned one ends :meth:`run` at once with
+    :class:`~thalovant.errors.ThalovantHubKeyChangedError`: retrying cannot
+    change it. :class:`LinkSupervisor` holds these rules. A close with a
+    refusal code within ``settle_seconds`` (0.75) of the handshake is a
+    refusal: a hub that does not know the client's key says so only that way.
+    Every attempt, drop and recovery is logged at DEBUG on
+    ``thalovant.session``; what deserves more is for the application to say.
     """
 
     def __init__(
@@ -398,8 +469,7 @@ class AsyncHubSession:
         self._bound: list[tuple[str, Callable[[Any], Any], Any, Any]] = []
         self._state_callbacks: list[Callable[[bool], Any]] = []
         self._state = False
-        self._retry_wait = float(self.policy.retry_seconds)
-        self._refused_since: float | None = None
+        self._supervisor = LinkSupervisor(self.policy)
         self._lock: asyncio.Lock | None = None
         self._wake: asyncio.Event | None = None
 
@@ -525,8 +595,7 @@ class AsyncHubSession:
                 await self._retire(client)
                 raise
             self._client = client
-            self._retry_wait = float(self.policy.retry_seconds)
-            self._refused_since = None
+            self._supervisor.after("up", self._clock())
             log.debug("hub link: up")
             self._set_state(True)
 
@@ -569,22 +638,25 @@ class AsyncHubSession:
                 continue
             try:
                 await self.connect()
+            except ThalovantHubKeyChangedError as changed:
+                log.debug("hub link: the hub's key changed (%s)", changed)
+                self._supervisor.after("key_changed", self._clock())
+                raise
             except ThalovantHubRefusedError as refusal:
-                now = self._clock()
-                if self._refused_since is None:
-                    self._refused_since = now
                 log.debug("hub link: refused (%s)", refusal)
-                if now - self._refused_since >= self.policy.refusal_grace_seconds:
+                decision = self._supervisor.after("refused", self._clock())
+                if decision.action == "give_up":
                     raise
             except (ThalovantConnectionError, ThalovantTimeoutError, OSError) as failure:
-                self._refused_since = None
                 log.debug("hub link: attempt failed (%s)", failure)
+                decision = self._supervisor.after("failed", self._clock())
+            else:
+                continue
             if self._closed or (self._client is not None and _alive_now(self._client)):
                 continue
-            wait, self._retry_wait = self._retry_wait, self.policy.next_wait(self._retry_wait)
-            log.debug("hub link: next attempt in %.0fs", wait)
+            log.debug("hub link: next attempt in %.0fs", decision.wait_seconds)
             try:
-                await asyncio.wait_for(wake.wait(), wait)
+                await asyncio.wait_for(wake.wait(), decision.wait_seconds)
             except asyncio.TimeoutError:
                 pass
             wake.clear()

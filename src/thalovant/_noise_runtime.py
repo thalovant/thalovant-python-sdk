@@ -32,7 +32,7 @@ from typing import Any
 
 from . import _noise
 from ._wire import HiveMessage, decode_binary_frame, hive_message_from_json
-from .errors import ThalovantConnectionError
+from .errors import ThalovantConnectionError, ThalovantHubKeyChangedError, ThalovantHubRefusedError
 
 __all__ = [
     "NoiseChannel",
@@ -238,7 +238,7 @@ class NoiseIdentityStore:
             pinned = pins.get(node_id)
             if pinned is not None:
                 if pinned.lower() != pubkey.lower():
-                    raise ThalovantConnectionError(
+                    raise ThalovantHubKeyChangedError(
                         "Trusted Noise server key changed; refusing connection."
                     )
                 return
@@ -491,6 +491,24 @@ class NoiseClientProtocol:
     def awaiting_psk(self) -> bool:
         return self._selection is not None and self.handshake is None
 
+    @property
+    def kk_failed(self) -> bool:
+        """Whether the attempt just made was KK and did not authenticate: the next one uses XX."""
+        return self._xx_retry and self.pattern == _noise.PATTERN_KK
+
+    def refused_during_handshake(self) -> None:
+        """The hub closed with a refusal code while this client's handshake was under way.
+
+        After a KK first message, that is what a hub does when it cannot
+        authenticate it -- because the password changed, or because the hub's
+        own key did and the message was sealed to the old one. Only XX tells
+        those apart, so the next attempt uses it, as it does after a KK answer
+        that does not authenticate here.
+        """
+        if self.pattern == _noise.PATTERN_KK and self.handshake is not None:
+            self._xx_retry = True
+            self._forget_psk()
+
     def close(self) -> None:
         self.failed = True
         self.ready = False
@@ -619,7 +637,11 @@ class NoiseClientProtocol:
             if self.pattern == _noise.PATTERN_KK:
                 self._xx_retry = True
             self._forget_psk()
-            raise ThalovantConnectionError(
+            # The hub's answer did not authenticate under the key this
+            # password derives: the hub turned the credentials away (or the
+            # negotiation was tampered with, which retrying will not fix
+            # either). A refusal, like the hub closing on an unknown key.
+            raise ThalovantHubRefusedError(
                 "Noise handshake authentication failed (wrong password or tampered negotiation)."
             ) from None
         step = NoiseStep()
@@ -632,7 +654,7 @@ class NoiseClientProtocol:
                 raise ThalovantConnectionError("Noise handshake did not authenticate a server key.")
             pin = self.store.get_pinned_noise_key(self.pin_id)
             if pin and pin.lower() != remote.lower():
-                raise ThalovantConnectionError("Trusted Noise server key changed; refusing connection.")
+                raise ThalovantHubKeyChangedError("Trusted Noise server key changed; refusing connection.")
             if not pin:
                 self.store.pin_noise_key(self.pin_id, remote)
                 if os.name == "posix":

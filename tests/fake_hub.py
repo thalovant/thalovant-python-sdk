@@ -92,6 +92,11 @@ class FakeHub:
         self.admit = True
         self.silent = False
         self.close_after_handshake = False
+        #: The code the hub closes with right after the handshake; None
+        #: sends a close frame with no status, as hivemind-core does.
+        self.close_after_handshake_code: int | None = None
+        #: Answer the WebSocket upgrade with this HTTP status instead.
+        self.upgrade_status: int | None = None
         self.overloaded = False
         self.sessions: list[Session] = []
         self.attempts = 0
@@ -152,8 +157,10 @@ class FakeHub:
             self._psk[key] = _noise.derive_psk(password, self.node_id)
         return self._psk[key]
 
-    async def handler(self, request: web.Request) -> web.WebSocketResponse:
+    async def handler(self, request: web.Request) -> web.StreamResponse:
         self.attempts += 1
+        if self.upgrade_status is not None:
+            return web.Response(status=self.upgrade_status, text="refused")
         ws = web.WebSocketResponse(heartbeat=None)
         await ws.prepare(request)
         try:
@@ -265,7 +272,10 @@ class FakeHub:
             await close_without_status(ws)
             return None
         if self.close_after_handshake:
-            await close_without_status(ws)
+            if self.close_after_handshake_code is None:
+                await close_without_status(ws)
+            else:
+                await ws.close(code=self.close_after_handshake_code)
             return None
         return Session(ws, noise, pattern, suite, client_hello["payload"], useragent)
 

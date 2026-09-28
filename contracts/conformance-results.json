@@ -32,15 +32,23 @@
         "a 429 asking for longer than is left is a timeout at once": "b18c45b67b05aa5575266285018e95cfe34fe6e0d610649ca92eafc003afc313",
         "a 429 waits the time the API names, then polls again": "075e46531162438388caa086b320657ecbb1439fc8519fe5cf7ef330a98f690f",
         "a 503 is ridden out": "8a30909a895e3b5eefff4a9c3d1ac85e593f6b18f3f02528f6e27c36f262b0f0",
-        "a failed operation": "0d7a9de7df304db6dffec65856488e440c00ad13a7e873ddad835ba37b31deee",
+        "a failed operation": "2ed6e468a4843c8c3bcd3e5d1d4b317cca6321031b77665b4d0388bc847dd2c3",
+        "a link on the API's own origin is followed": "8abff75a963c1322438d3d407fe09e574d13fa57f932198309669f46234c4e69",
         "a link to another origin is never fetched": "3f5d92d01b014155dae5857b5a80892fe32a362403a3b8aef8cb45fb6c1389bd",
+        "a revoked token while waiting is the authentication error, not a failed admission": "03aa6f41e5d1a5e938f924f81a4db47eef5c5fd55f1b4cb3f719d128af1c4553",
+        "a token without the scope while waiting is the authentication error too": "8eaef0441b8757bfd1cc42fbfbd13b38291d5e2bc7b4bdd0eb2aa3a7c1ce6617",
+        "an API out of reach is reported as it is": "8c3e3de8593165d8354c5d560174e92bccda782e9eaa6d056f4e7993c878083d",
         "an operation no longer tracked": "8abff75a963c1322438d3d407fe09e574d13fa57f932198309669f46234c4e69",
-        "an operation the platform gave up on": "604777ab71be068c000fbd0959bf57566a9e3bd49cf5da41c9504f905e80e2e5",
+        "an operation the platform gave up on": "09c7be918fdd894e593aad788166c01b3193c0cb2d5d79a29a1bc41832ef7935",
         "no operation, nothing to wait for": "d8f7834cc9f23d3487b850ddbed2d6b8102995239588de228d9536cee2960064",
         "still committed when the wait runs out": "e52d4dc3b0148a561e5b42b491cf9afc5dab4ab88ad9539cbdc75c1b025646e1",
+        "the API refusing the wait itself keeps what it said": "500d8a2e3ef53e516e2fd5cced0c567e577c824dc71f6bd8464384a2f0de69fd",
+        "the API's rate limiter answers in plain text, and RateLimit-Reset is the wait": "075e46531162438388caa086b320657ecbb1439fc8519fe5cf7ef330a98f690f",
+        "the same host on another port is another origin": "3f5d92d01b014155dae5857b5a80892fe32a362403a3b8aef8cb45fb6c1389bd",
+        "the same host over another scheme is another origin": "3f5d92d01b014155dae5857b5a80892fe32a362403a3b8aef8cb45fb6c1389bd",
         "through every stage to ready": "342ebb4f6d3f360bd92475922463421e82f72cda2eab2165de61db1230ab6734"
       },
-      "digest": "6dceea87d7e334023d27a267aee9eb28a02239107daad09e79621564a742f069"
+      "digest": "a190ebe48fd28d0dc0db0927418ee8d4d2e1a0845580d91c81ed52c75568eec4"
     },
     "connection-kinds-vectors.json": {
       "cases": {
@@ -80,6 +88,7 @@
         "a token already revoked cannot authenticate its own revoke, and that is revoked too": "d75c96a38d84f0667274a1f099f8be2179523066395e05871db595e2e31bf4c7",
         "a token response without a token is an error": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
         "a verification URL carrying credentials is refused": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
+        "an empty scope list is left out, so the API's default applies": "b40957b3416e5a0e4c9f8e504003c1a0e39a611cc96baeca5859a587ff6805b7",
         "an expired code": "66f91fdc337e18cd7be77e652b5375dceca6f68e8d8637c2e6b6ff1dbc97caa5",
         "any other failure keeps what the API said": "122a29b6bdd870a048b44a0f844d69bab2a9b18c086f1b310a87dd9859d8bc4e",
         "approved, with the token's scopes and id": "c4962c2ce8e60038cdde334e436ef83898c21b80ce2bf8906fd88011d373c7db",
@@ -88,23 +97,76 @@
         "slow_down adds five seconds, and they stay added": "ac965a8b0a252683c9431a65111f17bebec267abd6aa59d7e0e651def2bc2c55",
         "the token signed in with revokes itself": "d75c96a38d84f0667274a1f099f8be2179523066395e05871db595e2e31bf4c7"
       },
-      "digest": "b96376558bf90858d131652d2cd96e2f7fdba3892b5a38395801d860f6b5af6b"
+      "digest": "489348f8493d492e3673d45f6f5e3f102b8a0c9dd94297e8d00b0d226bc685a9"
     },
     "home-link-vectors.json": {
       "cases": {
         "Assist's own error speech goes through": "14cc161857d4323df4831dc4d29c336dd04fdc8e7e28e2abdb45a4f5d8c966fd",
+        "SSML tags go, their text stays": "368079aec1bc4cbb48cd76805518362cc6d4ab7c699c4a3612d35e78e7953c6d",
+        "a destination and no source: the reply has no destination": "c2aa0be638aa04eea95ba2988d07622b12108d4794175a9fb58acb8b9c8f5356",
         "a destination that is one peer": "9350f21b7d0d86b4b2ce8993c50e3f7c1bd34829de61795acaa20297ff476da4",
         "a handler that fails still gets an answer": "813814b7ceb729ec9f93b5e6da5869e29b8f421eb71c1c54059ded293631caca",
+        "a handler that times out inside the bound still gets its timeout answer": "f948455cdf0564e61edb619e046176b05d4b8801eabae13cec309ba138e3dcc7",
+        "a handler timeout longer than the hub's bound leaves no time to answer": "7f25642260a60ae34d57570777a21a883fc24959fe7aea970b2949378282af01",
         "a handler too slow is a timeout": "635c2d604f584fa580f72dccbe5dd90fadd5639de604eb65a11c646eadbde4fb",
+        "a less-than sign and a greater-than sign are text": "ec805cafe677d486fde74a54c80b53b0c7cae4d26dc5587ed862991bd6a05990",
+        "a less-than sign right before a letter opens a tag": "f2f4c3471a636f68143bf665995bd133853f3aea4fb58535a91a97c1ae7ac617",
         "a question answered, the conversation kept": "b639ee9d1a02d4c95625ce4e83b702063fc2cc9cffada68d18911b098ad66352",
+        "a reference without its semicolon is text": "21ac38938ccdaf19154f7627a97cf23851b622c77dc31dcabe70f1b7367d42b8",
+        "a reply sent inside the hub's bound goes out": "1eda5e46417232d8f6d14cc40d04a4d23d2c73773644e3f22e7384ce0fd7b348",
+        "a reply that could only arrive after the hub gave up is not sent": "7f25642260a60ae34d57570777a21a883fc24959fe7aea970b2949378282af01",
         "a request without an id": "d74a4534bb53ac910955c82fb41c39340924ba8e29f03c407aecb2b0f038a339",
         "an action done": "4e48c6c0472fb57ccd93a4f68539bcf334e2f8eb3ef824e5ea1a75f6fa0273cd",
         "an answer outside the contract is unknown": "7d52dc9ede1c25dc27bad2a5c38adb0e291304c7a97959472183fae68a5382d0",
+        "an attribute value may hold a greater-than sign": "54d039946e3667890272b7f0196a5c78ba09fafd46f513a1b8bb0fa944c95913",
+        "an unclosed tag is text": "dc5eb67b20db4a129ec394c71a43d896f37f6e49879bfbd11f1e322333ffa247",
+        "comments and processing instructions go": "26ddfaa64268cfee84e47d699914c4754da1f3057b3c4da10f09f8bf883f96b3",
+        "decoded once, after the markup is gone": "14e1b53103553f49eaddc66177c81805c6a280426b92f2a3163425c1f7bc8193",
+        "every Unicode white space collapses, and the ends are trimmed": "23b7b2b054b23808b9f11a16868b730d8af810d35d2cad6e46562424785b55c5",
         "markup is not speech": "87b18efb5bf97f2e3d49cfb07c56301c6306a006263fa53412d289e42e0f5e8d",
+        "nbsp is white space": "ab77501de6314c290af389d570b3128d872bdc0bd050c1bfca41587d947a4668",
         "no routing at all stays none": "c426a896c3237ee1e68cdcdfdfd22ac832eae64ec0ac291827a3b05d6784c320",
+        "numeric references, decimal and hex": "54ffad8711cbe7781eb0c908c30b8bc086e3f80b798617ee63884d1d957dcf98",
+        "other named references are left as written": "14d73cd9c4f236d423144b1c55fe094c315d51cac464735ef610d55cb3e2f528",
+        "references to no character are left as written": "5f7707178b8a6920a72a3a97f754eb38f178c5b832c445cd686f94d49ffc5531",
+        "the five XML entities": "3e07dcbba147904d2e48501b8f61e53058994913d9ece2464ea50d279c049a2e",
         "the route turns round": "f8d9c463a5203918af7b56b6b60d5c3f358998ef0bd215464cd1ffd2f9c249a0"
       },
-      "digest": "01aac58745deb8560b868d61cc884d9d689a5224bf96ae560cf598fa6bf3461f"
+      "digest": "523ab03e1d73a47a2f7ad3d53bd7c5b405789a0cf24f0890af12de9758a1ae3f"
+    },
+    "link-keeping-vectors.json": {
+      "cases": {
+        "1000 during the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
+        "1001 during the handshake is a hub going away": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "1006 is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "1008 during the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
+        "1011 during the handshake is the hub's trouble": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "1013 during the handshake is the hub's trouble": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "a changed hub key stops at once": "3e63ba6d715c61a43cc769ecec6fa71ff75c74128eaca4191fded9183299eb13",
+        "a code learnt late still counts within the grace": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
+        "a code learnt too late is no code": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "a failure in between restarts the refusal clock": "a03027d03acdcaa21e15c93528d4c456b86879d18c738f063e3e1fd8b7dca79a",
+        "a hub key changed since pinning: KK fails, XX at once, and XX meets the pin": "21c29986c2011431369927f9c70fa8c03e1dc144a143b9e098cdae2ee027f05a",
+        "a hub key changed, from a hub that offers only XX": "fa697082d11267368128d1385907add11887fc2fee229fd464a9ce7039ff5cf4",
+        "a link that came up restarts the refusal clock": "13ac091c5ec311d795d5a8a222e8159064be4d46d359395d174c8ab5e2cbcdf1",
+        "a password changed since pinning: KK fails, XX at once, and XX refuses": "e281dd4eb39f55f4ac69414a8a47699ac6c506b3ac05d6ab78bdd612156d1513",
+        "a pinned hub with the right password connects over KK": "24e093189041ee7ed9394c13fa5367feebcb48de0fcb2129c563e5b769edb55e",
+        "a socket that ended without a close frame is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "a wrong password on first contact is a refusal": "3d5961f6e8a4b534887a1a4d514a63c5ff9e32f37796bee9b222c5f57c1c8563",
+        "after the settle window a refusal code is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "an upgrade refused with 401": "b5019cea917a6639c097302cd27f8176255949439ee0a700456e71ec0cf4bf54",
+        "an upgrade refused with 403": "b5019cea917a6639c097302cd27f8176255949439ee0a700456e71ec0cf4bf54",
+        "an upgrade the hub could not serve": "7e31f2d04c114a4618a6d8d4d1b484e4d49a378e39eaf489e3042fd33787bd14",
+        "coming up resets the ladder, and a drop dials again at once": "fa30d0873601ff8e490db9c056eca1453125c43c8ba0ada59d7c43545fdcd4f7",
+        "no status during the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
+        "no status right after the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
+        "refusals are retried through the grace, then given up": "d32e20d7c638f904ab6a36b0881a0db3807ed8049c042e0c3b4a4a19fda8fb1c",
+        "the close's own time decides the window, not when it was learnt": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
+        "the grace ends exactly at refusal_grace_ms": "3c687271c3feb711b3f55c17f6ced1e39abf23eaf65f3fc092c37866614003a0",
+        "the ladder doubles to its ceiling": "ed05e19c02597a8209bb4bbece8d76a459cab4632f7047b46a4eee82d12e3471",
+        "the settle window's last moment still counts": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def"
+      },
+      "digest": "1a0e7986bdb9288c329161d6c909856618245e7310d0bb7c935d2fd005c33e0a"
     }
   },
   "schema_version": 1

@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "Device sign-in (RFC 8628) one step at a time, for a caller that runs its own loop -- a Home Assistant config flow shows the code, then polls on its own schedule. begin sends POST /v1/auth/device/authorize with the scopes and client name given and exposes user_code, verification_uri, verification_uri_complete (null when absent), interval (seconds) and expires_in; a verification URL that is not http(s), has no host, or carries credentials is an error. poll sends one POST /v1/auth/device/token {device_code}: 400 authorization_pending is 'pending' with the interval to wait; 400 slow_down is 'pending' with the interval five seconds longer, and the lengthening sticks for later polls of the same code; 400 expired_token is 'expired'; 400 access_denied is 'denied'; 2xx is 'approved' with the token's type, scopes, expires_at and token_id, and the SDK keeps the token (and its id) for later calls; a 2xx without an access_token, and any other failure, is 'error', the latter carrying the api-errors fields. revoke sends DELETE /v1/auth/api-tokens/{token_id} for the token the SDK signed in with; a token may always revoke itself. Revoking the token in use is idempotent: a token already revoked (or expired) cannot authenticate its own revoke, so a 401 there is 'revoked' too, and either way the SDK forgets the token and its id. The device code and the access token never appear in an error message.",
+ "description": "Device sign-in (RFC 8628) one step at a time, for a caller that runs its own loop -- a Home Assistant config flow shows the code, then polls on its own schedule. begin sends POST /v1/auth/device/authorize with the scopes and client name given and exposes user_code, verification_uri, verification_uri_complete (null when absent), interval (seconds) and expires_in; a verification URL that is not http(s), has no host, or carries credentials is an error. An empty scope list is left out of the request, exactly as no scopes are: the API requires at least one and answers [] with a 422, and leaving the field out asks for its default. poll sends one POST /v1/auth/device/token {device_code}: 400 authorization_pending is 'pending' with the interval to wait; 400 slow_down is 'pending' with the interval five seconds longer, and the lengthening sticks for later polls of the same code; 400 expired_token is 'expired'; 400 access_denied is 'denied'; 2xx is 'approved' with the token's type, scopes, expires_at and token_id, and the SDK keeps the token (and its id) for later calls; a 2xx without an access_token, and any other failure, is 'error', the latter carrying the api-errors fields. revoke sends DELETE /v1/auth/api-tokens/{token_id} for the token the SDK signed in with; a token may always revoke itself. Revoking the token in use is idempotent: a token already revoked (or expired) cannot authenticate its own revoke, so a 401 there is 'revoked' too, and either way the SDK forgets the token and its id. The device code and the access token never appear in an error message.",
  "source": "thalovant-api app/routes/auth_device.py (authorize, token), app/routes/auth_local.py revoke_api_token; RFC 8628 §3.4-3.5",
  "home_assistant_scopes": [
   "hubs:read",
@@ -91,6 +91,40 @@
      "user_code": "WDJB-MJHT",
      "verification_uri": "https://thalovant.com/activate",
      "verification_uri_complete": null,
+     "interval": 5,
+     "expires_in": 900
+    }
+   ]
+  },
+  {
+   "name": "an empty scope list is left out, so the API's default applies",
+   "call": {
+    "op": "begin",
+    "scopes": [],
+    "client_name": "Home Assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/auth/device/authorize",
+      "json": {
+       "client_name": "Home Assistant"
+      }
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"device_code\":\"dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":5}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "started",
+     "user_code": "WDJB-MJHT",
+     "verification_uri": "https://thalovant.com/activate",
+     "verification_uri_complete": "https://thalovant.com/activate?code=WDJB-MJHT",
      "interval": 5,
      "expires_in": 900
     }
