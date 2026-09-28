@@ -35,9 +35,20 @@ def _signature(obj: Any) -> list[list[str]] | None:
     except (TypeError, ValueError):
         return None
     return [
-        [name, param.kind.name, "" if param.default is inspect.Parameter.empty else repr(param.default)]
+        [name, param.kind.name, "" if param.default is inspect.Parameter.empty else _default(param.default)]
         for name, param in signature.parameters.items()
     ]
+
+
+def _default(value: Any) -> str:
+    """A default's repr, with the package version written as ``<version>``.
+
+    The user agents default to ``ThalovantPythonSDK/<version>``; a release
+    changes that string, and nothing a caller relies on.
+    """
+    version = getattr(sys.modules.get("thalovant"), "__version__", None)
+    text = repr(value)
+    return text.replace(version, "<version>") if isinstance(version, str) and version else text
 
 
 def _compatible(before: list[list[str]] | None, after: list[list[str]] | None) -> bool:
