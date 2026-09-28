@@ -30,6 +30,21 @@ SAMPLES = [
     "---\nkey: document\n",
     "- top\n- level\n",
     "just a scalar\n",
+    # A quote opens a quoted scalar only where a scalar starts; an apostrophe
+    # inside a plain one is text, and the comment after it still goes.
+    "name: bob's kitchen # home\n",
+    "bob's: kitchen # x\n",
+    "k: it's a 'test' # c\n",
+    "k: a -'b # c'\n",
+    "k: x - 'y' # c\n",
+    "a:'b' # c\n",
+    "m: {n: bob's, o: 'p, q'}\n",
+    "l: [a, 'b, # c', d] # e\n",
+    "- 'x # y' # z\n",
+    # An escaped quote does not close a double-quoted scalar; '' does not close a single-quoted one.
+    'q: "a \\" # b" # c\n',
+    "k: 'it''s # x' # y\n",
+    '"k\'ey": v # c\n',
 ]
 
 
@@ -87,6 +102,24 @@ def test_safe_load_without_pyyaml(monkeypatch):
     assert _yaml.safe_load("a: 1\n") == {"a": 1}
     with pytest.raises(YAMLError, match=r"thalovant\[yaml\]"):
         _yaml.safe_load("a: !!int 1\n")
+
+
+@pytest.mark.parametrize("text", [
+    "d: 2026-13-01\n",                    # ValueError: month 13
+    'a: "\\U7fffffff"\n',               # ValueError/OverflowError: past U+10FFFF
+    'a: "\\xZZ"\n',                     # ValueError: not hex
+    "{[a]: 1}\n",                         # TypeError: a list is not a key
+    "a: " + "[" * 5000 + "]" * 5000 + "\n",  # RecursionError
+])
+def test_every_reader_failure_is_a_yaml_error(monkeypatch, text):
+    """What the reader cannot make a value of is malformed YAML, not a crash.
+
+    ThalovantIdentity.from_config catches YAMLError; anything else escaped it
+    as a raw exception instead of ThalovantIdentityError.
+    """
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    with pytest.raises(YAMLError):
+        _yaml.safe_load(text)
 
 
 def test_the_config_loader_reads_without_pyyaml(tmp_path, monkeypatch):

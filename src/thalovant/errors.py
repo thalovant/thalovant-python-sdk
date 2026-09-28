@@ -290,6 +290,36 @@ class ThalovantHubRefusedError(ThalovantConnectionError):
     """
 
 
+class ThalovantClientKeyRejectedError(ThalovantHubRefusedError):
+    """Raised when the hub refuses this client's own Noise key: it pinned a different one.
+
+    A hub pins the first static key a connection presents and refuses any
+    other for good, closing the link the moment the handshake that showed it
+    ends. Two programs that read the same identity but keep their keys in
+    different folders -- a satellite and a command-line tool run by another
+    user, say -- each present their own key, and whichever came second is
+    locked out. No handshake can recover from this (XX shows the same key
+    again), so :meth:`AsyncHubSession.run` stops on it at once.
+
+    ``key_folder`` is the folder this client's key is in, and
+    ``other_key_folder``, when there is a likely one, where another program
+    reading the same identity keeps its key. The fix is to pair again (a new
+    connection pins afresh), or to share the key folder: point every program
+    that reads this identity at the folder holding the key the hub trusts
+    (``noise_state_dir``; ``hub.noise_state_dir`` in thalovant-voice).
+    """
+
+    def __init__(
+        self,
+        *args: object,
+        key_folder: str | None = None,
+        other_key_folder: str | None = None,
+    ) -> None:
+        super().__init__(*args)
+        self.key_folder = key_folder
+        self.other_key_folder = other_key_folder
+
+
 class ThalovantHubKeyChangedError(ThalovantConnectionError):
     """Raised when a hub answers with a different Noise key than the one pinned for it.
 
@@ -304,10 +334,21 @@ class ThalovantHubKeyChangedError(ThalovantConnectionError):
 
 
 class ThalovantAuthError(ThalovantAPIError):
-    """Raised when the control plane rejects the API token itself.
+    """Raised when the control plane will not act on the credential itself.
 
-    A 401: the token is unknown, expired or revoked. Signing in again is the
-    fix, which is not true of any other refusal.
+    Three answers, each with its own way out:
+
+    - **401**: the token is unknown, expired or revoked. Sign in again.
+    - **403 "Insufficient scopes"**: the token is valid but was not granted
+      the scope this call needs. Sign in again asking for that scope (a
+      device login's ``scopes``); a new token with the same scopes will be
+      refused the same way.
+    - **423**: the account is locked. Signing in again does not help until
+      it is unlocked, from the dashboard or by support.
+
+    ``status_code`` says which. Any other 403 is not this error: a plan
+    limit is :class:`ThalovantPlanError`, and anything else a plain
+    :class:`ThalovantAPIError`.
     """
 
 

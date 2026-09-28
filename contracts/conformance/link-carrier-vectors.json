@@ -1,0 +1,123 @@
+{
+ "schema_version": 1,
+ "description": "The handshake rules of link-keeping-vectors.json, on the two carriers that are not a WebSocket. Each case runs one connect -- the handshake, then the settle window -- over its carrier in a situation, and lists the Noise patterns the hub saw, in order. Situations: 'pinned' (first contact pinned both ways; the same credentials connect again), 'wrong_password' (first contact with a password the hub does not hold), 'password_changed_since_pinning', 'hub_key_changed' (the hub's static key replaced after pinning; hub_offers_kk says whether it still offers KK), 'client_key_changed' (another program's key folder, with its own key, against a hub that pinned the first program's key), 'kk_answer_unauthenticated' (the hub's KK answer does not authenticate at the client). Outcomes as in link-keeping-vectors.json: 'connected', 'refused', 'key_changed', 'client_key_rejected', 'failed'. A KK attempt that fails is followed at once, inside the same connect, by one XX attempt, and the XX attempt's outcome is the connect's. What says a KK attempt failed differs by carrier. HTTPS polling: the hub's answer does not authenticate, or a request during the exchange is answered 401 or 403 -- which is how the hub's HTTP listener refuses a session it aborted; a request answered 401 or 403 while the client sends the last frames of an XX handshake it completed, or right after it, is the hub refusing the client's own key ('client_key_rejected'). MQTT: only the hub's answer not authenticating -- a broker relays no refusal, and a hub that aborts just stops answering, so a hub that cannot read a KK first message is a timeout there, and a refused client key is not seen at all; neither is a case here. An SDK that does not offer a carrier records no case for it and declares this capability not-applicable when it offers neither.",
+ "source": "hivemind-core 5.x (hivemind_core/protocol.py: the Noise abort, the TOFU client pin); hivemind-http-protocol; hivemind-mqtt-protocol",
+ "cases": [
+  {
+   "name": "over HTTPS, a pinned hub with the right password connects over KK",
+   "carrier": "https",
+   "situation": "pinned",
+   "expect": {
+    "outcome": "connected",
+    "patterns": [
+     "KK"
+    ]
+   }
+  },
+  {
+   "name": "over HTTPS, a wrong password on first contact is a refusal",
+   "carrier": "https",
+   "situation": "wrong_password",
+   "expect": {
+    "outcome": "refused",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over HTTPS, a password changed since pinning: KK answered 401, XX at once, and XX refuses",
+   "carrier": "https",
+   "situation": "password_changed_since_pinning",
+   "expect": {
+    "outcome": "refused",
+    "patterns": [
+     "KK",
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over HTTPS, a hub key changed since pinning: KK answered 401, XX at once, and XX meets the pin",
+   "carrier": "https",
+   "situation": "hub_key_changed",
+   "hub_offers_kk": true,
+   "expect": {
+    "outcome": "key_changed",
+    "patterns": [
+     "KK",
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over HTTPS, a hub key changed, from a hub that offers only XX",
+   "carrier": "https",
+   "situation": "hub_key_changed",
+   "hub_offers_kk": false,
+   "expect": {
+    "outcome": "key_changed",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over HTTPS, a client key the hub did not pin: XX ends and the next request is answered 401",
+   "carrier": "https",
+   "situation": "client_key_changed",
+   "expect": {
+    "outcome": "client_key_rejected",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over MQTT, a pinned hub with the right password connects over KK",
+   "carrier": "mqtt",
+   "situation": "pinned",
+   "expect": {
+    "outcome": "connected",
+    "patterns": [
+     "KK"
+    ]
+   }
+  },
+  {
+   "name": "over MQTT, a wrong password on first contact is a refusal",
+   "carrier": "mqtt",
+   "situation": "wrong_password",
+   "expect": {
+    "outcome": "refused",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over MQTT, a KK answer that does not authenticate is followed by XX in the same connect",
+   "carrier": "mqtt",
+   "situation": "kk_answer_unauthenticated",
+   "expect": {
+    "outcome": "connected",
+    "patterns": [
+     "KK",
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "over MQTT, a hub key changed, from a hub that offers only XX",
+   "carrier": "mqtt",
+   "situation": "hub_key_changed",
+   "hub_offers_kk": false,
+   "expect": {
+    "outcome": "key_changed",
+    "patterns": [
+     "XX"
+    ]
+   }
+  }
+ ]
+}

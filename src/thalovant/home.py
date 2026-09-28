@@ -25,11 +25,12 @@ every SDK keeps (``home-link-vectors.json``):
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Mapping, Union
+from typing import Any, Awaitable, Callable, Mapping, Union, cast
 
 from .events import ThalovantEvent, _event_from_message
 from .rich import strip_ssml
@@ -239,6 +240,15 @@ async def answer_home_request(
     frames when it passes is withdrawn; a frame already being written is
     finished, since half of one would break the Noise stream. Returns the
     payload when it was sent in time, ``None`` when there was no time left.
+
+    A coroutine function runs on the loop. Any other callable runs on the
+    loop's default executor (``asyncio.to_thread``), so it may block -- a
+    synchronous call into Home Assistant, say -- without stalling the loop,
+    and the handler's time bounds it as it bounds a coroutine; it must not
+    touch the loop's own objects. A plain function that ran over its time
+    keeps its executor thread until it returns, and what it returns then is
+    dropped. An awaitable it returns is awaited on the loop, within what is
+    left of the handler's time.
     """
     started = time.monotonic()
 
@@ -249,11 +259,18 @@ async def answer_home_request(
     answer: HandlerResult
     handler_timeout = min(timeout, remaining())
     try:
-        result = handler(request)
-        if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
-            answer = await _within(result, max(0.0, handler_timeout))
+        if inspect.iscoroutinefunction(handler):
+            answer = await _within(cast(Awaitable[HandlerResult], handler(request)), max(0.0, handler_timeout))
         else:
-            answer = result  # type: ignore[assignment]
+            # Off the loop: a handler that blocks would otherwise stall every
+            # other request and the reply itself, and _within could not bound
+            # a call that never yields.
+            call = cast(Callable[[HomeRequest], Any], handler)
+            result: Any = await _within(asyncio.to_thread(call, request), max(0.0, handler_timeout))
+            if inspect.isawaitable(result):
+                left = handler_timeout - (time.monotonic() - started)
+                result = await _within(cast(Awaitable[HandlerResult], result), max(0.0, left))
+            answer = cast(HandlerResult, result)
     except asyncio.TimeoutError:
         log.debug("home request %s: the handler did not answer within %.3gs", request.request_id, handler_timeout)
         answer = HomeAnswer(response_type="error", error_code="timeout")

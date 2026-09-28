@@ -70,7 +70,16 @@ def safe_load(text: str) -> Any:
     try:
         import yaml
     except ImportError:
-        return _Reader(text).document()
+        try:
+            return _Reader(text).document()
+        except YAMLError:
+            raise
+        except (ValueError, TypeError, OverflowError, RecursionError):
+            # What the reader cannot turn into a value -- a date with month
+            # 13, an escape past U+10FFFF, a list as a mapping key, nesting
+            # past the stack -- is malformed YAML too, and the caller catches
+            # YAMLError for it (ThalovantIdentity.from_config does).
+            raise YAMLError("The config file is not YAML this reader understands.") from None
     try:
         return yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -147,32 +156,79 @@ def _unquote(token: str) -> str:
     return "".join(out)
 
 
+def _opens_quote(text: str, index: int, start: int = 0) -> bool:
+    """Whether the quote at ``text[index]`` starts a quoted scalar.
+
+    Only at the start of a scalar: first on the line (or in the flow item that
+    begins at *start*), or after ``[``, ``{`` or ``,``, or after a ``:`` or
+    ``-`` indicator and white space. Anywhere else it is part of a plain
+    scalar -- ``bob's kitchen`` -- as it is to PyYAML. Looks back only over
+    white space and indicators, so a line of many quotes stays linear.
+    """
+    position = index - 1
+    while position >= start and text[position] in " \t":
+        position -= 1
+    if position < start:
+        return True
+    last = text[position]
+    if last in "[{,":
+        return True
+    if position == index - 1:
+        return False  # no white space after the indicator: "a:'b'" is plain
+    if last == ":":
+        return True
+    if last != "-":
+        return False
+    position -= 1
+    while position >= start and text[position] in " \t-":
+        position -= 1
+    return position < start
+
+
+def _quote_end(text: str, index: int) -> int:
+    """The index just past the quoted scalar opening at ``text[index]``, or ``len(text)``."""
+    quote = text[index]
+    position = index + 1
+    while position < len(text):
+        char = text[position]
+        if quote == '"' and char == "\\":
+            position += 2  # an escaped character, \" included, never closes
+            continue
+        if char == quote:
+            if quote == "'" and text[position + 1 : position + 2] == "'":
+                position += 2  # '' is a quote inside a single-quoted scalar
+                continue
+            return position + 1
+        position += 1
+    return len(text)
+
+
 def _strip_comment(line: str) -> str:
-    quote: str | None = None
-    for index, char in enumerate(line):
-        if quote:
-            if char == quote:
-                quote = None
-        elif char in "'\"":
-            quote = char
-        elif char == "#" and (index == 0 or line[index - 1] in " \t"):
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char in "'\"" and _opens_quote(line, index):
+            index = _quote_end(line, index)
+            continue
+        if char == "#" and (index == 0 or line[index - 1] in " \t"):
             return line[:index].rstrip()
+        index += 1
     return line.rstrip()
 
 
 def _split_key(text: str) -> tuple[str, str] | None:
     """``key: rest`` at the top level of a line, quotes respected."""
-    quote: str | None = None
-    for index, char in enumerate(text):
-        if quote:
-            if char == quote:
-                quote = None
-        elif char in "'\"":
-            quote = char
-        elif char == ":" and (index + 1 == len(text) or text[index + 1] in " \t"):
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in "'\"" and _opens_quote(text, index):
+            index = _quote_end(text, index)
+            continue
+        if char == ":" and (index + 1 == len(text) or text[index + 1] in " \t"):
             return text[:index].strip(), text[index + 1 :].strip()
-        elif char in "[{" and index == 0:
+        if char in "[{" and index == 0:
             return None
+        index += 1
     return None
 
 
@@ -317,16 +373,13 @@ class _Reader:
         if text[index] in "[{":
             return self.flow(text, index)
         end = index
-        quote: str | None = None
         depth = 0
         while end < len(text):
             char = text[end]
-            if quote:
-                if char == quote:
-                    quote = None
-            elif char in "'\"":
-                quote = char
-            elif char in "[{":
+            if char in "'\"" and _opens_quote(text, end, index):
+                end = _quote_end(text, end)
+                continue
+            if char in "[{":
                 depth += 1
             elif char in "]}" and depth:
                 depth -= 1

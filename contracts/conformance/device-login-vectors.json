@@ -1,12 +1,13 @@
 {
  "schema_version": 1,
- "description": "Device sign-in (RFC 8628) one step at a time, for a caller that runs its own loop -- a Home Assistant config flow shows the code, then polls on its own schedule. begin sends POST /v1/auth/device/authorize with the scopes and client name given and exposes user_code, verification_uri, verification_uri_complete (null when absent), interval (seconds) and expires_in; a verification URL that is not http(s), has no host, or carries credentials is an error. An empty scope list is left out of the request, exactly as no scopes are: the API requires at least one and answers [] with a 422, and leaving the field out asks for its default. poll sends one POST /v1/auth/device/token {device_code}: 400 authorization_pending is 'pending' with the interval to wait; 400 slow_down is 'pending' with the interval five seconds longer, and the lengthening sticks for later polls of the same code; 400 expired_token is 'expired'; 400 access_denied is 'denied'; 2xx is 'approved' with the token's type, scopes, expires_at and token_id, and the SDK keeps the token (and its id) for later calls; a 2xx without an access_token, and any other failure, is 'error', the latter carrying the api-errors fields. revoke sends DELETE /v1/auth/api-tokens/{token_id} for the token the SDK signed in with; a token may always revoke itself. Revoking the token in use is idempotent: a token already revoked (or expired) cannot authenticate its own revoke, so a 401 there is 'revoked' too, and either way the SDK forgets the token and its id. The device code and the access token never appear in an error message.",
+ "description": "Device sign-in (RFC 8628) one step at a time, for a caller that runs its own loop -- a Home Assistant config flow shows the code, then polls on its own schedule. begin sends POST /v1/auth/device/authorize with the scopes, the client name and the client_id given -- client_id names a registered app (Home Assistant's is thalovant-home-assistant) and is left out when there is none -- and exposes user_code, verification_uri, verification_uri_complete (null when absent), interval (seconds) and expires_in; a verification URL that is not http(s), has no host, or carries credentials is an error. An empty scope list is left out of the request, exactly as no scopes are: the API requires at least one and answers [] with a 422, and leaving the field out asks for its default. poll sends one POST /v1/auth/device/token {device_code}: 400 authorization_pending is 'pending' with the interval to wait; 400 slow_down is 'pending' with the interval five seconds longer, and the lengthening sticks for later polls of the same code; 400 expired_token is 'expired'; 400 access_denied is 'denied'; 2xx is 'approved' with the token's type, scopes, expires_at and token_id, and the SDK keeps the token (and its id) for later calls; a 2xx without an access_token, or whose body is not a JSON object, is 'error' with status null (the API did not refuse; its answer was unusable), and any other failure is 'error' carrying the api-errors fields -- status, code, detail -- as a failed begin does. describe sends GET /v1/auth/device/codes/{user_code} as the signed-in approver and exposes scopes, client_name, client_id, client_verified and device_name (absent is null, client_verified false): client_verified is true only for a registered app, whose client_name is then the platform's own name for it and device_name what the device called itself. revoke sends DELETE /v1/auth/api-tokens/{token_id} for the token the SDK signed in with; a token may always revoke itself. Revoking the token in use is idempotent: a token already revoked (or expired) cannot authenticate its own revoke, so a 401 there is 'revoked' too, and either way the SDK forgets the token and its id. The device code and the access token never appear in an error message.",
  "source": "thalovant-api app/routes/auth_device.py (authorize, token), app/routes/auth_local.py revoke_api_token; RFC 8628 §3.4-3.5",
  "home_assistant_scopes": [
   "hubs:read",
   "clients:read",
   "clients:write"
  ],
+ "home_assistant_client_id": "thalovant-home-assistant",
  "message_excludes": [
   "dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24",
   "tvt_synthetic_device_token_do_not_log"
@@ -508,6 +509,267 @@
    "expect": [
     {
      "outcome": "revoked"
+    }
+   ]
+  },
+  {
+   "name": "a registered app names itself with client_id",
+   "call": {
+    "op": "begin",
+    "scopes": [
+     "hubs:read",
+     "clients:read",
+     "clients:write"
+    ],
+    "client_name": "Home Assistant (kitchen)",
+    "client_id": "thalovant-home-assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/auth/device/authorize",
+      "json": {
+       "scopes": [
+        "hubs:read",
+        "clients:read",
+        "clients:write"
+       ],
+       "client_name": "Home Assistant (kitchen)",
+       "client_id": "thalovant-home-assistant"
+      }
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"device_code\":\"dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":5}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "started",
+     "user_code": "WDJB-MJHT",
+     "verification_uri": "https://thalovant.com/activate",
+     "verification_uri_complete": "https://thalovant.com/activate?code=WDJB-MJHT",
+     "interval": 5,
+     "expires_in": 900
+    }
+   ]
+  },
+  {
+   "name": "no client_id is left out of the request",
+   "call": {
+    "op": "begin",
+    "scopes": [
+     "hubs:read",
+     "clients:read",
+     "clients:write"
+    ],
+    "client_name": "Home Assistant",
+    "client_id": null
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/auth/device/authorize",
+      "json": {
+       "scopes": [
+        "hubs:read",
+        "clients:read",
+        "clients:write"
+       ],
+       "client_name": "Home Assistant"
+      }
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"device_code\":\"dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":5}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "started",
+     "user_code": "WDJB-MJHT",
+     "verification_uri": "https://thalovant.com/activate",
+     "verification_uri_complete": "https://thalovant.com/activate?code=WDJB-MJHT",
+     "interval": 5,
+     "expires_in": 900
+    }
+   ]
+  },
+  {
+   "name": "an app the API does not know is refused",
+   "call": {
+    "op": "begin",
+    "scopes": [
+     "hubs:read",
+     "clients:read",
+     "clients:write"
+    ],
+    "client_id": "thalovant-unknown"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/auth/device/authorize",
+      "json": {
+       "scopes": [
+        "hubs:read",
+        "clients:read",
+        "clients:write"
+       ],
+       "client_id": "thalovant-unknown"
+      }
+     },
+     "response": {
+      "status": 400,
+      "content_type": "application/json",
+      "body": "{\"detail\":{\"detail\":\"Unknown client.\",\"code\":\"unknown_client\"}}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "error",
+     "status": 400,
+     "code": "unknown_client",
+     "detail": "Unknown client."
+    }
+   ]
+  },
+  {
+   "name": "the approver reads a registered app as verified",
+   "call": {
+    "op": "describe",
+    "user_code": "WDJB-MJHT"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/auth/device/codes/WDJB-MJHT",
+      "authorization": "Bearer synthetic-token"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"scopes\":[\"hubs:read\",\"clients:read\",\"clients:write\"],\"client_name\":\"Home Assistant\",\"expires_at\":\"2026-09-28T12:15:00Z\",\"client_id\":\"thalovant-home-assistant\",\"client_verified\":true,\"device_name\":\"Home Assistant (kitchen)\"}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "described",
+     "scopes": [
+      "hubs:read",
+      "clients:read",
+      "clients:write"
+     ],
+     "client_name": "Home Assistant",
+     "client_id": "thalovant-home-assistant",
+     "client_verified": true,
+     "device_name": "Home Assistant (kitchen)"
+    }
+   ]
+  },
+  {
+   "name": "a device that named no app is not verified",
+   "call": {
+    "op": "describe",
+    "user_code": "WDJB-MJHT"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/auth/device/codes/WDJB-MJHT",
+      "authorization": "Bearer synthetic-token"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"scopes\":[\"hubs:read\",\"clients:write\"],\"client_name\":\"Totally the bank\",\"expires_at\":\"2026-09-28T12:15:00Z\"}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "described",
+     "scopes": [
+      "hubs:read",
+      "clients:write"
+     ],
+     "client_name": "Totally the bank",
+     "client_id": null,
+     "client_verified": false,
+     "device_name": null
+    }
+   ]
+  },
+  {
+   "name": "a code nobody can approve any more",
+   "call": {
+    "op": "describe",
+    "user_code": "WDJB-MJHT"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/auth/device/codes/WDJB-MJHT",
+      "authorization": "Bearer synthetic-token"
+     },
+     "response": {
+      "status": 404,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Device code not found\"}"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "error",
+     "status": 404,
+     "code": null,
+     "detail": "Device code not found"
+    }
+   ]
+  },
+  {
+   "name": "a token answer that is not a JSON object is an error with no status",
+   "call": {
+    "op": "poll",
+    "authorization": {
+     "device_code": "dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24",
+     "interval": 5
+    },
+    "times": 1
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/auth/device/token",
+      "json": {
+       "device_code": "dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24"
+      }
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "[]"
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "error",
+     "status": null
     }
    ]
   }

@@ -50,12 +50,13 @@ from ._loop import CallbackThread as _CallbackThread
 from ._loop import LoopThread as _LoopThread
 from ._loop import OffLoop as _OffLoop
 from ._loop import on_loop_thread as _on_loop_thread
+from ._loop import spawn as _spawn
 from ._version import USER_AGENT
 from .context import request_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
     ThalovantConnectionError,
-    ThalovantHubRefusedError,
+    ThalovantHubRefusedError,  # noqa: F401 - thalovant.client has always offered it
     ThalovantRuntimeError,
     ThalovantTimeoutError,
     ThalovantUnsupportedProtocolError,
@@ -348,10 +349,10 @@ async def _wait_any(events: Sequence[asyncio.Event | None], timeout: float | Non
 
 
 def _run_handler(handler: Callable[[Any], Any], value: Any) -> None:
-    """Call a handler on the loop; a coroutine it returns becomes a task."""
+    """Call a handler on the loop; a coroutine it returns becomes a task, kept until it ends."""
     result = handler(value)
     if asyncio.iscoroutine(result):
-        asyncio.ensure_future(result)
+        _spawn(result, "An event handler raised; continuing.", log)
 
 
 class AsyncThalovantClient:
@@ -740,9 +741,9 @@ class AsyncThalovantClient:
             return None
         transport = getattr(self._link, "transport", None)
         if getattr(transport, "closed_refused", False):
-            return ThalovantHubRefusedError(
-                "The hub closed the link right after the handshake: it does not accept these credentials, or not yet."
-            )
+            from ._hive import refusal_after_handshake
+
+            return refusal_after_handshake(transport)
         error = self._link.last_error()
         return error if isinstance(error, ThalovantConnectionError) else ThalovantConnectionError(
             "The hub closed the link right after the handshake."
@@ -976,7 +977,7 @@ class AsyncThalovantClient:
             def on_loop(raw_message: Any) -> None:
                 result = wrapped(raw_message)
                 if asyncio.iscoroutine(result):
-                    asyncio.ensure_future(result)
+                    _spawn(result, "An event handler raised; continuing.", log)
 
             registered = on_loop
         self._closers[registered] = closed

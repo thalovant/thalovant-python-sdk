@@ -24,6 +24,7 @@ import json
 import os
 import stat
 import tempfile
+import logging
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -45,6 +46,8 @@ __all__ = [
     "prepare_noise_key",
     "save_cached_psk",
 ]
+
+log = logging.getLogger("thalovant.transport")
 
 _store_lock = threading.RLock()
 
@@ -262,10 +265,165 @@ class NoiseIdentityStore:
             return True
 
 
-def noise_identity(state_dir: str | None = None) -> NoiseIdentityStore:
-    """The identity store in ``state_dir``, or hivemind's shared default."""
+#: The folder a client's Noise state is kept in, beside its identity file.
+STATE_DIR_NAME = "hivemind"
+
+
+def legacy_state_dir() -> Path:
+    """Where 0.9.0 and hivemind-bus-client kept every client's Noise state: ``~/.config/hivemind``."""
+    return _config_home() / STATE_DIR_NAME
+
+
+def identity_state_dir(identity: Any) -> Path | None:
+    """The ``hivemind`` folder beside the file *identity* was read from, if it was read from one.
+
+    ``~/.config/thalovant/identity.json`` keeps its key in
+    ``~/.config/thalovant/hivemind``, where thalovant-voice and the
+    satellite installer keep it, so a CLI run and the satellite that read
+    the same identity file present the same key to the hub.
+    """
+    source = getattr(identity, "source_path", None)
+    if not isinstance(source, str) or not source:
+        return None
+    return Path(source).expanduser().parent / STATE_DIR_NAME
+
+
+def default_state_dir(identity: Any) -> Path:
+    """Where the Noise state of *identity* lives when no ``noise_state_dir`` is given.
+
+    Beside its identity file when it came from one and that folder exists or
+    can be made; otherwise the shared default, as before 0.9.1 -- an identity
+    in ``/etc/thalovant`` read by a user who cannot write there keeps using
+    the user's own folder.
+    """
+    beside = identity_state_dir(identity)
+    if beside is None:
+        return legacy_state_dir()
+    if beside.is_dir() or os.access(beside.parent, os.W_OK):
+        return beside
+    return legacy_state_dir()
+
+
+def _hub_hosts(identity: Any) -> set[str]:
+    """The hub host names an identity's pins can be filed under, whatever the carrier."""
+    from urllib.parse import urlsplit
+
+    hosts: set[str] = set()
+    for endpoint in (
+        _call_quietly(getattr(identity, "endpoint_base", None)),
+        _call_quietly(getattr(identity, "endpoint_for", None), "wss"),
+    ):
+        if isinstance(endpoint, str) and endpoint:
+            host = urlsplit(endpoint).hostname
+            if host:
+                hosts.add(host.lower())
+    return hosts
+
+
+def _call_quietly(method: Any, *args: Any) -> Any:
+    if not callable(method):
+        return None
+    try:
+        return method(*args)
+    except Exception:  # noqa: BLE001 - an identity without that endpoint names no host
+        return None
+
+
+def adopt_legacy_key(target: Path, identity: Any, legacy: Path | None = None) -> bool:
+    """Copy this identity's key from the old default folder into *target*, once.
+
+    Before 0.9.1 a client with no ``noise_state_dir`` kept its key in
+    ``~/.config/hivemind`` whatever file its identity came from. The hub pins
+    the first key a connection presents, so a device that silently got a new
+    key in a new folder would be locked out. When *target* holds no Noise
+    state yet and the old folder holds a key that has already met this
+    identity's hub (a pin filed under the hub's host), that key and the hub
+    pins are **copied** -- never moved: another program may still read the
+    old folder. Returns whether it copied.
+    """
+    legacy = legacy_state_dir() if legacy is None else legacy
+    with contextlib.suppress(OSError):
+        if target.resolve() == legacy.resolve():
+            return False
+    if (target / "_identity.json").exists() or any(target.glob("*_noise.key")):
+        return False
+    source_file = legacy / "_identity.json"
+    if not source_file.is_file() or source_file.is_symlink() or legacy.is_symlink():
+        return False
+    try:
+        source = NoiseIdentityStore(source_file)
+    except ThalovantConnectionError:
+        return False
+    key_path = Path(source.noise_key)
+    if not key_path.is_file() or key_path.is_symlink():
+        return False
+    pins = source.pinned_noise_keys
+    hosts = _hub_hosts(identity)
+    if not any(_pin_host(pin_id) in hosts for pin_id in pins):
+        # The old key never met this identity's hub: it is not the key the
+        # hub pinned for it, so there is nothing to keep.
+        return False
+    try:
+        key = bytes.fromhex(key_path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError, UnicodeError):
+        return False
+    if len(key) != 32:
+        return False
+    if target.is_symlink():
+        raise ThalovantConnectionError("Noise state directory must not be a symlink.")
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    identity_file = target / "_identity.json"
+    with _store_lock, _file_lock(identity_file):
+        # Another process may have adopted (or started afresh) meanwhile.
+        if identity_file.exists() or any(target.glob("*_noise.key")):
+            return False
+        name = source.name
+        copied_key = target / f"{name}_noise.key"
+        fd, temporary = tempfile.mkstemp(prefix=".noise-key-", dir=target)
+        try:
+            with os.fdopen(fd, "w", encoding="ascii") as output:
+                output.write(key.hex())
+                output.flush()
+                os.fsync(output.fileno())
+            if os.name == "posix":
+                os.chmod(temporary, 0o600)
+            with contextlib.suppress(FileExistsError):
+                os.link(temporary, copied_key)
+        finally:
+            os.unlink(temporary)
+        # The key and the hub pins, and nothing else the old file may hold.
+        data = {"name": name, "pinned_noise_keys": _validated_noise_pins(pins)}
+        _write_private_json(identity_file, data)
+    log.info(
+        "Copied this identity's Noise key from %s to %s, where it is kept from now on; %s is left as it was.",
+        legacy, target, legacy,
+    )
+    return True
+
+
+def _pin_host(pin_id: str) -> str | None:
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(pin_id).hostname
+    except ValueError:
+        return None
+    return host.lower() if host else None
+
+
+def noise_identity(state_dir: str | None = None, *, identity: Any = None) -> NoiseIdentityStore:
+    """The identity store in ``state_dir``; by default, beside the identity's file.
+
+    With no ``state_dir``, an identity read from a file keeps its state in
+    the ``hivemind`` folder beside that file (:func:`default_state_dir`), and
+    the first time that folder is used it takes the key this identity had in
+    the old shared folder (:func:`adopt_legacy_key`). Any other identity
+    uses the shared default, ``$XDG_CONFIG_HOME/hivemind``.
+    """
     if state_dir is None:
-        directory = _config_home() / "hivemind"
+        directory = default_state_dir(identity)
+        if directory != legacy_state_dir():
+            adopt_legacy_key(directory, identity)
     else:
         directory = Path(state_dir).expanduser()
     if directory.is_symlink():
@@ -717,7 +875,7 @@ class NoiseChannel:
         use_xx: bool = False,
     ) -> None:
         self.identity = identity
-        self.store = noise_identity(state_dir)
+        self.store = noise_identity(state_dir, identity=identity)
         self.pin_id = pin_id
         self.hello = hello
         self.write = write

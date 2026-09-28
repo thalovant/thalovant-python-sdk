@@ -95,6 +95,9 @@ class FakeHub:
         #: The code the hub closes with right after the handshake; None
         #: sends a close frame with no status, as hivemind-core does.
         self.close_after_handshake_code: int | None = None
+        #: Send one encrypted frame before that close: a hub that has spoken
+        #: has accepted the client's key, so the close is a drop.
+        self.close_after_handshake_speaks = False
         #: Answer the WebSocket upgrade with this HTTP status instead.
         self.upgrade_status: int | None = None
         self.overloaded = False
@@ -272,6 +275,9 @@ class FakeHub:
             await close_without_status(ws)
             return None
         if self.close_after_handshake:
+            if self.close_after_handshake_speaks:
+                spoke = Session(ws, noise, pattern, suite, client_hello["payload"], useragent)
+                await spoke.send_bus("hub.ready", {})
             if self.close_after_handshake_code is None:
                 await close_without_status(ws)
             else:

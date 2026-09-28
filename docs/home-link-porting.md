@@ -13,6 +13,7 @@ and records its results.
 | `connection-kinds` | `connection-kinds-vectors.json` | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
 | `connection-admission` | `connection-admission-vectors.json` | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
 | `home-link` | `home-link-vectors.json`, `link-keeping-vectors.json` | Node, Go, Rust, Kotlin, Swift, .NET | embedded-c, MCP |
+| `link-carriers` (0.9.1) | `link-carrier-vectors.json` | Node, Go, Rust | Kotlin, Swift, .NET (WebSocket only), embedded-c, MCP |
 
 embedded-c has no HTTP client, and it leaves the socket, the loop and every handler
 to its caller. MCP holds a hub connection only for the length of one tool call, and
@@ -26,7 +27,12 @@ same thing in each capability's `scope`.
 The device flow (RFC 8628), one step at a time. The caller runs the loop, so a Home
 Assistant config flow can show the code and poll on its own schedule.
 
-- **Begin.** Send `POST /v1/auth/device/authorize` with the scopes and the client name.
+- **Begin.** Send `POST /v1/auth/device/authorize` with the scopes, the client name and,
+  when the caller gives one, the registered app's `client_id` (0.9.1). Home Assistant's is
+  `thalovant-home-assistant` (Python: `HOME_ASSISTANT_CLIENT_ID`; the vector file's
+  `home_assistant_client_id`). Leave `client_id` out when there is none. A registered app
+  may ask only for its own scopes, and an id the API does not know is refused with 400
+  `unknown_client`, carrying the `api-errors` fields like any failed begin.
   Leave out an empty scope list, exactly as you leave out none: the API requires at least
   one scope and answers `[]` with a 422, and a missing field asks for its default.
   Expose `user_code`, `verification_uri`, `verification_uri_complete` (absent is
@@ -45,8 +51,15 @@ Assistant config flow can show the code and poll on its own schedule.
   | `access_denied` | denied |
 
   A 2xx is approved. Keep the token and its `token_id`, and expose `token_type`,
-  `scopes` and `expires_at`. A 2xx with no `access_token` is an error. So is any other
-  failure, which carries the `api-errors` fields.
+  `scopes` and `expires_at`. A 2xx with no `access_token`, or whose body is not a JSON
+  object at all, is an error with **no status** (null): the API did not refuse, its answer
+  was unusable. Any other failure carries the `api-errors` fields.
+- **Describe** (0.9.1). `GET /v1/auth/device/codes/{user_code}`, signed in as the person
+  who would approve the code, reads it as the approval screen does: `scopes`,
+  `client_name`, `client_id`, `client_verified` and `device_name`, absent being null
+  (`client_verified` false). `client_verified` is true only for a registered app; its
+  `client_name` is then the platform's own name for it, and `device_name` whatever the
+  device called itself. A code that is unknown, expired or already answered is a 404.
 - **Revoke.** Send `DELETE /v1/auth/api-tokens/{token_id}` for the token the SDK signed in
   with. A token may always revoke itself, whatever its scopes. Forget it locally
   afterwards.
@@ -189,7 +202,10 @@ seconds:
   reconnect, no error recorded against the link. Only a frame already being written is
   finished, since half of one would break the Noise stream. Make the wait for your send
   lock (or queue) cancellable and the write itself not; Python's first version shielded
-  the whole send, so a withdrawn reply still went out once the lock came free.
+  the whole send, so a withdrawn reply still went out once the lock came free. The
+  `queued` cases (0.9.1) run this over a real link: another frame holds the send path for
+  `busy_ms`, the reply is withdrawn at the bound or goes out after it, and `link_kept`
+  checks that the same link then carries another message.
 
 ### Keeping the link up (`link-keeping-vectors.json`)
 
@@ -198,10 +214,22 @@ holds every constant.
 
 - **Which closes are refusals.** A close whose RFC 6455 code is 1000, 1005 or 1008 is the
   hub refusing the credentials, when it happens during the handshake -- any step of it,
-  including between the hub's HELLO and its offer -- or within 750 ms after it. 1005 includes a close frame with no status at all, which is what hivemind-core
+  including between the hub's HELLO and its offer -- or within 750 ms after it **and before
+  the hub has sent anything that authenticates** (0.9.1). 1005 includes a close frame with no status at all, which is what hivemind-core
   sends for an unknown access key and after a Noise abort (aiohttp reports it as 0; map it
   to 1005). Everything else is a drop: 1001, 1011, 1013, a socket that ended with no close
-  frame (1006, or no code), and any close after the window.
+  frame (1006, or no code), any close after the window, and any close after a frame from
+  the hub that decrypted under the new session's keys.
+- **Why a frame from the hub ends the window** (decided for 0.9.1, from Kotlin's rule). A
+  hub refuses a client's key before it sends anything: hivemind-core aborts right after
+  reading the handshake's last message and never writes a transport frame first. So a
+  frame that decrypts proves the hub accepted the credentials, and a close after it is the
+  hub's trouble -- the 1008 a hub sends when it closes on a second HANDSHAKE
+  (JarbasHiveMind/hivemind-websocket-client#231) is one real case. Count **every** frame
+  that decrypts: JSON or WIRE-1 binary, a chunk of a larger message, the hub's own
+  encrypted HELLO. A decryption that fails is not a frame from the hub. The close vectors
+  carry `after_authenticated_frame`; the `closed_after_first_frame` handshake case runs it
+  for real.
 - **Late codes.** A transport may learn a close's code after it learns of the close
   (URLSession does). Wait up to 250 ms for the code before calling the close a drop. The
   close's own time, not when its code arrived, decides whether it fell inside the window.
@@ -213,6 +241,19 @@ holds every constant.
   downgrade: the pinned key is still checked when XX completes, so a hub that is not the
   pinned one still fails. A hub whose static key is not the one pinned for it is a
   connection error, not a refusal; never replace the pin yourself.
+- **The hub refusing the client's own key** (0.9.1). hivemind-core pins the first static
+  key a connection presents, and aborts -- a close with no status, before sending
+  anything -- as soon as an XX handshake shows it another ("client Noise static key
+  contradicts pinned key"). So a refusal right as an XX handshake ends, with nothing from
+  the hub in between, is `client_key_rejected`: still a refusal in your error model (it
+  must be caught where a refusal is), but its own kind, because no handshake can recover
+  from it. Its message names the folder the client's key is in and, when there is a
+  likely one, where another program reading the same identity keeps its key, and says
+  "re-pair, or share the key folder". After KK the same close is a plain refusal: the hub
+  could only complete KK with the key it pinned. Over HTTPS the same verdict is a request
+  answered 401 or 403 while the client sends the last frames of the XX handshake it
+  completed, or right after. Over MQTT a hub that aborts just stops answering, so the case
+  cannot be seen there.
   A WebSocket upgrade answered 401 or 403 is a refusal; any other failed upgrade is a
   connection failure.
 - **KK then XX on every carrier that does KK.** The retry is not a WebSocket detail; do it
@@ -227,7 +268,9 @@ holds every constant.
   | MQTT | only the first row: a broker has no refusal of its own to relay |
 
   A KK attempt that simply runs out of time is not retried: the caller's deadline is
-  already spent.
+  already spent. `link-carrier-vectors.json` (0.9.1, capability `link-carriers`) runs the
+  situations over HTTPS polling and MQTT; an SDK that offers only the WebSocket declares
+  that capability not-applicable.
 - **The supervisor** (Python's `LinkSupervisor`, which `AsyncHubSession.run()` asks after
   every attempt):
 
@@ -238,26 +281,31 @@ holds every constant.
   | failed | wait the ladder's step (10 s, doubling to 120 s); reset the refusal clock |
   | refused | wait the ladder's step, until refusals have lasted 600 s since the first (inclusive); then give up |
   | key changed | give up at once: retrying cannot change it |
+  | client key rejected (0.9.1) | give up at once, reason `client_key_rejected` |
 
   While a link is up, probe it every 60 s, and every 5 s while none is held.
 - **Logging.** Every attempt is logged at debug level only; the application decides what
   deserves more.
 
-### Known open points (after the release)
+### Where the key lives (0.9.1)
 
-- **A close inside the settle window after the hub has spoken.** The rule counts a close
-  with a refusal code within 750 ms of the handshake as a refusal, whatever happened in
-  between. Kotlin treats such a close as a drop once the hub has already sent an
-  authenticated frame on the new link, on the reasoning that a hub that answered has
-  accepted the credentials. That is not what the reference or the vectors say today, and
-  neither changes before the release; the question is recorded here to be decided with
-  evidence from real hubs afterwards.
+The hub pins one key per connection, so every program that uses one identity must
+present the same key. When an identity comes from a file and the caller names no key
+folder, keep the key in a folder beside that file (Python: `hivemind/` beside
+`identity.json`), so two programs reading the same file share it. The first time that
+folder is used, if your SDK kept this identity's key somewhere else before (a shared
+default), **copy** that key and its hub pins into it -- never move them, and only when the
+old key has met this identity's hub -- so no device gets a new key and is locked out. The
+file layout is each SDK's own; what is shared is the rule, and the refused-key error that
+names both folders when it goes wrong. This has no vector: the folders are platform
+paths.
 
 ## The Python reference
 
 | Behaviour | Python |
 |---|---|
-| begin / poll / revoke | `AsyncThalovantControlPlane.begin_device_login`, `.poll_device_login`, `.revoke_api_token` (and the sync class) |
+| begin / poll / revoke | `AsyncThalovantControlPlane.begin_device_login(scopes=, client_name=, client_id=)`, `.poll_device_login`, `.revoke_api_token` (and the sync class) |
+| describe (0.9.1) | `.describe_device_login(user_code)` → `DeviceLoginRequest(scopes, client_name, expires_at, client_id, client_verified, device_name)`; `HOME_ASSISTANT_CLIENT_ID` |
 | pending / expired / denied | `ThalovantDeviceLoginPending(interval)`, `ThalovantDeviceLoginExpired`, `ThalovantDeviceLoginDenied`, all `ThalovantAPIError` |
 | create with a kind | `create_client_identity(hub, name=…, connection_type="home_assistant")` → `BootstrapIdentityResult` with `.operation`, `.client_id`, `.connection_type` |
 | refusal kinds | `ThalovantUnsupportedConnectionTypeError`, `ThalovantPlanError`, `ThalovantAlreadyLinkedError(client_id)`, `ThalovantAuthError` |
@@ -265,7 +313,8 @@ holds every constant.
 | admission | `wait_for_admission(result, timeout=180)`; `ThalovantAdmissionTimeoutError` (a `ThalovantConnectionError` and a `ThalovantTimeoutError`), `ThalovantAdmissionFailedError(error_code, status_code, code, detail, problem)`, `ThalovantAuthError` passed through, `ThalovantAPIUnreachableError`; `ThalovantAPIError.retry_after_seconds` |
 | reply | `AsyncThalovantClient.reply(event, msg_type, data)`, `reply_context(context)` |
 | home requests | `thalovant.home`: `HomeRequest`, `HomeAnswer`, `home_response`, `answer_home_request(client, event, handler, timeout=9, hub_timeout=10)`, `answer_home_requests(client, handler)`, `plain_speech`, `decode_references`; `thalovant.rich.strip_ssml` |
-| closes and handshakes | `thalovant._hive.close_refuses(code, closed_after_handshake_ms=…, code_late_ms=…)`, `REFUSAL_CLOSE_CODES`, `REFUSAL_SETTLE_MS`, `CLOSE_CODE_GRACE_MS`; `ThalovantHubRefusedError`, `ThalovantHubKeyChangedError` (a `ThalovantConnectionError`) |
+| closes and handshakes | `thalovant._hive.close_refuses(code, closed_after_handshake_ms=…, code_late_ms=…, after_authenticated_frame=…)`, `REFUSAL_CLOSE_CODES`, `REFUSAL_SETTLE_MS`, `CLOSE_CODE_GRACE_MS`, `refusal_after_handshake(transport)`; `ThalovantHubRefusedError`, `ThalovantClientKeyRejectedError(key_folder, other_key_folder)` (a refusal), `ThalovantHubKeyChangedError` (a `ThalovantConnectionError`) |
+| the key folder (0.9.1) | `ThalovantIdentity.source_path`; `thalovant._noise_runtime.default_state_dir`, `adopt_legacy_key` |
 | the supervisor | `thalovant.session.LinkSupervisor(policy).after(outcome, now)` → `LinkDecision(action, wait_seconds, reason)` |
 | a kept link | `AsyncHubSession(connect)` / `.for_identity(identity, session=…)`: `connect()`, `run()`, `on()`, `on_state_change()`, `reply()`, `close()` |
 
@@ -356,7 +405,8 @@ Per language:
 
 ## Rolling it out
 
-1. Vendor the five vector files where your test runner reads fixtures. They are compared
+1. Vendor the vector files where your test runner reads fixtures (six since 0.9.1, with
+   `link-carrier-vectors.json` for an SDK that offers HTTPS polling or MQTT). They are compared
    as parsed JSON, so formatting is free. Every duration in them is whole milliseconds
    (`*_ms`), since only whole numbers compare equal across languages; the one exception
    is `retry_after_seconds`, which is the API's own field inside a response body.
@@ -373,7 +423,11 @@ Per language:
    `expect`, shaped exactly as the case shapes it. `tests/test_home_link_vectors.py` and
    `tests/test_link_keeping_vectors.py` are the Python runners; the second drives a real
    Noise handshake against an in-process hub for the `handshake` cases, and the pure
-   close rule and supervisor for the others.
+   close rule and supervisor for the others. A `handshake` case is one connect as a kept
+   link makes it -- the handshake, then the settle window -- because a close that lands
+   just after the handshake would otherwise race the connect returning.
+   `tests/test_link_carrier_vectors.py` runs the carrier cases through TLS HTTPS polling
+   and an in-memory MQTT broker (`tests/carrier_hub.py`).
 3. Record the results (`THALOVANT_CONFORMANCE_OUT`) and declare the capability in your
    `contracts/sdk-parity.json`, with implementation and test evidence and the vendored
    paths. Write the JSON the way the reference does (below): the checker compares

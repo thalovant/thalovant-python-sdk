@@ -64,6 +64,11 @@ DEFAULT_ADMISSION_TIMEOUT = 180.0
 
 #: The scopes a Home Assistant link asks for, and all a Free plan can approve.
 HOME_ASSISTANT_SCOPES = ("hubs:read", "clients:read", "clients:write")
+#: The registered app id Home Assistant signs in as (``client_id`` of a device
+#: login). The approval screen then shows the platform's own name for it as
+#: verified, and approving it again replaces the token the last approval gave
+#: it instead of counting a second against the plan.
+HOME_ASSISTANT_CLIENT_ID = "thalovant-home-assistant"
 #: ``spec.connection_type`` of a Home Assistant link.
 CONNECTION_TYPE_HOME_ASSISTANT = "home_assistant"
 
@@ -443,6 +448,55 @@ class DeviceAuthorization:
 
 
 @dataclass(frozen=True)
+class DeviceLoginRequest:
+    """A pending device sign-in as the person approving it sees it.
+
+    Read with :meth:`AsyncThalovantControlPlane.describe_device_login`.
+    ``client_verified`` is true only when a registered app asked (it named
+    its ``client_id``): ``client_name`` is then the platform's own name for
+    that app, and ``device_name`` whatever the device called itself, which
+    nothing checks. Otherwise ``client_name`` is the device's own claim.
+    """
+
+    scopes: tuple[str, ...]
+    client_name: str | None
+    expires_at: datetime | None
+    client_id: str | None = None
+    client_verified: bool = False
+    device_name: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> DeviceLoginRequest:
+        """Parse ``GET /v1/auth/device/codes/{user_code}``."""
+
+        raw_scopes = payload.get("scopes")
+        scopes = tuple(scope for scope in raw_scopes if isinstance(scope, str)) if isinstance(raw_scopes, list) else ()
+        expires = payload.get("expires_at")
+        expires_at = None
+        if isinstance(expires, str) and expires:
+            try:
+                expires_at = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            except ValueError:
+                expires_at = None
+
+        def text(key: str) -> str | None:
+            value = payload.get(key)
+            return value if isinstance(value, str) and value else None
+
+        client_id = text("client_id")
+        return cls(
+            scopes=scopes,
+            client_name=text("client_name"),
+            expires_at=expires_at,
+            client_id=client_id,
+            # Verified only as the API says it, and only with the app named:
+            # a true without an id says nothing about who asked.
+            client_verified=payload.get("client_verified") is True and client_id is not None,
+            device_name=text("device_name"),
+        )
+
+
+@dataclass(frozen=True)
 class ApiToken:
     """An API token the API minted: the credential and what it may do.
 
@@ -651,6 +705,7 @@ class AsyncThalovantControlPlane:
         open_browser: bool = True,
         prompt: Callable[[dict[str, Any]], None] | None = None,
         timeout: float = 900.0,
+        client_id: str | None = None,
     ) -> dict[str, Any]:
         """Sign in through the browser device flow and store the API token.
 
@@ -668,7 +723,7 @@ class AsyncThalovantControlPlane:
         flow one step at a time, for a caller that runs its own loop.
         """
 
-        grant = await self.begin_device_login(scopes=scopes, client_name=client_name)
+        grant = await self.begin_device_login(scopes=scopes, client_name=client_name, client_id=client_id)
         _present_device_login(grant, prompt=prompt, open_browser=open_browser)
         token = await self._poll_device_token(grant.device_code, interval=grant.interval, timeout=timeout)
         return self._accept_token(token)
@@ -779,6 +834,7 @@ class AsyncThalovantControlPlane:
         *,
         scopes: Iterable[str] | None = None,
         client_name: str | None = None,
+        client_id: str | None = None,
     ) -> DeviceAuthorization:
         """Start a device sign-in: a code for a person to approve in a browser.
 
@@ -788,6 +844,14 @@ class AsyncThalovantControlPlane:
         ``verification_uri`` and ``user_code`` (or ``verification_uri_complete``,
         which carries the code), then call :meth:`poll_device_login` every
         ``interval`` seconds.
+
+        ``client_id`` signs in as a registered app, such as
+        :data:`HOME_ASSISTANT_CLIENT_ID`: the approval screen shows the
+        platform's name for the app as verified (``client_name`` becomes the
+        device's own label beside it), and approving the app again replaces
+        the token it already holds. Such an app may ask only for its own
+        scopes, and an id the API does not know is refused (400
+        ``unknown_client``). ``None`` leaves the field out.
         """
 
         payload: dict[str, Any] = {}
@@ -799,10 +863,28 @@ class AsyncThalovantControlPlane:
             payload["scopes"] = requested
         if client_name:
             payload["client_name"] = client_name
+        if client_id is not None:
+            # Sent as given, an empty string included: the API refuses one
+            # (422), which is better than signing in unverified in silence.
+            payload["client_id"] = client_id
         grant = await self._request("POST", "/v1/auth/device/authorize", json=payload, auth=False)
         authorization = DeviceAuthorization.from_dict(grant)
         self._device_intervals[authorization.device_code] = authorization.interval
         return authorization
+
+    async def describe_device_login(self, user_code: str) -> DeviceLoginRequest:
+        """Read a pending device sign-in by its ``user_code``, as its approver sees it.
+
+        ``GET /v1/auth/device/codes/{user_code}``, signed in as the person
+        who would approve it. Says which app asked and whether the platform
+        vouches for its name (``client_verified``). A code that is unknown,
+        expired or already answered is a 404.
+        """
+
+        detail = await self._request("GET", f"/v1/auth/device/codes/{quote(user_code, safe='')}")
+        if not isinstance(detail, Mapping):
+            raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
+        return DeviceLoginRequest.from_dict(detail)
 
     async def poll_device_login(self, authorization: DeviceAuthorization | str) -> ApiToken:
         """Ask once whether the device sign-in was approved.
@@ -2320,6 +2402,7 @@ class ThalovantControlPlane:
         open_browser: bool = True,
         prompt: Callable[[dict[str, Any]], None] | None = None,
         timeout: float = 900.0,
+        client_id: str | None = None,
     ) -> dict[str, Any]:
         """Sign in through the browser device flow and store the API token.
 
@@ -2337,7 +2420,7 @@ class ThalovantControlPlane:
         flow one step at a time.
         """
 
-        grant = self.begin_device_login(scopes=scopes, client_name=client_name)
+        grant = self.begin_device_login(scopes=scopes, client_name=client_name, client_id=client_id)
         _present_device_login(grant, prompt=prompt, open_browser=open_browser)
         token = self._poll_device_token(grant.device_code, interval=grant.interval, timeout=timeout)
         return self._core._accept_token(token)
@@ -2482,6 +2565,7 @@ class ThalovantControlPlane:
         *,
         scopes: Iterable[str] | None = None,
         client_name: str | None = None,
+        client_id: str | None = None,
     ) -> DeviceAuthorization:
         """Start a device sign-in: a code for a person to approve in a browser.
 
@@ -2490,9 +2574,16 @@ class ThalovantControlPlane:
         ``hubs:read``, ``clients:read`` and ``clients:write``. Show the person
         ``verification_uri`` and ``user_code`` (or ``verification_uri_complete``,
         which carries the code), then call :meth:`poll_device_login` every
-        ``interval`` seconds.
+        ``interval`` seconds. ``client_id`` signs in as a registered app,
+        such as :data:`HOME_ASSISTANT_CLIENT_ID`; see the async class.
         """
-        return self._run(self._core.begin_device_login(scopes=scopes, client_name=client_name))
+        return self._run(
+            self._core.begin_device_login(scopes=scopes, client_name=client_name, client_id=client_id)
+        )
+
+    def describe_device_login(self, user_code: str) -> DeviceLoginRequest:
+        """Read a pending device sign-in by its ``user_code``, as its approver sees it."""
+        return self._run(self._core.describe_device_login(user_code))
 
     def poll_device_login(self, authorization: DeviceAuthorization | str) -> ApiToken:
         """Ask once whether the device sign-in was approved.
