@@ -53,6 +53,7 @@ from .context import build_client_context, build_location, request_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
     ThalovantAdmissionFailedError,
+    ThalovantAPIUnreachableError,
     ThalovantAdmissionTimeoutError,
     ThalovantAlreadyLinkedError,
     ThalovantAPIError,
@@ -145,6 +146,7 @@ __all__ = [
     "HomeAnswer",
     "HomeRequest",
     "ThalovantAdmissionFailedError",
+    "ThalovantAPIUnreachableError",
     "ThalovantAdmissionTimeoutError",
     "ThalovantAlreadyLinkedError",
     "ThalovantAuthError",

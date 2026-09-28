@@ -28,6 +28,7 @@ from .errors import (
     ThalovantAdmissionTimeoutError,
     ThalovantAlreadyLinkedError,
     ThalovantAPIError,
+    ThalovantAPIUnreachableError,
     ThalovantAuthError,
     ThalovantDeviceLoginDenied,
     ThalovantDeviceLoginExpired,
@@ -2006,6 +2007,10 @@ class AsyncThalovantControlPlane:
             raise ThalovantAdmissionTimeoutError(
                 f"The hub did not admit the connection within {timeout:g}s; it may still."
             ) from None
+        except ThalovantAPIUnreachableError:
+            # The API is out of reach, which says nothing about the hub: the
+            # connection may be admitted already. Not a failed admission.
+            raise
         except ThalovantAPIError as error:
             if error.status_code == 404:
                 return
@@ -3571,9 +3576,9 @@ class _AiohttpSender:
             ) as response:
                 text = await response.text()
                 return _Response(response.status, text, response.headers)
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as error:
             # Error chains may contain URL credentials or query data.
-            raise ThalovantAPIError("Could not reach the Thalovant API.") from None
+            raise _unreachable(error) from None
 
     async def close(self) -> None:
         session, self._own = self._own, None
@@ -3620,11 +3625,23 @@ class _BlockingSender:
         except Exception as error:
             if type(error).__module__.split(".", 1)[0] in {"requests", "urllib3"} or isinstance(error, OSError):
                 # Requests error chains may contain URL credentials or query data.
-                raise ThalovantAPIError("Could not reach the Thalovant API.") from None
+                raise _unreachable(error) from None
             raise
 
     async def close(self) -> None:
         return None
+
+
+def _unreachable(error: BaseException) -> ThalovantAPIError:
+    """The error for a request the API never answered, with the same message 0.8 used.
+
+    A request that could not even be formed -- a malformed URL, a body that is
+    not JSON; aiohttp's and requests' URL errors are ``ValueError``s -- stays a
+    plain :class:`ThalovantAPIError`: it is not the API being out of reach,
+    and trying again will not help.
+    """
+    kind = ThalovantAPIError if isinstance(error, ValueError) else ThalovantAPIUnreachableError
+    return kind("Could not reach the Thalovant API.")
 
 
 def _sender_for(session: Any) -> _AiohttpSender | _BlockingSender:

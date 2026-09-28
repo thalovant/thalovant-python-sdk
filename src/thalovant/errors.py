@@ -242,6 +242,18 @@ def _problem_fields(problem: Mapping[str, Any] | None) -> tuple[str | None, str 
     return code, detail
 
 
+class ThalovantAPIUnreachableError(ThalovantAPIError, ThalovantConnectionError):
+    """Raised when the control plane could not be reached at all.
+
+    DNS, the TCP connection, TLS, a proxy, or the request's own timeout: the
+    API never answered, so there is no ``status_code``, ``code``, ``detail`` or
+    ``problem``. Both an API error, which is what 0.8 raised here, so an
+    ``except ThalovantAPIError`` still catches it, and a connection error, so
+    a caller can tell "the API is out of reach, try again later" from "the API
+    answered no" without reading the message.
+    """
+
+
 class ThalovantUnsupportedProtocolError(ThalovantError):
     """Raised when a requested data-plane protocol is not supported locally."""
 
