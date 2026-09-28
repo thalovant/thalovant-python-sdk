@@ -603,7 +603,7 @@ class AsyncHiveMindTransport:
                     self._deliver(message)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the read loop ends on anything, and reports it
             error = exc
         finally:
             if generation == self._generation and self._transport_connected:
@@ -871,19 +871,17 @@ class _WSSCarrier:
             # A proxy named in the environment, as websocket-client honoured one.
             options["proxy"] = _aiohttp.proxy_for(url)
         try:
-            self._ws = await asyncio.wait_for(
-                transport._http_session().ws_connect(
-                    url,
-                    **options,
-                    heartbeat=transport.heartbeat,
-                    autoping=True,
-                    max_msg_size=_MAX_FRAME,
-                    ssl=transport._ssl(),
-                    timeout=_aio().ClientWSTimeout(ws_close=min(10.0, transport.send_timeout)),
-                    headers={"User-Agent": transport.useragent},
-                ),
-                timeout,
+            connecting: Any = transport._http_session().ws_connect(
+                url,
+                **options,
+                heartbeat=transport.heartbeat,
+                autoping=True,
+                max_msg_size=_MAX_FRAME,
+                ssl=transport._ssl(),
+                timeout=_aio().ClientWSTimeout(ws_close=min(10.0, transport.send_timeout)),
+                headers={"User-Agent": transport.useragent},
             )
+            self._ws = await asyncio.wait_for(connecting, timeout)
         except asyncio.TimeoutError:
             raise ThalovantConnectionError("Could not reach the hub (timed out opening the socket).") from None
         except _aio().WSServerHandshakeError as err:
@@ -981,7 +979,7 @@ class AsyncHiveMindWSSTransport(AsyncHiveMindTransport):
             if item[0] != "authorization"
         ]
         query.append(("authorization", authorization))
-        return urlunparse((parsed.scheme, parsed.netloc, parsed.path or "", "", urlencode(query), ""))
+        return str(urlunparse((parsed.scheme, parsed.netloc, parsed.path or "", "", urlencode(query), "")))
 
     def _new_carrier(self) -> _WSSCarrier:
         self._endpoint()
@@ -1138,7 +1136,7 @@ class _HTTPCarrier:
                 await self._poll()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a failed poll ends the session, whatever failed
             self._stopped = True
             self._queue.put_nowait(None)
             self._transport._poll_error = exc
@@ -1192,7 +1190,7 @@ class _HTTPCarrier:
                     reply.get("status") != "Disconnected" or reply.get("ok") is False
                 ):
                     raise ThalovantConnectionError("Invalid disconnect acknowledgment.")
-            except Exception:
+            except Exception:  # noqa: BLE001 - retained for an explicit retry, whatever failed
                 # Keep this admission and its replica cookie for an explicit
                 # retry. Never log what the server or the error said.
                 raise ThalovantConnectionError(
@@ -1258,7 +1256,7 @@ def raise_for_emit_response(response: Any) -> None:
     status_code = getattr(response, "status_code", None)
     try:
         body = response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - a body that is not JSON is no body
         body = {}
     error = body.get("error") if isinstance(body, dict) else None
     if error:

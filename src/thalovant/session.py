@@ -27,7 +27,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterator
 from urllib.parse import urlsplit
 
 from .errors import (
@@ -94,7 +94,7 @@ def alive(client: Any) -> bool:
         return False
     try:
         phase = getattr(client.connection_info(), "phase", None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optimistic by design: see the docstring
         return True
     return phase not in ("closed", "error") if isinstance(phase, str) else True
 
@@ -642,7 +642,7 @@ def _alive_now(client: Any) -> bool:
     if link is not None:
         try:
             phase = link.connection_info().phase
-        except Exception:
+        except Exception:  # noqa: BLE001 - optimistic by design, as alive()
             return True
         return phase not in ("closed", "error")
     return alive(client) if not asyncio.iscoroutinefunction(getattr(client, "connection_info", None)) else True
@@ -686,7 +686,7 @@ def hub_hostname(default_master: Any) -> str:
 
 
 @contextlib.contextmanager
-def preferred_origin(host: str, address: str):
+def preferred_origin(host: str, address: str) -> Iterator[None]:
     """Resolve one hostname to one address, for the life of this block.
 
     Scoped to the process and to the block rather than written into
@@ -703,11 +703,11 @@ def preferred_origin(host: str, address: str):
     with _RESOLVER_LOCK:
         real = socket.getaddrinfo
 
-        def resolve(node, port, *args, **kwargs):
+        def resolve(node: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
             target = address if node == host else node
             return real(target, port, *args, **kwargs)
 
-        socket.getaddrinfo = resolve
+        socket.getaddrinfo = resolve  # type: ignore[assignment]
         try:
             yield
         finally:

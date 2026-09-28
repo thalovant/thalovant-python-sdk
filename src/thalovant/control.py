@@ -15,7 +15,7 @@ from datetime import datetime
 import re
 import secrets
 import time
-from typing import Any, Awaitable, Callable, Iterable, Iterator, Literal, Mapping, cast
+from typing import Any, Awaitable, Callable, Coroutine, Iterable, Iterator, Literal, Mapping, TypeVar, cast
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 import weakref
@@ -48,6 +48,8 @@ from .protocols import (
     select_data_plane_endpoint,
 )
 from ._version import USER_AGENT
+
+_T = TypeVar("_T")
 
 DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
 DEFAULT_CONTROL_USER_AGENT = USER_AGENT
@@ -2168,7 +2170,7 @@ class ThalovantControlPlane:
         self._session = session if session is not None else _SessionHandle(self)
         weakref.finalize(self, runner.stop, core.aclose)
 
-    def _run(self, coro: Any) -> Any:
+    def _run(self, coro: Coroutine[Any, Any, _T]) -> _T:
         return self._runner.run(coro)
 
     @property
@@ -2290,14 +2292,11 @@ class ThalovantControlPlane:
         without real waiting.
         """
 
-        return cast(
-            "dict[str, Any]",
-            self._run(
-                self._core._poll_device_token(
-                    device_code, interval=interval, timeout=timeout,
-                    sleep=_awaitable_sleep(sleep), clock=clock,
-                )
-            ),
+        return self._run(
+            self._core._poll_device_token(
+                device_code, interval=interval, timeout=timeout,
+                sleep=_awaitable_sleep(sleep), clock=clock,
+            )
         )
 
     def install_hub_skill(
@@ -2314,7 +2313,7 @@ class ThalovantControlPlane:
         See :meth:`AsyncThalovantControlPlane.install_hub_skill`.
         """
 
-        accepted = cast(HubSkillOperation, self._run(self._core.install_hub_skill(hub_id, skill, version=version)))
+        accepted = self._run(self._core.install_hub_skill(hub_id, skill, version=version))
         if not wait:
             return accepted
         return self._wait_for_hub_skill_operation(accepted, converged="installed", timeout=timeout)
@@ -2333,7 +2332,7 @@ class ThalovantControlPlane:
         See :meth:`AsyncThalovantControlPlane.update_hub_skill`.
         """
 
-        accepted = cast(HubSkillOperation, self._run(self._core.update_hub_skill(hub_id, skill, version=version)))
+        accepted = self._run(self._core.update_hub_skill(hub_id, skill, version=version))
         if not wait:
             return accepted
         return self._wait_for_hub_skill_operation(accepted, converged="installed", timeout=timeout)
@@ -2351,7 +2350,7 @@ class ThalovantControlPlane:
         See :meth:`AsyncThalovantControlPlane.remove_hub_skill`.
         """
 
-        accepted = cast(HubSkillOperation, self._run(self._core.remove_hub_skill(hub_id, skill)))
+        accepted = self._run(self._core.remove_hub_skill(hub_id, skill))
         if not wait:
             return accepted
         return self._wait_for_hub_skill_operation(accepted, converged="removed", timeout=timeout)
@@ -2368,14 +2367,11 @@ class ThalovantControlPlane:
     ) -> HubSkillOperation:
         """Poll an accepted hub skill command until its operation is terminal."""
 
-        return cast(
-            HubSkillOperation,
-            self._run(
-                self._core._wait_for_hub_skill_operation(
-                    accepted, converged=converged, timeout=timeout, interval=interval,
-                    sleep=_awaitable_sleep(sleep), clock=clock,
-                )
-            ),
+        return self._run(
+            self._core._wait_for_hub_skill_operation(
+                accepted, converged=converged, timeout=timeout, interval=interval,
+                sleep=_awaitable_sleep(sleep), clock=clock,
+            )
         )
 
     def login(
@@ -3390,7 +3386,8 @@ def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[Tha
 def _linked_client_id(problem: Mapping[str, Any] | None) -> str | None:
     if not problem:
         return None
-    nested = problem.get("detail") if isinstance(problem.get("detail"), Mapping) else {}
+    detail = problem.get("detail")
+    nested: Mapping[str, Any] = detail if isinstance(detail, Mapping) else {}
     for source in (problem, nested):
         for key in ("client_id", "existing_client_id", "connection_id"):
             value = source.get(key)
@@ -3435,8 +3432,10 @@ def _operation_id(operation: OperationResource | Mapping[str, Any] | str) -> str
         if isinstance(value, str) and value:
             return quote(value, safe="")
         links = operation.get("links")
-        operation = links.get("self") if isinstance(links, Mapping) else ""
-    text = str(operation or "").strip()
+        link = links.get("self") if isinstance(links, Mapping) else None
+        text = str(link or "").strip()
+    else:
+        text = str(operation or "").strip()
     if "/v1/operations/" in text:
         text = text.rsplit("/v1/operations/", 1)[1].split("?", 1)[0].strip("/")
     if not text:

@@ -86,7 +86,7 @@ def proxy_for(url: str) -> str | None:
     if not proxies:
         return None
     try:
-        if urllib.request.proxy_bypass_environment(parsed.hostname or "", proxies):
+        if urllib.request.proxy_bypass(parsed.hostname or ""):
             return None
     except Exception:  # noqa: BLE001 - a malformed NO_PROXY is no reason to fail
         pass

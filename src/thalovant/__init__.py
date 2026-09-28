@@ -1,6 +1,6 @@
 """Thalovant Python SDK."""
 
-from ._version import __version__
+from ._version import __version__ as __version__
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
 from .inventory import (

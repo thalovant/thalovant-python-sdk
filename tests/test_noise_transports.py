@@ -186,7 +186,7 @@ def test_https_noise_cookie_encrypted_chunked_reply_and_same_object_reconnect(ht
             replies = []
             transport.on_mycroft("speak", replies.append)
             with ThreadPoolExecutor(max_workers=3) as pool:
-                list(pool.map(lambda n: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
+                list(pool.map(lambda n, attempt=attempt: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
             deadline = time.monotonic() + 4
             while len(replies) < 3 and time.monotonic() < deadline: time.sleep(0.01)
             assert sorted(reply.context["request_id"] for reply in replies) == [f"{attempt}-{n}" for n in range(3)]
@@ -301,7 +301,7 @@ def test_mqtt_noise_raw_frames_threaded_replies_reconnect_and_pin_preservation(t
             assert broker.client.tls
             assert transport.healthcheck().ok
             with ThreadPoolExecutor(max_workers=3) as pool:
-                list(pool.map(lambda n: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
+                list(pool.map(lambda n, attempt=attempt: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
             deadline = time.monotonic() + 3
             while len(replies) < (attempt + 1) * 3 and time.monotonic() < deadline: time.sleep(0.01)
             assert len(replies) == (attempt + 1) * 3

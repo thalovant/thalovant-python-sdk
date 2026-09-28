@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     Any,
+    AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
@@ -326,12 +327,6 @@ async def _wait_any(events: Sequence[asyncio.Event | None], timeout: float | Non
             waiter.cancel()
 
 
-def _is_async(handler: Callable[..., Any]) -> bool:
-    return asyncio.iscoroutinefunction(handler) or asyncio.iscoroutinefunction(
-        getattr(handler, "__call__", None)
-    )
-
-
 def _run_handler(handler: Callable[[Any], Any], value: Any) -> None:
     """Call a handler on the loop; a coroutine it returns becomes a task."""
     result = handler(value)
@@ -434,6 +429,8 @@ class AsyncThalovantClient:
         # writes and registrations a timed-out caller left behind.
         self._background: set[asyncio.Future[Any]] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
+        #: The class whose conversation limits apply: a sync client's.
+        self._limits: type | None = None
         self._closed_state = True
         self._bind_loop_objects()
 
@@ -807,7 +804,7 @@ class AsyncThalovantClient:
             try:
                 detail = await operation()
                 ok = True
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - doctor reports every check's failure
                 # doctor output is printed by the CLI; scrub any URL query
                 # (which carries the data-plane access key) from the message.
                 detail = _redact_error_text(exc)
@@ -1175,7 +1172,7 @@ class AsyncThalovantClient:
         context: dict[str, Any] | None = None,
         session_id: str | None = None,
         request_id: str | None = None,
-    ) -> AsyncIterator[ThalovantEvent]:
+    ) -> AsyncGenerator[ThalovantEvent, None]:
         if (
             isinstance(max_buffered_events, bool)
             or not isinstance(max_buffered_events, int)
@@ -1584,11 +1581,8 @@ class AsyncThalovantClient:
         ):
             if value not in keys:
                 keys.append(value)
-        kept = {
-            field: session[field]
-            for field in _conversation_fields()
-            if (session or {}).get(field)
-        }
+        known = session or {}
+        kept = {field: known[field] for field in _conversation_fields() if known.get(field)}
         with self._conversations_lock:
             # Take over every id these already reach, rather than dropping
             # them: a turn the caller continued under the hub's id must not
@@ -1611,14 +1605,20 @@ class AsyncThalovantClient:
             # this turn's ids first, then the ones inherited from groups it
             # absorbed, so dropping from the tail discards the stalest aliases
             # and keeps the id the next turn is actually going to send.
-            del keys[self.MAX_CONVERSATION_ALIASES:]
+            aliases, remembered = self._conversation_limits()
+            del keys[aliases:]
             group = tuple(keys)
             for key in keys:
                 self._conversations[key] = (group, kept)
-            while self._remembered_conversations() > self.MAX_REMEMBERED_CONVERSATIONS:
+            while self._remembered_conversations() > remembered:
                 _, (oldest, _) = next(iter(self._conversations.items()))
                 for sibling in oldest:
                     self._conversations.pop(sibling, None)
+
+    def _conversation_limits(self) -> tuple[int, int]:
+        """The alias and conversation caps: a sync client's own class attributes, where callers set them."""
+        owner: Any = self._limits or type(self)
+        return int(owner.MAX_CONVERSATION_ALIASES), int(owner.MAX_REMEMBERED_CONVERSATIONS)
 
     def _remembered_conversations(self) -> int:
         """Conversations held, counting a group of aliases once."""
@@ -2003,7 +2003,7 @@ class AsyncThalovantClient:
             payload = _utterance_payload(prompt, lang)
             frame: dict[str, Any] | None = None
             if direct:
-                inner = {
+                inner: dict[str, Any] = {
                     "msg_type": "bus",
                     "payload": {
                         "type": EVENT_RECOGNIZER_LOOP_UTTERANCE,
@@ -2346,6 +2346,10 @@ class ThalovantClient:
     MAX_REMEMBERED_CONVERSATIONS = AsyncThalovantClient.MAX_REMEMBERED_CONVERSATIONS
     MAX_CONVERSATION_ALIASES = AsyncThalovantClient.MAX_CONVERSATION_ALIASES
 
+    _core: AsyncThalovantClient
+    _runner: _LoopThread
+    _callbacks: _CallbackThread
+
     def __init__(
         self,
         identity: ThalovantIdentity,
@@ -2363,7 +2367,7 @@ class ThalovantClient:
         noise_state_dir: str | None = None,
         self_signed: bool = False,
     ) -> None:
-        core = _SyncCore(
+        core = AsyncThalovantClient(
             identity,
             useragent=useragent,
             connect_timeout=connect_timeout,
@@ -2491,7 +2495,7 @@ class ThalovantClient:
             try:
                 detail = operation()
                 ok = True
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - doctor reports every check's failure
                 # doctor output is printed by the CLI; scrub any URL query
                 # (which carries the data-plane access key) from the message.
                 detail = _redact_error_text(exc)
@@ -2886,21 +2890,3 @@ class ThalovantClient:
     @staticmethod
     def _default_lang() -> str:
         return "en-us"
-
-
-class _SyncCore(AsyncThalovantClient):
-    """The core behind a :class:`ThalovantClient`.
-
-    The conversation limits are read from the sync class, where callers have
-    always set them.
-    """
-
-    _limits: type = object
-
-    @property  # type: ignore[override]
-    def MAX_REMEMBERED_CONVERSATIONS(self) -> int:  # noqa: N802 - the class attribute's name
-        return int(getattr(self._limits, "MAX_REMEMBERED_CONVERSATIONS", AsyncThalovantClient.MAX_REMEMBERED_CONVERSATIONS))
-
-    @property  # type: ignore[override]
-    def MAX_CONVERSATION_ALIASES(self) -> int:  # noqa: N802
-        return int(getattr(self._limits, "MAX_CONVERSATION_ALIASES", AsyncThalovantClient.MAX_CONVERSATION_ALIASES))

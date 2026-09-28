@@ -110,10 +110,12 @@ class ThalovantPolicyDeniedError(ThalovantRuntimeError):
 
     @classmethod
     def from_event(cls, event: "Any") -> "ThalovantPolicyDeniedError":
-        data = getattr(event, "data", None) or {}
+        raw = getattr(event, "data", None)
+        data: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
         # The policy's own detail rides nested under data.data
         # (hivemind-core _send_policy_denied: "data": verdict.data).
-        inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+        nested = data.get("data")
+        inner: Mapping[str, Any] = nested if isinstance(nested, dict) else {}
         allowed = inner.get("allowed")
         code = str(data.get("code") or "")
         quota = None

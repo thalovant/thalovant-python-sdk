@@ -34,7 +34,7 @@ import asyncio
 import math
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Coroutine, Iterable, Mapping, TypeVar
+from typing import TYPE_CHECKING, Any, Coroutine, Iterable, Mapping, TypeVar, cast
 
 from ._language import closest_lang
 from ._language import usual_form as _usual_form
@@ -485,7 +485,7 @@ async def _wait(
 def _core(client: Any) -> "AsyncThalovantClient":
     """The asyncio client behind *client*."""
     core = getattr(client, "_core", None)
-    return core if core is not None else client
+    return cast("AsyncThalovantClient", core if core is not None else client)
 
 
 def _blocking(client: Any, coro: Coroutine[Any, Any, T]) -> T:

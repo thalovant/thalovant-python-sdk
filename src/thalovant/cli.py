@@ -32,13 +32,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if getattr(args, "control_plane", False):
             # ``skills`` talks to the Thalovant API, not to a hub: no identity
             # file is loaded and no hub connection is opened.
-            return args.handler(_control_plane_from_args(args), args)
+            return int(args.handler(_control_plane_from_args(args), args))
         client = _client_from_args(args)
         with client:
-            return args.handler(client, args)
+            return int(args.handler(client, args))
     except KeyboardInterrupt:
         return 130
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the CLI prints any failure instead of a traceback
         print(f"thalovant: {exc}", file=sys.stderr)
         return 1
 
@@ -106,7 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_skills_parser(subparsers: argparse._SubParsersAction) -> None:
+def _add_skills_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """``thalovant skills ...``: manage the skills one hub carries, through the API."""
 
     skills = subparsers.add_parser(

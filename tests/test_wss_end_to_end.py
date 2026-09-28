@@ -176,7 +176,7 @@ def test_close_during_a_silent_handshake_returns_promptly(hub, tmp_path):
     def connect():
         try:
             client.connect()
-        except BaseException as error:  # noqa: BLE001 - checked below
+        except BaseException as error:  # checked below
             errors.append(error)
 
     thread = threading.Thread(target=connect)

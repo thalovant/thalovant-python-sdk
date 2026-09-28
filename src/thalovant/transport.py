@@ -24,7 +24,7 @@ import uuid
 import weakref
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine, NamedTuple, Protocol, TypeVar
+from typing import Any, Callable, Coroutine, NamedTuple, Protocol, TypeVar, cast
 from urllib.parse import urlparse
 
 from ._hive import AsyncHiveMindHTTPTransport, AsyncHiveMindTransport, AsyncHiveMindWSSTransport
@@ -287,6 +287,23 @@ class HiveMindWSSTransport(_SyncHiveTransport):
 class _ConnectionLifecycle:
     """Short state locks; blocking socket operations never hold this lock."""
 
+    _client: Any
+
+    def _begin_connection(self, *, close_previous: bool = True) -> None:
+        raise NotImplementedError
+
+    def _close_detached(self, client: Any) -> None:
+        raise NotImplementedError
+
+    def _fail_connection(self, error: BaseException) -> None:
+        raise NotImplementedError
+
+    def _complete_handshake(self) -> None:
+        raise NotImplementedError
+
+    def _mark_closed(self) -> None:
+        raise NotImplementedError
+
     def _init_lifecycle(self) -> None:
         self._lifecycle_lock = threading.RLock()
         self._generation = 0
@@ -421,7 +438,7 @@ class _ConnectionLifecycle:
         if cleanup:
             try:
                 self._close_client_once(client)
-            except BaseException:
+            except BaseException:  # noqa: BLE001 - the primary failure is the one raised
                 # Keep the primary connection failure; the cleanup error and
                 # exact client remain retained for observation/explicit retry.
                 pass
@@ -433,7 +450,7 @@ class _ConnectionLifecycle:
             # The once guard prevents repeating an earlier HTTP /disconnect.
             try:
                 self._close_client_once(client)
-            except BaseException:
+            except BaseException:  # noqa: BLE001 - a late completion's cleanup is best effort
                 pass
 
     def disconnect(self) -> None:
@@ -491,7 +508,7 @@ class _QuietUpstreamLocationDeprecation(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             return _UPSTREAM_LOCATION_DEPRECATION not in record.getMessage()
-        except Exception:  # a record that cannot even render is not ours to drop
+        except Exception:  # noqa: BLE001 - a record that cannot even render is not ours to drop
             return True
 
 
@@ -511,7 +528,7 @@ def quiet_upstream_location_deprecation() -> None:
     factory = LOG.create_logger  # the bound classmethod, kept as it is
 
     def create_logger(name: str, tostdout: bool = True) -> logging.Logger:
-        logger = factory(name, tostdout)
+        logger: logging.Logger = factory(name, tostdout)
         if str(name).startswith(str(LOG.name)):
             _quiet(logger)
         return logger
@@ -550,7 +567,7 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         self.session_id = f"thalovant-python-mqtt-{uuid.uuid4().hex}"
         self.topics = mqtt_topics_for_identity(identity)
         self._init_lifecycle()
-        self._client: Any | None = None
+        self._client: Any = None
         self._connected = threading.Event()
         self._subscribed = threading.Event()
         self._handshake = threading.Event()
@@ -645,7 +662,7 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             raise ThalovantConnectionError("HiveMind MQTT requires a broker connection with TLS.")
         generation, old = self._reserve_connection()
         self._cleanup_reserved(old)
-        client = None
+        client: Any = cast(Any, None)
         try:
             mqtt = self._load_mqtt_module()
             client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
@@ -731,12 +748,12 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
                 pass
         try:
             client.publish(self.topics.status, "offline", qos=1, retain=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort: the broker may already be gone
             pass
         try:
             client.disconnect()
             client.loop_stop()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort: the broker may already be gone
             pass
         worker = getattr(client, "thalovant_worker", None)
         if worker is not None and worker is not threading.current_thread() and worker.ident is not None:
@@ -810,7 +827,7 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         data: dict[str, Any],
         context: dict[str, Any],
     ) -> Any:
-        message = {
+        message: dict[str, Any] = {
             "msg_type": "bus",
             "payload": {
                 "type": event_type,
@@ -844,7 +861,7 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         client = self._client
         try:
             broker_connected = bool(client and client.is_connected())
-        except Exception:
+        except Exception:  # noqa: BLE001 - a client that cannot say is not connected
             broker_connected = False
         return self._connected.is_set() and self._handshake.is_set() and broker_connected
 
@@ -878,7 +895,9 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             if self._client is not client:
                 return
             client.thalovant_disconnected = True
-            self._connected.clear(); self._subscribed.clear(); self._handshake.clear()
+            self._connected.clear()
+            self._subscribed.clear()
+            self._handshake.clear()
             if _reason_code_value(reason_code) != 0:
                 self._fail_connection(ThalovantConnectionError(f"HiveMind MQTT disconnected: {reason_code}"))
             else:
@@ -901,7 +920,8 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             client.thalovant_disconnected = True
             with self._lifecycle_lock:
                 if self._client is client:
-                    self._connected.clear(); self._handshake.clear()
+                    self._connected.clear()
+                    self._handshake.clear()
             client.disconnect()
 
     def _receive_loop(self, client: Any, channel: Any, incoming: Any) -> None:
@@ -915,11 +935,12 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
                     return
                 try:
                     self._handle_raw_message(raw, client=client, channel=channel)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - any failure ends the session, and is reported
                     self._fail_current_client(client, exc)
                     with self._lifecycle_lock:
                         if self._client is client:
-                            self._connected.clear(); self._handshake.clear()
+                            self._connected.clear()
+                            self._handshake.clear()
                     client.thalovant_disconnected = True
                     client.disconnect()
                     return
@@ -946,12 +967,12 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             bus_message = message.payload
             if hasattr(bus_message, "msg_type"):
                 event_name = str(bus_message.msg_type)
-                data = bus_message.data if isinstance(bus_message.data, dict) else {}
-                context = bus_message.context if isinstance(bus_message.context, dict) else {}
+                raw_data, raw_context = bus_message.data, bus_message.context
             else:
                 event_name = str(payload.get("type") or "")
-                data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-                context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+                raw_data, raw_context = payload.get("data"), payload.get("context")
+            data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
+            context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
             message = _RuntimeBusMessage(
                 data=data,
                 context=context,
@@ -966,7 +987,7 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             # before: no handler, no branch, no log line.
             self._deliver_binary(
                 _BINARY_KINDS.get(_binary_type_value(message), _unnamed_binary(message)),
-                message.payload if isinstance(message.payload, (bytes, bytearray)) else b"",
+                bytes(message.payload) if isinstance(message.payload, (bytes, bytearray)) else b"",
                 message.metadata if isinstance(getattr(message, "metadata", None), dict) else {},
             )
         elif msg_type in _HIVE_DISPATCHED:
@@ -984,7 +1005,8 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             self._fail_current_client(client, exc)
             with self._lifecycle_lock:
                 if self._client is client:
-                    self._connected.clear(); self._handshake.clear()
+                    self._connected.clear()
+                    self._handshake.clear()
             raise
 
     def _publish(self, payload: str | bytes, *, client: Any = None) -> Any:
@@ -1028,7 +1050,7 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
 
 
 def _endpoint_host(parsed: Any) -> str:
-    host = parsed.hostname or parsed.netloc
+    host = str(parsed.hostname or parsed.netloc)
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return host
@@ -1104,6 +1126,8 @@ _BINARY_KINDS = {
 
 def _binary_type_value(message: Any) -> int:
     raw = getattr(getattr(message, "bin_type", None), "value", getattr(message, "bin_type", None))
+    if raw is None:
+        return 0
     try:
         return int(raw)
     except (TypeError, ValueError):

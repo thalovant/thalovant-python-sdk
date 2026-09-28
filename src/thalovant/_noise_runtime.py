@@ -84,12 +84,13 @@ def _file_lock(path: Path) -> Iterator[None]:
         else:  # pragma: no cover - exercised on Windows CI only
             import msvcrt
 
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            windows: Any = msvcrt
+            windows.locking(fd, windows.LK_LOCK, 1)
             try:
                 yield
             finally:
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                windows.locking(fd, windows.LK_UNLCK, 1)
     finally:
         os.close(fd)
 

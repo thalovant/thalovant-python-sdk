@@ -192,7 +192,8 @@ class SyncLink:
         return None
 
     def last_error(self) -> BaseException | None:
-        return self.transport.last_error()
+        error = self.transport.last_error()
+        return error if isinstance(error, BaseException) else None
 
     def connection_info(self) -> ThalovantConnectionInfo:
         return self.transport.connection_info()  # type: ignore[no-any-return]
