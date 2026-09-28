@@ -131,3 +131,18 @@ def test_frames_this_decoder_reads_match_the_reference_decoder():
     frame = encode_binary_frame(HiveMessage("bus", BusMessage("speak", {"utterance": "x"}, {})))
     reference = serialization.decode_bitstring(frame)
     assert reference.payload.msg_type == "speak"
+
+
+def test_a_large_unaligned_payload_decodes_quickly():
+    """A second of speech is ~100 KB; reading it a bit at a time cost a second."""
+    import time
+
+    audio = bytes(range(256)) * 4096  # 1 MiB
+    meta = b"{}"
+    bits = int.from_bytes(b"\x06" + audio, "big") << 4  # kind 6, then the bytes, then 4 bits of padding
+    body = bits.to_bytes(len(audio) + 1, "big")[0:]
+    frame = bytes((0x80 | (12 << 1), len(meta))) + meta + body
+    started = time.perf_counter()
+    message = decode_binary_frame(frame)
+    assert time.perf_counter() - started < 0.5
+    assert message.bin_type == 6 and message.payload == audio

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ovos_spec_tools.language import closest_lang
+from ._language import closest_lang
 
 from .listing import rank
 

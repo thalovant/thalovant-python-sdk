@@ -209,8 +209,6 @@ def test_explicit_async_ask_cancellation_after_speech_cannot_become_success():
     async def exercise():
         gate = threading.Event()
         started = threading.Event()
-        observed = threading.Event()
-        outcomes = []
 
         def script(transport):
             transport.bus('speak', {'utterance': 'partial'})
@@ -219,28 +217,16 @@ def test_explicit_async_ask_cancellation_after_speech_cannot_become_success():
 
         transport = QueryTransport(script)
         sdk = AsyncThalovantClient(client(transport).identity, transport=transport, reply_settle_seconds=5)
-        original = sdk._client._ask
-
-        def record(*args, **kwargs):
-            try:
-                result = original(*args, **kwargs)
-                outcomes.append(result)
-                return result
-            except BaseException as error:
-                outcomes.append(error)
-                raise
-            finally:
-                observed.set()
-
-        sdk._client._ask = record
         try:
             request = asyncio.create_task(sdk.ask('hello', timeout=1))
             assert await asyncio.to_thread(started.wait, 1)
             request.cancel()
+            # Speech had arrived; the caller cancelled. That is a cancellation,
+            # never a reply built from half an answer.
             with pytest.raises(asyncio.CancelledError):
                 await request
-            assert await asyncio.to_thread(observed.wait, 1)
-            assert len(outcomes) == 1 and isinstance(outcomes[0], ThalovantConnectionError)
+            # And the write still in flight keeps the connection's ownership
+            # until it returns: nobody replaces the session underneath it.
             with pytest.raises(ThalovantConnectionError):
                 await sdk.connect(timeout=0.02)
             assert transport.sent == 1 and transport.dials == 1

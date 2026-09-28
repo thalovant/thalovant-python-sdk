@@ -211,7 +211,7 @@ def test_https_handshake_deadline_preserves_timeout_and_releases_admission(http_
         with pytest.raises(ThalovantTimeoutError, match="handshake timed out"):
             transport.connect()
         assert not peer.admitted
-        assert transport._client is None and not transport._connecting
+        assert transport._carrier is None and not transport._connecting
         assert transport.connection_info().phase == "error"
         assert not transport.healthcheck().ok
         monkeypatch.setattr(peer, "start", original_start)
@@ -333,24 +333,34 @@ def test_https_poll_failure_reconnect_clears_previous_admission(http_peer, tmp_p
     finally: transport.disconnect()
 
 
-@pytest.mark.parametrize("timeout_name", ["ConnectTimeout", "ReadTimeout"])
+@pytest.mark.parametrize("timeout_name", ["ConnectionTimeoutError", "SocketTimeoutError"])
 def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, tmp_path, monkeypatch, timeout_name):
-    import requests
+    import aiohttp
     import traceback
 
     peer, endpoint = http_peer
-    request = requests.Session.request
+    request = aiohttp.ClientSession.request
     inject = True
     sensitive_query = "authorization=synthetic-access-key-do-not-log"
 
+    class Raising:
+        def __init__(self, error):
+            self.error = error
+
+        async def __aenter__(self):
+            raise self.error
+
+        async def __aexit__(self, *_):
+            return False
+
     def timed_request(session, method, url, **options):
         nonlocal inject
-        if inject and url.endswith("/get_messages"):
+        if inject and str(url).endswith("/get_messages"):
             inject = False
-            raise getattr(requests, timeout_name)(f"synthetic HTTP deadline at {url}?{sensitive_query}")
+            return Raising(getattr(aiohttp, timeout_name)(f"synthetic HTTP deadline at {url}?{sensitive_query}"))
         return request(session, method, url, **options)
 
-    monkeypatch.setattr(requests.Session, "request", timed_request)
+    monkeypatch.setattr(aiohttp.ClientSession, "request", timed_request)
     transport = HiveMindHTTPTransport(identity(endpoint), useragent="conformance",
         noise_state_dir=str(tmp_path / "client"), connect_timeout=2, handshake_timeout=2)
     try:
@@ -361,7 +371,7 @@ def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, 
         assert caught.value.__cause__ is None
         assert caught.value.__suppress_context__ is True
         assert not peer.admitted
-        assert transport._client is None and not transport._connecting
+        assert transport._carrier is None and not transport._connecting
         transport.connect()
         assert transport.healthcheck().ok
     finally:

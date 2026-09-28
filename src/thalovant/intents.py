@@ -30,13 +30,14 @@ from __future__ import annotations
 
 import re
 
+import asyncio
 import math
-import threading
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Coroutine, Iterable, Mapping, TypeVar
 
-from ovos_spec_tools.language import closest_lang
+from ._language import closest_lang
+from ._language import usual_form as _usual_form
 
 from . import listing
 from .errors import (
@@ -62,7 +63,9 @@ from .events import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .client import ThalovantClient
+    from .client import AsyncThalovantClient, ThalovantClient
+
+T = TypeVar("T")
 
 SOURCE_MANIFEST = "intent-manifest"
 SOURCE_ENGINES = "engine-manifests"
@@ -159,39 +162,7 @@ def usual_form(tag: str) -> str | None:
     that no hub anywhere registers.
     """
 
-    try:
-        import langcodes
-    except ImportError:  # pragma: no cover - langcodes ships with the extra
-        return None
-    try:
-        base = langcodes.Language.get(tag).language
-        if not base:
-            return None
-        if not langcodes.Language.get(base).is_valid():
-            # `maximize` does not fail on a language it has never heard of;
-            # it answers out of the root locale. Ask it about "zzz" and it
-            # says "zzz-US" -- a confident United States for a language that
-            # does not exist. A retry against that is a wasted round trip at
-            # best, so not knowing is reported as not knowing.
-            return None
-        likely = langcodes.Language.get(base).maximize()
-        usual = f"{likely.language}-{likely.territory}" if likely.territory else likely.language
-        # Lower case, because that is how skills register and how the hub
-        # keys its manifest: `en-us`, not the BCP47 `en-US` that
-        # `standardize_lang` would hand back. The manifest lookup is exact, so
-        # a retry in the wrong case is a retry that finds nothing -- which is
-        # the very failure this function exists to end.
-        usual = usual.lower()
-    except Exception:
-        # A tag langcodes will not parse is not a tag we can improve on.
-        return None
-    # Byte comparison, NOT same_language. They are not the same test, and the
-    # difference is the whole point: `standardize_lang` hands callers back
-    # `en-US`, the manifest is keyed `en-us`, and `same_language` calls those
-    # equal -- so the retry that exists precisely for this case suppressed
-    # itself, for the SDK's own canonical spelling. Only a tag that is already
-    # byte-for-byte the usual form has nothing to retry with.
-    return None if usual == tag.strip() else usual
+    return _usual_form(tag)
 
 
 @dataclass(frozen=True)
@@ -467,7 +438,7 @@ class _Denials:
 
     def __init__(self) -> None:
         self.by_type: dict[str, ThalovantEvent] = {}
-        self.event = threading.Event()
+        self.event = asyncio.Event()
 
     def __call__(self, event: ThalovantEvent) -> None:
         denied_type = str(event.data.get("denied_type") or "")
@@ -482,15 +453,15 @@ class _Denials:
                 raise ThalovantPolicyDeniedError.from_event(event)
 
 
-def _wait(
-    done: threading.Event,
+async def _wait(
+    done: asyncio.Event,
     denials: _Denials,
     *,
     timeout: float,
     denied_types: tuple[str, ...],
     what: str,
 ) -> None:
-    """Block until the reply, a matching denial, or the deadline."""
+    """Wait for the reply, a matching denial, or the deadline."""
 
     started = time.monotonic()
     while True:
@@ -498,8 +469,77 @@ def _wait(
         remaining = timeout - (time.monotonic() - started)
         if remaining <= 0:
             raise ThalovantTimeoutError(f"Hub did not answer {what} within {timeout:g}s.")
-        if done.wait(min(0.05, remaining)):
+        if done.is_set():
             return
+        denials.event.clear()
+        waiters = [asyncio.ensure_future(done.wait()), asyncio.ensure_future(denials.event.wait())]
+        try:
+            await asyncio.wait(waiters, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+        if done.is_set():
+            return
+
+
+def _core(client: Any) -> "AsyncThalovantClient":
+    """The asyncio client behind *client*."""
+    core = getattr(client, "_core", None)
+    return core if core is not None else client
+
+
+def _blocking(client: Any, coro: Coroutine[Any, Any, T]) -> T:
+    """Run *coro* for a synchronous caller, on *client*'s own loop."""
+    run = getattr(client, "_run", None)
+    if run is None:
+        coro.close()
+        raise TypeError("Pass a ThalovantClient; an AsyncThalovantClient has coroutine methods for this.")
+    return run(coro)  # type: ignore[no-any-return]
+
+
+async def _request_reply(
+    client: "AsyncThalovantClient",
+    query_type: str,
+    reply_type: str,
+    data: dict[str, Any],
+    *,
+    lang: str | None = None,
+    timeout: float,
+) -> ThalovantEvent:
+    deadline = time.monotonic() + timeout
+    request_id = _new_request_id()
+    context: dict[str, Any] = {"request_id": request_id}
+    if lang:
+        context["lang"] = lang
+    done = asyncio.Event()
+    answer: list[ThalovantEvent] = []
+
+    def keep(event: ThalovantEvent) -> None:
+        if not answer:
+            answer.append(event)
+            done.set()
+
+    denials = _Denials()
+    try:
+        await client.connect(timeout=timeout)
+    except ThalovantConnectionError as error:
+        if isinstance(error.__cause__, ThalovantTimeoutError) or time.monotonic() >= deadline:
+            raise ThalovantTimeoutError(f"Hub did not answer {query_type} within {timeout:g}s.") from None
+        raise
+    denied = await client._on(EVENT_POLICY_DENIED, denials, request_id=request_id)
+    try:
+        replied = await client._on(reply_type, keep, request_id=request_id)
+        try:
+            await client._emit_query_with_timeout(query_type, data, context, deadline - time.monotonic())
+            await _wait(
+                done, denials, timeout=max(0.0, deadline - time.monotonic()),
+                denied_types=(query_type,), what=query_type,
+            )
+        finally:
+            replied.close()
+    finally:
+        denied.close()
+    return answer[0]
 
 
 def request_reply(
@@ -517,47 +557,22 @@ def request_reply(
     dropped. A ``hive.policy.denied`` naming the query raises at once.
     """
 
-    deadline = time.monotonic() + timeout
-    request_id = _new_request_id()
-    context: dict[str, Any] = {"request_id": request_id}
-    if lang:
-        context["lang"] = lang
-    done = threading.Event()
-    answer: list[ThalovantEvent] = []
-
-    def keep(event: ThalovantEvent) -> None:
-        if not answer:
-            answer.append(event)
-            done.set()
-
-    denials = _Denials()
-    try:
-        client.connect(timeout=timeout)
-    except ThalovantConnectionError as error:
-        if isinstance(error.__cause__, ThalovantTimeoutError) or time.monotonic() >= deadline:
-            raise ThalovantTimeoutError(f"Hub did not answer {query_type} within {timeout:g}s.") from None
-        raise
-    with client.on(EVENT_POLICY_DENIED, denials, request_id=request_id), client.on(
-        reply_type, keep, request_id=request_id
-    ):
-        client._emit_query_with_timeout(query_type, data, context, deadline - time.monotonic())
-        _wait(done, denials, timeout=max(0.0, deadline - time.monotonic()), denied_types=(query_type,), what=query_type)
-    return answer[0]
+    return _blocking(
+        client, _request_reply(_core(client), query_type, reply_type, data, lang=lang, timeout=timeout)
+    )
 
 
-def list_intents(
-    client: "ThalovantClient",
+async def _list_intents(
+    client: "AsyncThalovantClient",
     lang: str,
     *,
     timeout: float = 5.0,
     include_definitions: bool = False,
 ) -> list[IntentRegistration]:
-    """The hub's intent manifest for one language."""
-
     data: dict[str, Any] = {"lang": lang}
     if include_definitions:
         data["include_definitions"] = True
-    event = request_reply(
+    event = await _request_reply(
         client, EVENT_INTENT_LIST, EVENT_INTENT_LIST_RESPONSE, data, lang=lang, timeout=timeout
     )
     if event.data.get("ok") is False:
@@ -574,17 +589,30 @@ def list_intents(
     return [entry for entry in entries if entry is not None]
 
 
-def describe_intent(
+def list_intents(
     client: "ThalovantClient",
+    lang: str,
+    *,
+    timeout: float = 5.0,
+    include_definitions: bool = False,
+) -> list[IntentRegistration]:
+    """The hub's intent manifest for one language."""
+
+    return _blocking(
+        client,
+        _list_intents(_core(client), lang, timeout=timeout, include_definitions=include_definitions),
+    )
+
+
+async def _describe_intent(
+    client: "AsyncThalovantClient",
     skill_id: str,
     intent_name: str,
     lang: str,
     *,
     timeout: float = 5.0,
 ) -> list[IntentDefinition]:
-    """Every registration behind one intent in one language, keyword ones first."""
-
-    event = request_reply(
+    event = await _request_reply(
         client,
         EVENT_INTENT_DESCRIBE,
         EVENT_INTENT_DESCRIBE_RESPONSE,
@@ -601,21 +629,28 @@ def describe_intent(
     return [definition for definition in found if definition is not None]
 
 
-def describe_many(
+def describe_intent(
     client: "ThalovantClient",
+    skill_id: str,
+    intent_name: str,
+    lang: str,
+    *,
+    timeout: float = 5.0,
+) -> list[IntentDefinition]:
+    """Every registration behind one intent in one language, keyword ones first."""
+
+    return _blocking(
+        client, _describe_intent(_core(client), skill_id, intent_name, lang, timeout=timeout)
+    )
+
+
+async def _describe_many(
+    client: "AsyncThalovantClient",
     wanted: Iterable[tuple[str, str, str]],
     *,
     timeout: float = 5.0,
     batch: int = DESCRIBE_BATCH,
 ) -> dict[tuple[str, str, str], list[IntentDefinition]]:
-    """Describe many registrations, at most ``batch`` of them in flight.
-
-    One subscription per batch, one request id per registration, replies
-    matched by that id, repeats dropped. The deadline covers each batch, so a
-    hub that answers nothing fails after one batch rather than holding every
-    request open. ``batch=0`` sends them all at once.
-    """
-
     wanted = list(dict.fromkeys(wanted))
     if not wanted:
         return {}
@@ -624,7 +659,7 @@ def describe_many(
         for start in range(0, len(wanted), batch):
             try:
                 batched.update(
-                    describe_many(client, wanted[start:start + batch], timeout=timeout, batch=0)
+                    await _describe_many(client, wanted[start:start + batch], timeout=timeout, batch=0)
                 )
             except ThalovantTimeoutError:
                 # A partial answer is an answer, across windows as within one:
@@ -638,8 +673,7 @@ def describe_many(
         return batched
     by_request: dict[str, tuple[str, str, str]] = {}
     found: dict[tuple[str, str, str], list[IntentDefinition]] = {}
-    lock = threading.Lock()
-    done = threading.Event()
+    done = asyncio.Event()
 
     def keep(event: ThalovantEvent) -> None:
         items = event.data.get("definitions")
@@ -666,44 +700,87 @@ def describe_many(
             )
         if key is None:
             return
-        with lock:
-            if key in found:
-                return
-            found[key] = [] if event.data.get("ok") is False else definitions
-            if len(found) == len(wanted):
-                done.set()
+        if key in found:
+            return
+        found[key] = [] if event.data.get("ok") is False else definitions
+        if len(found) == len(wanted):
+            done.set()
 
     denials = _Denials()
-    client.connect()
-    with client.on(
+    await client.connect()
+    denied = await client._on(
         EVENT_POLICY_DENIED, denials,
         predicate=lambda event: not event.request_id or event.request_id in by_request,
-    ), client.on(
-        EVENT_INTENT_DESCRIBE_RESPONSE, keep
-    ):
-        for key in wanted:
-            skill_id, intent_name, lang = key
-            request_id = _new_request_id()
-            by_request[request_id] = key
-            client.emit(
-                EVENT_INTENT_DESCRIBE,
-                {"skill_id": skill_id, "intent_name": intent_name, "lang": lang},
-                {"request_id": request_id, "lang": lang},
-            )
+    )
+    try:
+        described = await client._on(EVENT_INTENT_DESCRIBE_RESPONSE, keep)
         try:
-            _wait(
-                done,
-                denials,
-                timeout=timeout,
-                denied_types=(EVENT_INTENT_DESCRIBE,),
-                what=EVENT_INTENT_DESCRIBE,
-            )
-        except ThalovantTimeoutError:
-            if not any(found.values()):
-                raise
-            # An actual partial definition is still an answer: the intents the hub did not
-            # describe in time simply carry no sentences.
+            for key in wanted:
+                skill_id, intent_name, lang = key
+                request_id = _new_request_id()
+                by_request[request_id] = key
+                await client.emit(
+                    EVENT_INTENT_DESCRIBE,
+                    {"skill_id": skill_id, "intent_name": intent_name, "lang": lang},
+                    {"request_id": request_id, "lang": lang},
+                )
+            try:
+                await _wait(
+                    done,
+                    denials,
+                    timeout=timeout,
+                    denied_types=(EVENT_INTENT_DESCRIBE,),
+                    what=EVENT_INTENT_DESCRIBE,
+                )
+            except ThalovantTimeoutError:
+                if not any(found.values()):
+                    raise
+                # An actual partial definition is still an answer: the intents
+                # the hub did not describe in time simply carry no sentences.
+        finally:
+            described.close()
+    finally:
+        denied.close()
     return found
+
+
+def describe_many(
+    client: "ThalovantClient",
+    wanted: Iterable[tuple[str, str, str]],
+    *,
+    timeout: float = 5.0,
+    batch: int = DESCRIBE_BATCH,
+) -> dict[tuple[str, str, str], list[IntentDefinition]]:
+    """Describe many registrations, at most ``batch`` of them in flight.
+
+    One subscription per batch, one request id per registration, replies
+    matched by that id, repeats dropped. The deadline covers each batch, so a
+    hub that answers nothing fails after one batch rather than holding every
+    request open. ``batch=0`` sends them all at once.
+    """
+
+    return _blocking(client, _describe_many(_core(client), wanted, timeout=timeout, batch=batch))
+
+
+async def _intent_names(
+    client: "AsyncThalovantClient",
+    lang: str,
+    *,
+    timeout: float = 5.0,
+) -> dict[str, list[str]]:
+    names: dict[str, list[str]] = {}
+    for engine, query_type, reply_type in (
+        ("adapt", EVENT_ADAPT_MANIFEST_GET, EVENT_ADAPT_MANIFEST),
+        ("padatious", EVENT_PADATIOUS_MANIFEST_GET, EVENT_PADATIOUS_MANIFEST),
+    ):
+        event = await _request_reply(
+            client, query_type, reply_type, {"lang": lang}, lang=lang, timeout=timeout
+        )
+        raw = event.data.get("intents")
+        names[engine] = [
+            text for text in (raw if isinstance(raw, list) else ()) if isinstance(text, str) and text
+        ]
+    return names
 
 
 def intent_names(
@@ -719,17 +796,7 @@ def intent_names(
     allowed for these queries but not the intent manifest.
     """
 
-    names: dict[str, list[str]] = {}
-    for engine, query_type, reply_type in (
-        ("adapt", EVENT_ADAPT_MANIFEST_GET, EVENT_ADAPT_MANIFEST),
-        ("padatious", EVENT_PADATIOUS_MANIFEST_GET, EVENT_PADATIOUS_MANIFEST),
-    ):
-        event = request_reply(client, query_type, reply_type, {"lang": lang}, lang=lang, timeout=timeout)
-        raw = event.data.get("intents")
-        names[engine] = [
-            text for text in (raw if isinstance(raw, list) else ()) if isinstance(text, str) and text
-        ]
-    return names
+    return _blocking(client, _intent_names(_core(client), lang, timeout=timeout))
 
 
 def _inventory_from_names(names: dict[str, list[str]], languages: tuple[str, ...], denied: str) -> HubIntentInventory:
@@ -755,21 +822,11 @@ def _inventory_from_names(names: dict[str, list[str]], languages: tuple[str, ...
 FALLBACK_PROBE_TIMEOUT = 1.5
 
 
-def list_fallbacks(
-    client: "ThalovantClient", *, timeout: float = 5.0
+async def _list_fallbacks(
+    client: "AsyncThalovantClient", *, timeout: float = 5.0
 ) -> tuple[HubFallback, ...] | None:
-    """Which skills answer whatever nothing else matched, or None if unknowable.
-
-    ``None`` and ``()`` are deliberately different answers. ``()`` means the
-    hub said it has no fallbacks; ``None`` means it could not say -- an
-    ovos-core without `ovos.skills.fallback.list` (added in #951), a connection
-    not allowed to publish it, or a hub that did not reply. Collapsing those
-    into "none" is the mistake this whole feature exists to correct, so it is
-    not made here either.
-    """
-
     try:
-        event = request_reply(
+        event = await _request_reply(
             client, EVENT_FALLBACK_LIST, EVENT_FALLBACK_LIST_RESPONSE, {},
             lang=None, timeout=timeout,
         )
@@ -803,8 +860,24 @@ def list_fallbacks(
     return tuple(sorted(found, key=lambda f: (f.priority, f.skill_id)))
 
 
-def inventory(
-    client: "ThalovantClient",
+def list_fallbacks(
+    client: "ThalovantClient", *, timeout: float = 5.0
+) -> tuple[HubFallback, ...] | None:
+    """Which skills answer whatever nothing else matched, or None if unknowable.
+
+    ``None`` and ``()`` are deliberately different answers. ``()`` means the
+    hub said it has no fallbacks; ``None`` means it could not say -- an
+    ovos-core without `ovos.skills.fallback.list` (added in #951), a connection
+    not allowed to publish it, or a hub that did not reply. Collapsing those
+    into "none" is the mistake this whole feature exists to correct, so it is
+    not made here either.
+    """
+
+    return _blocking(client, _list_fallbacks(_core(client), timeout=timeout))
+
+
+async def _inventory(
+    client: "AsyncThalovantClient",
     languages: Iterable[str],
     *,
     timeout: float = 5.0,
@@ -812,18 +885,6 @@ def inventory(
     fallback: bool = True,
     nearest: bool = True,
 ) -> HubIntentInventory:
-    """Everything the hub can be asked, in each language, grouped by skill.
-
-    Asks the intent manifest per language and, unless the runtime attached
-    definitions to the listing, describes every registration at once. When
-    the hub refuses ``ovos.intent.list`` -- or simply never answers it -- and
-    ``fallback`` is on, the engines' manifests give the names and the result
-    says so. Silence is treated like refusal on purpose: a hub whose
-    connection is allowed to publish the query still leaves the caller with
-    nothing when its runtime does not implement it, and the engines'
-    manifests are exactly the answer that case has.
-    """
-
     asked: tuple[str, ...] = ()
     for lang in languages:
         tag = str(lang).strip()
@@ -836,24 +897,22 @@ def inventory(
     answered: dict[str, str] = {}
     try:
         for lang in asked:
-            rows = list_intents(client, lang, timeout=timeout, include_definitions=describe)
+            rows = await _list_intents(client, lang, timeout=timeout, include_definitions=describe)
             tag = lang
             if not rows and nearest:
                 # Listing and asking do not agree about languages. The hub
                 # matches an utterance to the closest language it knows, so a
                 # phone set to en-CA is understood by skills registered under
                 # en-US; the manifest is keyed by exact tag, so the same hub
-                # lists nothing for en-CA. Every client that shows a person
-                # what their hub can do has had to know this and work around
-                # it privately. It is the hub's behaviour, so it belongs
-                # here.
+                # lists nothing for en-CA. It is the hub's behaviour, so it
+                # belongs here.
                 #
                 # Once only, and only on an empty listing: a hub that
                 # answered is never asked twice, and a language with no usual
                 # form other than itself has nothing to retry with.
                 usual = usual_form(lang)
                 if usual is not None:
-                    rows = list_intents(
+                    rows = await _list_intents(
                         client, usual, timeout=timeout, include_definitions=describe
                     )
                     if rows:
@@ -863,9 +922,9 @@ def inventory(
     except ThalovantPolicyDeniedError as denied:
         if not fallback or denied.denied_type != EVENT_INTENT_LIST:
             raise
-        names = intent_names(client, asked[0], timeout=timeout)
+        names = await _intent_names(client, asked[0], timeout=timeout)
         found = _inventory_from_names(names, asked, denied.denied_type)
-        return _with_fallbacks(found, client, timeout)
+        return await _with_fallbacks(found, client, timeout)
     except ThalovantTimeoutError:
         # The hub never answered. A connection allowed to publish the query
         # still gets nothing from a runtime that does not implement it, and
@@ -874,16 +933,16 @@ def inventory(
         # road and let `source` say the names came from there.
         if not fallback:
             raise
-        names = intent_names(client, asked[0], timeout=timeout)
+        names = await _intent_names(client, asked[0], timeout=timeout)
         found = _inventory_from_names(names, asked, EVENT_INTENT_LIST)
-        return _with_fallbacks(found, client, timeout)
+        return await _with_fallbacks(found, client, timeout)
 
     wanted = []
     for lang, entries in listed.items():
         for entry in entries:
             if entry.enabled and entry.definition is None and entry.method == "template":
                 wanted.append((entry.skill_id, entry.intent_name, lang))
-    described = describe_many(client, wanted, timeout=timeout) if describe and wanted else {}
+    described = await _describe_many(client, wanted, timeout=timeout) if describe and wanted else {}
 
     phrases: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
     engines: dict[tuple[str, str], str] = {}
@@ -921,7 +980,7 @@ def inventory(
         HubSkillIntents(skill_id=skill_id, intents=tuple(sorted(intents, key=lambda i: i.name)))
         for skill_id, intents in sorted(by_skill.items())
     )
-    return _with_fallbacks(
+    return await _with_fallbacks(
         HubIntentInventory(
             languages=asked,
             skills=skills,
@@ -932,8 +991,38 @@ def inventory(
     )
 
 
-def _with_fallbacks(
-    found: HubIntentInventory, client: "ThalovantClient", timeout: float
+def inventory(
+    client: "ThalovantClient",
+    languages: Iterable[str],
+    *,
+    timeout: float = 5.0,
+    describe: bool = True,
+    fallback: bool = True,
+    nearest: bool = True,
+) -> HubIntentInventory:
+    """Everything the hub can be asked, in each language, grouped by skill.
+
+    Asks the intent manifest per language and, unless the runtime attached
+    definitions to the listing, describes every registration at once. When
+    the hub refuses ``ovos.intent.list`` -- or simply never answers it -- and
+    ``fallback`` is on, the engines' manifests give the names and the result
+    says so. Silence is treated like refusal on purpose: a hub whose
+    connection is allowed to publish the query still leaves the caller with
+    nothing when its runtime does not implement it, and the engines'
+    manifests are exactly the answer that case has.
+    """
+
+    return _blocking(
+        client,
+        _inventory(
+            _core(client), languages, timeout=timeout, describe=describe,
+            fallback=fallback, nearest=nearest,
+        ),
+    )
+
+
+async def _with_fallbacks(
+    found: HubIntentInventory, client: "AsyncThalovantClient", timeout: float
 ) -> HubIntentInventory:
     """Attach what answers outside the manifest, or record that it is unknown."""
 
@@ -943,7 +1032,7 @@ def _with_fallbacks(
     # hub. A hub that has the handler answers from memory, so a short window is
     # enough for a real answer while an unsupporting one costs a fraction of
     # the budget. It is never longer than the caller asked for.
-    fallbacks = list_fallbacks(client, timeout=min(timeout, FALLBACK_PROBE_TIMEOUT))
+    fallbacks = await _list_fallbacks(client, timeout=min(timeout, FALLBACK_PROBE_TIMEOUT))
     return replace(
         found,
         fallbacks=fallbacks or (),

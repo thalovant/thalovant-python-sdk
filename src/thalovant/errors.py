@@ -1,5 +1,7 @@
 """SDK exception hierarchy."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -240,3 +242,85 @@ def _problem_fields(problem: Mapping[str, Any] | None) -> tuple[str | None, str 
 
 class ThalovantUnsupportedProtocolError(ThalovantError):
     """Raised when a requested data-plane protocol is not supported locally."""
+
+
+class ThalovantHubRefusedError(ThalovantConnectionError):
+    """Raised when a hub turns this connection's credentials away.
+
+    A hub closes the socket without a status for an access key it does not
+    know, with 1008 for a malformed authorization, and aborts the Noise
+    handshake for a wrong password. None of those clears up on its own the way
+    a dropped network does: the connection was deleted, or its secret changed.
+    A caller that reconnects forever on this is dialling a door that is shut.
+    """
+
+
+class ThalovantAuthError(ThalovantAPIError):
+    """Raised when the control plane rejects the API token itself.
+
+    A 401: the token is unknown, expired or revoked. Signing in again is the
+    fix, which is not true of any other refusal.
+    """
+
+
+class ThalovantPlanError(ThalovantAPIError):
+    """Raised when the account's plan does not allow the request.
+
+    A 402, or a 403 whose code is ``plan_limit``. ``problem`` carries the
+    ``resource``, ``limit`` and ``used`` the API reported.
+    """
+
+
+class ThalovantAlreadyLinkedError(ThalovantAPIError):
+    """Raised when a hub already has the one connection of this kind it allows.
+
+    A 409 ``home_assistant_already_linked``: a hub takes one Home Assistant
+    connection. ``client_id`` names the connection that holds the link when
+    the API said which.
+    """
+
+    def __init__(self, *args: object, client_id: str | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.client_id = client_id
+
+
+class ThalovantUnsupportedConnectionTypeError(ThalovantAPIError):
+    """Raised when the API does not know the connection type asked for.
+
+    A 422 naming ``connection_type``, or a created connection whose type did
+    not come back as asked: an API that silently ignores the field would hand
+    out an ordinary connection with the grants of one. The SDK deletes such a
+    connection before raising.
+    """
+
+
+class ThalovantDeviceLoginPending(ThalovantAPIError):
+    """Raised by one device-login poll while the person has not decided yet.
+
+    ``interval`` is how many seconds to wait before the next poll, already
+    lengthened when the API asked to slow down.
+    """
+
+    def __init__(self, *args: object, interval: float = 5.0, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.interval = interval
+
+
+class ThalovantDeviceLoginExpired(ThalovantAPIError):
+    """Raised when the device code expired before anybody approved it."""
+
+
+class ThalovantDeviceLoginDenied(ThalovantAPIError):
+    """Raised when the person declined the sign-in."""
+
+
+class ThalovantAdmissionTimeoutError(ThalovantConnectionError, ThalovantTimeoutError):
+    """Raised when a hub has not admitted a new connection within the wait.
+
+    Both a connection error and a timeout: the connection exists and may still
+    be admitted, so waiting longer, or connecting later, can succeed.
+    """
+
+
+class ThalovantAdmissionFailedError(ThalovantConnectionError):
+    """Raised when the operation that admits a new connection failed or timed out."""

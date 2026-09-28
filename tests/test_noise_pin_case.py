@@ -43,8 +43,8 @@ def test_https_uppercase_pin_authenticates_kk_and_rejects_changed_key(http_peer,
     )
     try:
         transport.connect()
-        path = Path(transport._client.channel.store.IDENTITY_FILE.path)
-        pin_id = transport._client.channel.pin_id
+        path = Path(transport._protocol.store.IDENTITY_FILE.path)
+        pin_id = transport._protocol.pin_id
         transport.disconnect()
         data = json.loads(path.read_text())
         pin = data["pinned_noise_keys"][pin_id]

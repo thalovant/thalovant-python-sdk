@@ -11,7 +11,7 @@ authors = [{ name = "Thalovant" }]
 maintainers = [{ name = "Thalovant" }]
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "LICENSE-langcodes"]
 keywords = ["thalovant", "sdk", "agent", "voice", "assistant", "iot"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,30 +31,22 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    # 1.1.9a1 fixes HiveMind #251: one BUS delivery, after the protocol
-    # removes forged origin claims and normalizes routing/session context.
-    # Earlier v3-capable releases emit a second, unprocessed copy first.
-    "hivemind-bus-client>=1.1.9a1",
-    # The language matcher the rest of OVOS uses (`fr` finds `fr-FR`), with
-    # langcodes so bare and regional tags measure the way they do in a skill.
-    "ovos-spec-tools[langcodes]>=1.10.5a1",
-    # the primitive hivemind_bus_client.noise imports. Without it
-    # NOISE_SUPPORTED is False and HiveMindSlaveProtocol._should_use_noise
-    # silently selects the legacy handshake the hub no longer offers.
-    "poorman-handshake>=2.0.0a3",
-    "paho-mqtt>=2.1.0",
-    "PyYAML>=6.0.2",
-    # Security floors: Requests GHSA-gc5v-m9x4-r6x2 and cryptography
-    # GHSA-g6cj-pr64-35w5. Do not allow an existing vulnerable install to satisfy
-    # the SDK's requirements just because the latest resolver output is safe.
-    "requests>=2.33.0",
+    # The data plane (HiveMind v3 over a WebSocket or HTTPS polling) and the
+    # control-plane API both run on aiohttp. 3.11 is the first release with
+    # ClientWSTimeout, which the WebSocket close timeout is set through.
+    "aiohttp>=3.11",
+    # Noise (X25519, ChaCha20-Poly1305, AES-GCM, BLAKE2s, SHA-256) and the
+    # argon2id that derives each hub's pre-shared key.
+    # Security floor: GHSA-g6cj-pr64-35w5. Do not allow an existing vulnerable
+    # install to satisfy the SDK's requirements just because the latest
+    # resolver output is safe.
     "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     # Intel Macs: cryptography stopped publishing x86_64 macOS wheels after
     # 48.0.1, and building it needs a Rust toolchain no desktop has. The one
     # path GHSA-g6cj-pr64-35w5 reaches, PKCS#7 EnvelopedData decryption, is
-    # called by nothing in this SDK or the hub-client tree beneath it (Noise
-    # uses X25519 and ChaCha20-Poly1305 only). Without this line the SDK, and
-    # every satellite on it, cannot be installed on an Intel Mac at all.
+    # called by nothing in this SDK (Noise uses X25519 and ChaCha20-Poly1305,
+    # the PSK argon2id). Without this line the SDK, and every satellite on it,
+    # cannot be installed on an Intel Mac at all.
     # The upper bound is the half that does the work: 48.0.1 ships
     # macosx_10_9_universal2, 49.0.0 and everything after it ship
     # macosx_11_0_arm64 alone, so an open range resolves to a version with no
@@ -72,14 +64,35 @@ Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 thalovant = "thalovant.cli:main"
 
 [project.optional-dependencies]
-# Test tooling only. twine lives in `publish` because it requires
-# rich>=14.3.3 while ovos-utils (via hivemind-bus-client) pins rich~=13.7:
-# installing both alongside the package is unresolvable, and the test
-# environment has no use for the publishing tools.
+# HiveMind over an MQTT broker. The WebSocket and HTTPS transports need
+# nothing beyond the core.
+mqtt = [
+    "paho-mqtt>=2.1.0",
+]
+# The config file is read by a small built-in reader for what a config holds;
+# with PyYAML installed it is read by PyYAML instead, anchors and all.
+yaml = [
+    "PyYAML>=6.0.2",
+]
+# Test tooling, and the reference libraries the tests compare the SDK's own
+# implementations against: the Noise handshake and the HiveMind envelope
+# (hivemind-bus-client, noiseprotocol), language matching (ovos-spec-tools
+# with langcodes) and YAML (PyYAML). twine lives in `publish` because it
+# requires rich>=14.3.3 while ovos-utils (via hivemind-bus-client) pins
+# rich~=13.7.
 dev = [
     "build>=1.2",
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "thalovant-languages>=0.3.0",
+    "paho-mqtt>=2.1.0",
+    "PyYAML>=6.0.2",
+    "requests>=2.33.0",
+    "certifi",
+    "noiseprotocol>=0.3.1",
+    "hivemind-bus-client>=1.1.9a1",
+    "poorman-handshake>=2.0.0a3",
+    "ovos-spec-tools[langcodes]>=1.10.5a1",
 ]
 # Every word the intent listing turns a rule on -- what makes a phrase a
 # question, what a slot reads as -- lives in its own package, one file per
@@ -108,7 +121,7 @@ docs = [
 packages = ["src/thalovant"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "contracts", "scripts", "LICENSE", "README.md", "mkdocs.yml", "pyproject.toml"]
+include = ["src", "tests", "docs", "contracts", "scripts", "LICENSE", "LICENSE-langcodes", "README.md", "mkdocs.yml", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

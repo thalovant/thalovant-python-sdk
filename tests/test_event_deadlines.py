@@ -182,40 +182,31 @@ def test_async_cancellation_removes_active_reply_or_event_listeners(name):
 
 
 @pytest.mark.parametrize('limit', [1, 3, 256])
-def test_listen_overflow_is_explicit_and_retires_subscription(limit, monkeypatch):
+def test_listen_overflow_is_explicit_and_retires_subscription(limit):
     """A producer that outruns the consumer by one event overflows the buffer.
 
-    The flood runs on the setup thread while the caller's thread is already
-    draining the queue, so with a large buffer the consumer could take an
-    event before the last one lands and no overflow would occur: the
-    release job saw exactly that twice at 256. The consumer is held until
-    the flood is over, which is the situation the bound exists for -- a
-    consumer slower than the hub -- rather than a race with it.
+    The consumer takes the first event and then stops asking while the hub
+    sends a burst one larger than the buffer: the situation the bound exists
+    for -- a consumer slower than the hub -- rather than a race with it.
     """
-    import queue as queue_module
-
-    from thalovant import client as client_module
-
-    flooded = threading.Event()
 
     class Flood(QueryTransport):
         def on_mycroft(self, name, handler):
             super().on_mycroft(name, handler)
-            for i in range(limit + 1):
-                self.bus(name, {'index': i})
-            flooded.set()
+            self.bus(name, {'index': 0})
 
-    class HeldQueue(queue_module.Queue):
-        def get(self, block=True, timeout=None):
-            flooded.wait(5)
-            return super().get(block, timeout)
+        def flood(self):
+            for i in range(1, limit + 2):
+                self.bus('event', {'index': i})
 
-    monkeypatch.setattr(client_module.queue, 'Queue', HeldQueue)
     transport = Flood()
     sdk = client(transport)
     try:
+        stream = sdk.listen('event', timeout=5, max_buffered_events=limit)
+        assert next(stream).data['index'] == 0
+        transport.flood()
         with pytest.raises(ThalovantRuntimeError, match='overflow'):
-            list(sdk.listen('event', timeout=5, max_buffered_events=limit))
+            list(stream)
         assert not any(transport.bus_handlers.values())
     finally:
         sdk.close()
@@ -233,6 +224,12 @@ def test_wait_for_event_keeps_first_matching_event_during_burst():
     sdk = client(transport)
     try:
         assert sdk.wait_for_event('event', timeout=1, request_id='wanted').data['index'] == 0
+        # The registration that delivered the burst is still returning on the
+        # transport's thread when the first event is handed back; it takes the
+        # retired listener off as soon as it does.
+        deadline = time.monotonic() + 1
+        while any(transport.bus_handlers.values()) and time.monotonic() < deadline:
+            time.sleep(0.001)
         assert not any(transport.bus_handlers.values())
     finally:
         sdk.close()
@@ -422,35 +419,21 @@ def test_ask_deadline_retires_held_send_before_reconnect():
 
 
 def test_listener_keeps_initial_setup_failure_when_expiry_retires_first(monkeypatch):
-    """Force timer retirement before the setup worker reports its failure."""
+    """Force retirement before the setup reports its failure."""
     import thalovant.client as client_module
 
     transport = QueryTransport()
     sdk = client(transport)
 
-    class ExpireFirst:
-        def __init__(self, interval, callback):
-            self.callback = callback
+    def expire_first(loop, delay, callback):
+        callback()
+        return loop.call_later(3600, lambda: None)
 
-        def start(self):
-            self.callback()
-
-        def cancel(self):
-            pass
-
-    class InlineSetup:
-        def __init__(self, *, target, daemon):
-            self.target = target
-
-        def start(self):
-            self.target()
-
-    def fail_setup(*args, **kwargs):
+    async def fail_setup(*args, **kwargs):
         raise ThalovantTimeoutError("initial setup failed after retirement")
 
-    monkeypatch.setattr(sdk, "_connect", fail_setup)
-    monkeypatch.setattr(client_module.threading, "Timer", ExpireFirst)
-    monkeypatch.setattr(client_module.threading, "Thread", InlineSetup)
+    monkeypatch.setattr(sdk._core, "_connect", fail_setup)
+    monkeypatch.setattr(client_module, "_schedule_expiry", expire_first)
     with pytest.raises(ThalovantTimeoutError, match="initial setup failed after retirement"):
         next(sdk.listen("event", timeout=0.02))
     assert not any(transport.bus_handlers.values())

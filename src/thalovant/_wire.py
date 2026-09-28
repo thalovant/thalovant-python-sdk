@@ -245,14 +245,22 @@ class _BitReader:
         return value
 
     def take(self, length: int) -> bytes:
-        if self._offset % 8 == 0:
-            start = self._offset // 8
+        start, shift = divmod(self._offset, 8)
+        if shift == 0:
             end = start + length
             if end > len(self._payload):
                 raise ValueError("unexpected end of HiveMind binary frame")
             self._offset += length * 8
             return self._payload[start:end]
-        return bytes(self.uint(8) for _ in range(length))
+        # Not byte-aligned -- a BINARY payload starts four bits into a byte.
+        # Shift the whole span at once: a bit at a time is a second of CPU
+        # for a spoken sentence.
+        span = self._payload[start:start + length + 1]
+        if len(span) < length + 1:
+            raise ValueError("unexpected end of HiveMind binary frame")
+        value = int.from_bytes(span, "big") >> (8 - shift)
+        self._offset += length * 8
+        return (value & ((1 << (length * 8)) - 1)).to_bytes(length, "big")
 
     def rest(self) -> bytes:
         return self.take((len(self._payload) * 8 - self._offset) // 8)

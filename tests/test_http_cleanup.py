@@ -2,14 +2,23 @@
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import asyncio
 import threading
+import time
 import traceback
 
+import aiohttp
 import pytest
-import requests
 
 from thalovant import AsyncThalovantClient, ThalovantClient, ThalovantConnectionError
+from thalovant._hive import AsyncHiveMindHTTPTransport, _HTTPCarrier
 from thalovant.transport import HiveMindHTTPTransport
-from test_noise_transports import http_peer, identity
+from test_noise_transports import http_peer, identity  # noqa: F401 - the fixture
+
+
+def _eventually(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition never became true"
+        time.sleep(0.005)
 
 
 @pytest.mark.parametrize("body,status", [
@@ -29,7 +38,7 @@ def test_failed_disconnect_retains_admission_affinity_and_requires_explicit_retr
                                       handshake_poll_interval=0.01)
     client = ThalovantClient(identity(endpoint), transport=transport)
     client.connect()
-    old = transport._client
+    old = transport._carrier
     pin = peer.pin
     peer.disconnect_response, peer.disconnect_status = body, status
     try:
@@ -39,7 +48,8 @@ def test_failed_disconnect_retains_admission_affinity_and_requires_explicit_retr
             client.wait_closed(timeout=1)
         assert peer.admitted and old._admitted
         assert peer.pin == pin
-        assert old._session.cookies.get("hivemind_http_replica") == "one"
+        # The admission keeps its replica: a retry must reach the one that holds it.
+        assert transport._replica_cookie == "hivemind_http_replica=one"
         assert transport.connection_info().phase == "error"
         for connect in (client.connect, transport.connect):
             with pytest.raises(ThalovantConnectionError, match="cleanup"):
@@ -67,10 +77,11 @@ def test_close_waits_for_connect_admission_publication_before_cleanup(http_peer,
     with ThreadPoolExecutor(max_workers=2) as pool:
         connecting = pool.submit(transport.connect)
         assert peer.connect_entered.wait(2)
-        old = transport._client
+        old = transport._carrier
         closing = pool.submit(transport.disconnect)
         try:
-            assert old._stop.wait(2)
+            # Polling stops at once; releasing the admission waits for it.
+            _eventually(lambda: old._stopped)
             with pytest.raises(FutureTimeout):
                 closing.result(timeout=0.03)
             with pytest.raises(ThalovantConnectionError, match="in progress"):
@@ -94,20 +105,20 @@ def test_disconnect_retry_recovers_after_success_acknowledgment_was_lost(http_pe
                                       handshake_poll_interval=0.01)
     client = ThalovantClient(identity(endpoint), transport=transport)
     client.connect()
-    old = transport._client
-    original = old._session.request
+    old = transport._carrier
+    original = old.request
     lost = False
 
-    def lose_first_success(*args, **kwargs):
+    async def lose_first_success(path, **kwargs):
         nonlocal lost
-        response = original(*args, **kwargs)
-        if "/disconnect" in args[1] and not lost:
+        response = await original(path, **kwargs)
+        if path == "/disconnect" and not lost:
             lost = True
-            assert response.json() == {"status": "Disconnected"}
-            raise requests.ConnectionError("synthetic lost response")
+            assert response == {"status": "Disconnected"}
+            raise aiohttp.ClientConnectionError("synthetic lost response")
         return response
 
-    monkeypatch.setattr(old._session, "request", lose_first_success)
+    monkeypatch.setattr(old, "request", lose_first_success)
     try:
         with pytest.raises(ThalovantConnectionError, match="disconnect"):
             client.close()
@@ -128,33 +139,67 @@ def test_disconnect_retry_recovers_after_success_acknowledgment_was_lost(http_pe
         client.close()
 
 
+class _Response:
+    def __init__(self, status, text):
+        self.status = status
+        self._text = text
+        self.headers = _Headers()
+
+    async def text(self):
+        return self._text
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+
+class _Headers(dict):
+    def getall(self, _name, default=()):
+        return list(default)
+
+
+class _Session:
+    def __init__(self, respond):
+        self.respond = respond
+        self.closed = False
+
+    def request(self, method, url, **kwargs):
+        return self.respond(method, url, **kwargs)
+
+
+def _carrier_with(respond, tmp_path):
+    transport = AsyncHiveMindHTTPTransport(identity("https://localhost:1"), useragent="cleanup",
+                                           noise_state_dir=str(tmp_path / "client"))
+    transport._external_session = _Session(respond)
+    return transport, _HTTPCarrier(transport)
+
+
 @pytest.mark.parametrize("path", ["/connect", "/send_message", "/get_messages"])
-def test_already_disconnected_is_not_success_for_other_http_operations(tmp_path, monkeypatch, path):
-    from types import SimpleNamespace
-    from thalovant._http_runtime import HTTPNoiseClient
-    transport = HiveMindHTTPTransport(identity("https://localhost:1"), useragent="cleanup",
-                                      noise_state_dir=str(tmp_path / "client"))
-    adapter = HTTPNoiseClient(transport)
-    response = SimpleNamespace(status_code=200, json=lambda: {"error": "Already Disconnected"})
-    monkeypatch.setattr(adapter._session, "request", lambda *args, **kwargs: response)
-    try:
+def test_already_disconnected_is_not_success_for_other_http_operations(tmp_path, path):
+    async def exercise():
+        response = _Response(200, '{"error": "Already Disconnected"}')
+        _, carrier = _carrier_with(lambda *args, **kwargs: response, tmp_path)
         with pytest.raises(ThalovantConnectionError, match="refused"):
-            adapter.request(path, method="POST")
-    finally:
-        adapter.close()
+            await carrier.request(path, method="POST")
+        # And the one operation it does answer.
+        assert await carrier.request("/disconnect", method="POST") == {"error": "Already Disconnected"}
+
+    asyncio.run(exercise())
 
 
 def test_connect_closed_before_http_admission_never_publishes_a_late_request(http_peer, tmp_path, monkeypatch):
-    from thalovant import _http_runtime
     peer, endpoint = http_peer
     entered, release = threading.Event(), threading.Event()
-    original = _http_runtime.HTTPNoiseClient
-    class PausedBeforeAdmission(original):
-        def connect(self):
-            entered.set()
-            assert release.wait(5)
-            super().connect()
-    monkeypatch.setattr(_http_runtime, "HTTPNoiseClient", PausedBeforeAdmission)
+    original = _HTTPCarrier.open
+
+    async def paused_before_admission(self, timeout):
+        entered.set()
+        await asyncio.to_thread(release.wait, 5)
+        await original(self, timeout)
+
+    monkeypatch.setattr(_HTTPCarrier, "open", paused_before_admission)
     transport = HiveMindHTTPTransport(identity(endpoint), useragent="cleanup", noise_state_dir=str(tmp_path / "client"))
     with ThreadPoolExecutor(max_workers=1) as pool:
         connecting = pool.submit(transport.connect)
@@ -164,6 +209,7 @@ def test_connect_closed_before_http_admission_never_publishes_a_late_request(htt
             release.set()
             with pytest.raises(ThalovantConnectionError):
                 connecting.result(timeout=2)
+            time.sleep(0.05)
             assert peer.connects == 0 and not peer.admitted
         finally:
             release.set()
@@ -174,16 +220,23 @@ def test_http_request_connection_error_cannot_expose_authorization(http_peer, tm
     transport = HiveMindHTTPTransport(identity(endpoint), useragent="cleanup", noise_state_dir=str(tmp_path / "client"),
                                       handshake_poll_interval=0.01)
     transport.connect()
-    old = transport._client
-    def fail(*args, **kwargs):
-        raise requests.ConnectionError(f"request failed: {endpoint}/disconnect?authorization={old.auth}")
+    old = transport._carrier
+
+    class Failing:
+        closed = False
+
+        def request(self, method, url, **kwargs):
+            raise aiohttp.ClientConnectionError(
+                f"request failed: {url}?authorization={kwargs['params']['authorization']}"
+            )
+
     try:
         with monkeypatch.context() as scope:
-            scope.setattr(old._session, "request", fail)
+            scope.setattr(transport._async_transport, "_external_session", Failing())
             with pytest.raises(ThalovantConnectionError) as caught:
-                old.request("/disconnect", method="POST")
+                transport._run(old.request("/disconnect", method="POST"))
             rendered = "".join(traceback.format_exception(caught.value))
-            assert old.auth not in rendered
+            assert old._auth not in rendered
             assert "authorization=" not in rendered
         assert peer.admitted
     finally:
