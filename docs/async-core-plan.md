@@ -358,3 +358,32 @@ embedded-c and mcp.
    0.9.0 (a minor: dependency changes and additive API).
 10. Verification: the SDK suite, voice's suite, benchmarks, the HA constraints
     resolve, and the public-API diff.
+
+## Where the build differs from this plan
+
+- **No `_noise_store.py`.** The identity, key, pin and PSK-cache store stayed
+  in `_noise_runtime.py`, which already held it. The files and their format are
+  as described above.
+- **No `SyncTransportAdapter` class.** `_link.py` has two links behind one
+  protocol: `NativeLink` for the asyncio transports and `SyncLink` for a custom
+  sync transport or MQTT. `SyncLink` does what the adapter was meant to do.
+- **`answer_home_requests` waits 9 s by default, not 10.** That is a second
+  inside the hub's own bound, so the SDK's `timeout` answer arrives before the
+  hub gives up on the request.
+- **A dropped link is redialled in the background.** The plan did not list this
+  because it was not visible in 0.8.7's code: hivemind-bus-client redialled a
+  dropped WebSocket by itself, after 5 s jittered by x0.5-1.5 and doubling to
+  60 s. The benchmark showed it. A client that only listens depended on it.
+  `AsyncThalovantClient` now does the same for WSS and HTTPS, unless
+  `auto_reconnect=False`. A close, or a connect that failed or was cancelled,
+  ends it. `AsyncHubSession` and `HubSession` close a dropped client
+  themselves, which also stops its redial.
+- **The blocking guard** runs with `slow_callback_duration=0.1`. It records
+  `open`, `os.stat`, `os.listdir`, `time.sleep`, `getaddrinfo` and
+  `load_verify_locations` made on the loop's thread, and it ignores the source
+  lines asyncio's debug mode reads for its own tracebacks.
+- **The WebSocket handshake payload.** The first Noise message carries
+  `{"binarize": false, "encodings": []}` on every transport. 0.8.7 sent this
+  over HTTPS and MQTT; over WSS, hivemind-bus-client offered to binarize.
+  Either way the hub answers `JSON-HEX`, and the binary decoder is there for
+  any hub that binarizes.
