@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,8 @@ async def _device_case(case: dict[str, Any], plane_cls: type) -> tuple[list[dict
                     await run(plane.revoke_api_token)
                     assert plane.access_token is None and plane.token_id is None
                     produced = [{"outcome": "revoked"}]
+                    # Idempotent: revoking again sends nothing and succeeds.
+                    await run(plane.revoke_api_token)
         finally:
             await _close(plane)
         return produced, api
@@ -280,17 +283,21 @@ def test_connection_kinds_vectors(case: dict[str, Any], plane_cls: type) -> None
 
 async def _admission_case(case: dict[str, Any]) -> tuple[dict[str, Any], ScriptedApi]:
     call = case["call"]
+    expect = case["expect"]
     async with ScriptedApi(case["exchanges"]) as api:
         plane = AsyncThalovantControlPlane(api.url, access_token="synthetic-token")
         operation = call["operation"]
+        started = time.monotonic()
         try:
             await plane.wait_for_admission(
                 OperationResource.from_dict(operation) if operation else None,
-                timeout=call["timeout_seconds"], poll_interval=call["poll_interval_seconds"],
+                timeout=call["timeout_ms"] / 1000, poll_interval=call["poll_interval_ms"] / 1000,
             )
         except ThalovantAdmissionTimeoutError as error:
             assert isinstance(error, ThalovantConnectionError) and isinstance(error, ThalovantTimeoutError)
             produced: dict[str, Any] = {"outcome": "timeout"}
+            if "polls" in expect:
+                produced["polls"] = len(api.sent)
         except ThalovantAdmissionFailedError as error:
             produced = {"outcome": "failed", "error_code": error.error_code, "polls": len(api.sent)}
         except ThalovantAPIError:
@@ -299,6 +306,11 @@ async def _admission_case(case: dict[str, Any]) -> tuple[dict[str, Any], Scripte
             produced = {"outcome": "admitted", "polls": len(api.sent)}
         finally:
             await plane.aclose()
+        if "waited_at_least_ms" in expect:
+            # Recorded as the bound it met, so every SDK records the same value.
+            waited_ms = (time.monotonic() - started) * 1000
+            bound = expect["waited_at_least_ms"]
+            produced["waited_at_least_ms"] = bound if waited_ms >= bound else int(waited_ms)
         return produced, api
 
 
@@ -325,8 +337,8 @@ def _handler(spec: dict[str, Any]) -> Any:
     async def handle(_request: Any) -> HomeAnswer:
         if spec.get("raises"):
             raise RuntimeError("the conversation agent is gone")
-        if spec.get("sleep_seconds"):
-            await asyncio.sleep(spec["sleep_seconds"])
+        if spec.get("sleep_ms"):
+            await asyncio.sleep(spec["sleep_ms"] / 1000)
         return HomeAnswer(
             speech=spec.get("speech", ""),
             response_type=spec.get("response_type", "action_done"),
@@ -345,7 +357,7 @@ def test_home_link_vectors(case: dict[str, Any]) -> None:
         replies = Replies()
         event = ThalovantEvent(name=HOME_REQUEST, data=case["request"], context={"source": "skill"}, raw=None)
         produced = asyncio.run(answer_home_request(
-            replies, event, _handler(case["handler"]), timeout=case.get("timeout_seconds", 9.0),
+            replies, event, _handler(case["handler"]), timeout=case.get("timeout_ms", 9000) / 1000,
         ))
         assert [(msg_type, data) for _, msg_type, data in replies.sent] == [(HOME_RESPONSE, produced)]
     record("home-link-vectors.json", case["name"], produced)
@@ -358,7 +370,8 @@ def test_the_contract_lists_match_the_sdk() -> None:
     assert list(home.RESPONSE_TYPES) == HOME["response_types"]
     assert list(home.ERROR_CODES) == HOME["error_codes"]
     assert home.HOME_REQUEST == HOME["request_type"] and home.HOME_RESPONSE == HOME["response_type"]
-    assert home.HOME_REQUEST_TIMEOUT == HOME["reply_timeout_seconds"]
+    assert home.HOME_REQUEST_TIMEOUT * 1000 == HOME["reply_timeout_ms"]
+    assert home.DEFAULT_HANDLER_TIMEOUT * 1000 == 9000
     from thalovant import HOME_ASSISTANT_SCOPES
 
     assert list(HOME_ASSISTANT_SCOPES) == DEVICE["home_assistant_scopes"]

@@ -29,6 +29,8 @@
     },
     "connection-admission-vectors.json": {
       "cases": {
+        "a 429 asking for longer than is left is a timeout at once": "b18c45b67b05aa5575266285018e95cfe34fe6e0d610649ca92eafc003afc313",
+        "a 429 waits the time the API names, then polls again": "075e46531162438388caa086b320657ecbb1439fc8519fe5cf7ef330a98f690f",
         "a 503 is ridden out": "8a30909a895e3b5eefff4a9c3d1ac85e593f6b18f3f02528f6e27c36f262b0f0",
         "a failed operation": "0d7a9de7df304db6dffec65856488e440c00ad13a7e873ddad835ba37b31deee",
         "a link to another origin is never fetched": "3f5d92d01b014155dae5857b5a80892fe32a362403a3b8aef8cb45fb6c1389bd",
@@ -38,7 +40,7 @@
         "still committed when the wait runs out": "e52d4dc3b0148a561e5b42b491cf9afc5dab4ab88ad9539cbdc75c1b025646e1",
         "through every stage to ready": "342ebb4f6d3f360bd92475922463421e82f72cda2eab2165de61db1230ab6734"
       },
-      "digest": "a8a60eb70281e3b03ed17c826ea5e4e70b6915a83799bc249a9f86b27d8bcc07"
+      "digest": "6dceea87d7e334023d27a267aee9eb28a02239107daad09e79621564a742f069"
     },
     "connection-kinds-vectors.json": {
       "cases": {
@@ -49,14 +51,16 @@
         "a plan that does not include the kind": "81c5599f60082003546a41a2c144e9a0c6bd014b6e02d565af6ece52cea0b35f",
         "a revoked token": "350e9c97d9947ee1b19d87260cbc775dad94e69e9cf15c6feb1911cea038c5fd",
         "a token without the scope": "258faf68d655d5e0375737ccdc368768a5d342e5814359d5a119f2926ca3b6f4",
+        "a validation error located at the kind": "84e0401c23d2f1ce3a4cfa9031feb753a5fb86e1fa3f45bdb5f3d287d9b42c98",
         "an API that does not know the kind yet": "bfb4db05c115e471492fb703329ed43061e6dbd32ce0a282445d1bc5cdeeee31",
         "an API that ignored the kind gets its client deleted": "4c857a8e08962746b66ac3be001248609e74ba00a5cca1d1bbcda5d9f3889a19",
+        "an unrelated 422 that echoes the kind in its input is an ordinary error": "b6fc0946c52e229debef212f5563603f49b102ba2e97e612db7e18619f984655",
         "delete reads the etag first": "51408769b986393b9974a0979acac98fc540c2b794d5229803eed61f1f1e91f8",
         "delete with the etag in hand": "eac59ece0b85d53166029f6898207e28d9aa2d71ca4abd357e07d510f82b4eae",
         "the hub already has its Home Assistant link": "11208a518770da934d26df9c948d2e2519170ea238b7722cdf33131e4a0981f0",
         "the kind comes back as asked": "b62ce7b65992735d2aa8989e16acf9b90668cc7252fe4ad0212035e3f974e1e0"
       },
-      "digest": "ab7ed485375c115c85804e3f4558e89ffe6c6ef4ecb6067df722c9bbe02d3183"
+      "digest": "87a0b76dbfd8b45e43b0e1685fb8271517cb1c6c0e0ea6b589f30406d4ca86a4"
     },
     "conversation-vectors.json": {
       "cases": {
@@ -73,6 +77,7 @@
       "cases": {
         "a grant without the complete URL still starts": "bcf54e9daee0cf76f71900b36e7f26cfe3c2aba7125920f6ba76c109eb51b787",
         "a person who said no": "88ee570f52a525076ee2eaaf7aac720f700a2163d50c070940993a946f4ccf19",
+        "a token already revoked cannot authenticate its own revoke, and that is revoked too": "d75c96a38d84f0667274a1f099f8be2179523066395e05871db595e2e31bf4c7",
         "a token response without a token is an error": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
         "a verification URL carrying credentials is refused": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
         "an expired code": "66f91fdc337e18cd7be77e652b5375dceca6f68e8d8637c2e6b6ff1dbc97caa5",
@@ -83,7 +88,7 @@
         "slow_down adds five seconds, and they stay added": "ac965a8b0a252683c9431a65111f17bebec267abd6aa59d7e0e651def2bc2c55",
         "the token signed in with revokes itself": "d75c96a38d84f0667274a1f099f8be2179523066395e05871db595e2e31bf4c7"
       },
-      "digest": "865272881cdf2572bb5ea536c82d81c8675ed19e6b356bd8b1fee1d393b7b38a"
+      "digest": "b96376558bf90858d131652d2cd96e2f7fdba3892b5a38395801d860f6b5af6b"
     },
     "home-link-vectors.json": {
       "cases": {
@@ -99,7 +104,7 @@
         "no routing at all stays none": "c426a896c3237ee1e68cdcdfdfd22ac832eae64ec0ac291827a3b05d6784c320",
         "the route turns round": "f8d9c463a5203918af7b56b6b60d5c3f358998ef0bd215464cd1ffd2f9c249a0"
       },
-      "digest": "bddd0879db811c54ee8e5badbd4af31f58651d594283fa614966d245e4a6d1bc"
+      "digest": "01aac58745deb8560b868d61cc884d9d689a5224bf96ae560cf598fa6bf3461f"
     }
   },
   "schema_version": 1

@@ -145,7 +145,10 @@ Each poll asks once. It returns the token (stored on `api`), or raises
 `ThalovantDeviceLoginExpired` or `ThalovantDeviceLoginDenied`. The token lives
 365 days and has no refresh token. Keep `token.token_id`:
 `api.revoke_api_token()` revokes the token the client signed in with, which is
-what an application should do when the person removes it.
+what an application should do when the person removes it. It is idempotent: a
+token that is already revoked cannot authenticate its own revoke, so the API
+answers 401, and that counts as revoked too. Every sign-in sets `token_id`
+from its own answer, so a password `login()` after a device login clears it.
 
 `ThalovantControlPlane()` uses `https://api.thalovant.com` by default. Pass a
 different URL only for local development or a self-hosted control plane.
@@ -1046,7 +1049,9 @@ handshake, and transport health.
   call quota. The response names which in `quota`, alongside `limit` and
   `used`, and carries a `Retry-After` header and a matching
   `retry_after_seconds` pointing at the next UTC day or month. The SDK does
-  not retry either 429 for you.
+  not retry either 429 for you, with one exception: `wait_for_admission()`
+  waits out a 429 for the time it names, since the connection is still on its
+  way, unless that is longer than the wait has left.
 
 ## Reading An API Error
 

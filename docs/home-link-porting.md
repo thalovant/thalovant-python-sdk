@@ -48,6 +48,12 @@ Assistant config flow can show the code and poll on its own schedule.
 - **Revoke.** Send `DELETE /v1/auth/api-tokens/{token_id}` for the token the SDK signed in
   with. A token may always revoke itself, whatever its scopes. Forget it locally
   afterwards.
+  - Revoking the token in use is idempotent. A token already revoked (or expired) cannot
+    authenticate its own revoke, so the API answers 401. That is success too: forget the
+    token either way.
+  - Every sign-in sets `token_id` from its own answer: a password sign-in has none, so it
+    clears the id a device login left. Otherwise a later default revoke would reach a
+    token the SDK no longer holds.
 - **Secrets.** Neither the device code nor the token ever appears in an error message.
 
 ### connection-kinds
@@ -64,13 +70,15 @@ Create a connection whose kind is `spec.connection_type`, and delete one.
 
   | Answer | Kind |
   |---|---|
-  | 422 whose problem names `connection_type` | unsupported |
+  | 422 that names `connection_type` in its `detail` or `code`, or in the `loc` or `msg` of a validation error (under `errors`, or under `detail` when that is a list) | unsupported |
   | 402, or 403 with code `plan_limit` | plan |
   | 409 `home_assistant_already_linked` | already linked, with the `client_id` the problem names |
   | 401, 423, or 403 with detail `Insufficient scopes` | authentication: sign in again |
   | anything else | an ordinary API error |
 
-  Every kind keeps `status`, `code` and `detail`.
+  Every kind keeps `status`, `code` and `detail`. Never search the whole body for
+  `connection_type`: a validation error about any other field echoes the request,
+  `spec.connection_type` included, as its `input`.
 - Delete sends `DELETE /v1/clients/{id}` with `If-Match`. With no etag given, it reads one
   with `GET` first. A 412 means the client changed underneath, so read the etag again and
   retry once. A 404 on either request means the client is already deleted.
@@ -88,6 +96,7 @@ answer carries an `operation`. Follow its `links.self`, polling
 | `requested`, `committed`, `applied` | keep polling |
 | 404, or no operation at all | admitted at once |
 | 5xx | ride it out and keep polling |
+| 429 | wait the problem's `retry_after_seconds` (top level, or inside a `detail` object), or the poll interval when that is longer, then poll again; if that is more than the time left, it is a timeout at once |
 
 When the deadline passes first, the outcome is a *timeout*. Make it both a connection
 error and a timeout in your language's error model: the connection may still be
@@ -141,6 +150,12 @@ Every request gets exactly one `thalovant.home.response`, within the hub's 10 se
     window (0.75 s) is therefore a refusal, not a drop.
   - Every attempt is logged at debug level only; the application decides what deserves
     more.
+
+### Not covered by vectors yet
+
+Keeping a link up has no shared vectors so far: which close codes count as a refusal,
+the settle window after the handshake, and the refusal grace. The rules are described
+above; vectors for them are planned.
 
 ## The Python reference
 
@@ -206,7 +221,9 @@ Each SDK keeps its own idioms. What has to be the same is the behaviour in the v
 ## Rolling it out
 
 1. Vendor the four vector files where your test runner reads fixtures. They are compared
-   as parsed JSON, so formatting is free.
+   as parsed JSON, so formatting is free. Every duration in them is whole milliseconds
+   (`*_ms`), since only whole numbers compare equal across languages; the one exception
+   is `retry_after_seconds`, which is the API's own field inside a response body.
 2. Serve each HTTP case from a loopback server, in order, and check every request against
    the one the case names: method, path, body or body subset, `If-Match`,
    `Authorization`. Then compare what your SDK produced with `expect`, shaped exactly as

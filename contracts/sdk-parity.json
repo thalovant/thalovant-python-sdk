@@ -132,7 +132,7 @@
       }
     },
     "connection-admission": {
-      "description": "Waiting for a hub to admit a new connection by following the operation the create returned: ready is admitted, failed and timed_out are a failure with the operation's code, 404 and no operation at all are admitted at once, a 5xx is ridden out, the deadline is a timeout that is both a connection error and a timeout, and a link to another origin than the API's is never fetched.",
+      "description": "Waiting for a hub to admit a new connection by following the operation the create returned: ready is admitted, failed and timed_out are a failure with the operation's code, 404 and no operation at all are admitted at once, a 5xx is ridden out, a 429 is waited out for the retry_after_seconds it names unless that is longer than the time left, the deadline is a timeout that is both a connection error and a timeout, and a link to another origin than the API's is never fetched.",
       "files": [
         "src/thalovant/control.py",
         "src/thalovant/errors.py"
@@ -175,7 +175,7 @@
       ]
     },
     "connection-kinds": {
-      "description": "Creating a hub connection of a named kind (spec.connection_type, home_assistant among them) and deleting one: the kind must come back in the answer, and a client the API made without it is deleted before the call fails as unsupported; a 422 about the field is unsupported; 402 and 403 plan_limit are a plan refusal, 409 home_assistant_already_linked names the client that holds the link, and 401, 423 and 403 'Insufficient scopes' are an authentication refusal, each keeping the api-errors fields. Delete sends If-Match, reading the etag first when none is given, retries once on 412, and counts 404 as deleted.",
+      "description": "Creating a hub connection of a named kind (spec.connection_type, home_assistant among them) and deleting one: the kind must come back in the answer, and a client the API made without it is deleted before the call fails as unsupported; a 422 is unsupported only when its detail or code, or a validation error's loc or msg, names the field -- never its echoed input; 402 and 403 plan_limit are a plan refusal, 409 home_assistant_already_linked names the client that holds the link, and 401, 423 and 403 'Insufficient scopes' are an authentication refusal, each keeping the api-errors fields. Delete sends If-Match, reading the etag first when none is given, retries once on 412, and counts 404 as deleted.",
       "files": [
         "src/thalovant/control.py",
         "src/thalovant/errors.py"
@@ -301,7 +301,7 @@
       ]
     },
     "device-login": {
-      "description": "Device sign-in one step at a time for a caller that runs its own loop: begin returns the code to show and the poll interval; one poll is pending (with the interval, lengthened by five seconds for good on slow_down), expired, denied, or the approved token with its scopes, expiry and id, which the SDK keeps; any other failure carries the api-errors fields. The token a device login minted can revoke itself. Verification URLs with credentials are refused, and neither the device code nor the token appears in an error.",
+      "description": "Device sign-in one step at a time for a caller that runs its own loop: begin returns the code to show and the poll interval; one poll is pending (with the interval, lengthened by five seconds for good on slow_down), expired, denied, or the approved token with its scopes, expiry and id, which the SDK keeps; any other failure carries the api-errors fields. The token a device login minted can revoke itself, and revoking it is idempotent: a 401 on its own revoke means it is already dead, and it is forgotten either way. Every sign-in sets the token id from its own answer, so a default revoke never reaches a token the SDK no longer holds. Verification URLs with credentials are refused, and neither the device code nor the token appears in an error.",
       "files": [
         "src/thalovant/control.py",
         "src/thalovant/errors.py"
@@ -702,11 +702,11 @@
       "api-error-vectors.json": "fbe53320afa5501f7da200a04dafa6f6e3345d86d874288b3e2333ed5396d26e",
       "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
       "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
-      "connection-admission-vectors.json": "a8a60eb70281e3b03ed17c826ea5e4e70b6915a83799bc249a9f86b27d8bcc07",
-      "connection-kinds-vectors.json": "ab7ed485375c115c85804e3f4558e89ffe6c6ef4ecb6067df722c9bbe02d3183",
+      "connection-admission-vectors.json": "6dceea87d7e334023d27a267aee9eb28a02239107daad09e79621564a742f069",
+      "connection-kinds-vectors.json": "87a0b76dbfd8b45e43b0e1685fb8271517cb1c6c0e0ea6b589f30406d4ca86a4",
       "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
-      "device-login-vectors.json": "c9453f86e0ba1c1ab5d424c933ac9653e9e2bf9798af975cfb711cfc6b14be59",
-      "home-link-vectors.json": "fcb1fcd12e63885717e785f7d5e49b762f132d7e87b1c61c992a039473cc898d",
+      "device-login-vectors.json": "5fef9c3406a7bb9312a69dfe289546cec941108fc35d2a469384544a69460ca0",
+      "home-link-vectors.json": "66f5979e39651c6333a43375ebf9ff874b1a5ba57d28001c8d774f28e6789308",
       "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
@@ -747,7 +747,7 @@
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "7a1cca78992cd69db9de4a0e1b55e28328959b7ed35359a5fff7079c59a0cde5",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "249b5bdf88d6155dbef52501ed2660f4823bce60ad83036990e149fbcd2adb8c",
+      "src/thalovant/control.py": "02ec4d01e45b0e599264f846ef9612532911c4131f6d434e86c9a97ace3b657e",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "a2d4b447e7da3bb1ee469c34e2d8a96d2d64a5609b7423f55732f44dffbc44c6",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
@@ -800,7 +800,8 @@
     "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16",
     "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d",
     "b16579bd501d18147e6b74b02d67d98ce6aeb850f369de2138fbdfb598469b7c",
-    "f859eae591c57dfb82c8241c44cc7d46ba52ef2dcd0cafaa6bd0187c2d11f459"
+    "f859eae591c57dfb82c8241c44cc7d46ba52ef2dcd0cafaa6bd0187c2d11f459",
+    "f1593522f0af94b56d35ea92909d8bd71d1ae5fc7f6596b6212a0cc4c01c0329"
   ],
   "schema_version": 1
 }

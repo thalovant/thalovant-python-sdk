@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "Creating a connection of a given kind, and deleting one. create sends POST /v1/clients with spec.connection_type set to the kind and spec.version \"1\" (plus the connection's own credentials, which the vectors leave out); the kind is a spec field -- a top-level kind is ignored by the API. The answer must echo the kind in spec.connection_type: when it does, the outcome is 'created' with the client id, the echoed type and the id of the operation that admits it (null when the API sent none); when it does not, the SDK deletes the client it just made (DELETE with If-Match: the answer's etag) and the outcome is 'unsupported', deleted=true. Refusals map to kinds a caller can branch on: a 422 whose problem names connection_type is 'unsupported'; 402, and 403 with code plan_limit, are 'plan'; 409 home_assistant_already_linked is 'already_linked' with the client_id the problem names; 401, 423, and 403 'Insufficient scopes' are 'auth'; every other refusal is 'error'. Each carries the api-errors fields status, code and detail. delete sends DELETE /v1/clients/{id} with If-Match: the etag given, or the etag a GET of the client answers when none is given; a 412 reads the etag again and retries once; a 404, on the GET or the DELETE, means already deleted. requests lists what the SDK sent, in order, as 'METHOD path' with ' If-Match=<etag>' when set.",
+ "description": "Creating a connection of a given kind, and deleting one. create sends POST /v1/clients with spec.connection_type set to the kind and spec.version \"1\" (plus the connection's own credentials, which the vectors leave out); the kind is a spec field -- a top-level kind is ignored by the API. The answer must echo the kind in spec.connection_type: when it does, the outcome is 'created' with the client id, the echoed type and the id of the operation that admits it (null when the API sent none); when it does not, the SDK deletes the client it just made (DELETE with If-Match: the answer's etag) and the outcome is 'unsupported', deleted=true. Refusals map to kinds a caller can branch on: a 422 is 'unsupported' when connection_type is named in the problem's detail or code, or in the loc or msg of one of its validation errors (under errors, or under detail when that is a list) -- never anywhere else, since a validation error echoes the request, connection_type included, as its input; 402, and 403 with code plan_limit, are 'plan'; 409 home_assistant_already_linked is 'already_linked' with the client_id the problem names; 401, 423, and 403 'Insufficient scopes' are 'auth'; every other refusal is 'error'. Each carries the api-errors fields status, code and detail. delete sends DELETE /v1/clients/{id} with If-Match: the etag given, or the etag a GET of the client answers when none is given; a 412 reads the etag again and retries once; a 404, on the GET or the DELETE, means already deleted. requests lists what the SDK sent, in order, as 'METHOD path' with ' If-Match=<etag>' when set.",
  "source": "thalovant-api app/routes/clients.py (create, get, delete), app/schemas/clients.py; the Home Assistant contract v1 (409 home_assistant_already_linked)",
  "message_excludes": [
   "synthetic-hub-password",
@@ -148,6 +148,96 @@
     "status": 422,
     "code": "schema_validation_failed",
     "detail": "Schema validation failed: 'home_assistant' is not one of ['voice_satellite', 'web_chat', 'developer', 'embedded'] at spec.connection_type",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a validation error located at the kind",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 422,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"RequestValidationError\",\"status\":422,\"detail\":\"Request validation failed\",\"errors\":[{\"type\":\"literal_error\",\"loc\":[\"body\",\"spec\",\"connection_type\"],\"msg\":\"Input should be 'voice_satellite', 'web_chat', 'developer' or 'embedded'\",\"input\":\"home_assistant\"}]}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "unsupported",
+    "status": 422,
+    "code": null,
+    "detail": "Request validation failed",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "an unrelated 422 that echoes the kind in its input is an ordinary error",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 422,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"RequestValidationError\",\"status\":422,\"detail\":\"Request validation failed\",\"errors\":[{\"type\":\"missing\",\"loc\":[\"body\",\"spec\",\"siteId\"],\"msg\":\"Field required\",\"input\":{\"version\":\"1\",\"connection_type\":\"home_assistant\"}}]}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "error",
+    "status": 422,
+    "code": null,
+    "detail": "Request validation failed",
     "requests": [
      "POST /v1/clients"
     ]

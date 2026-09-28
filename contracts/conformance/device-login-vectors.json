@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "Device sign-in (RFC 8628) one step at a time, for a caller that runs its own loop -- a Home Assistant config flow shows the code, then polls on its own schedule. begin sends POST /v1/auth/device/authorize with the scopes and client name given and exposes user_code, verification_uri, verification_uri_complete (null when absent), interval (seconds) and expires_in; a verification URL that is not http(s), has no host, or carries credentials is an error. poll sends one POST /v1/auth/device/token {device_code}: 400 authorization_pending is 'pending' with the interval to wait; 400 slow_down is 'pending' with the interval five seconds longer, and the lengthening sticks for later polls of the same code; 400 expired_token is 'expired'; 400 access_denied is 'denied'; 2xx is 'approved' with the token's type, scopes, expires_at and token_id, and the SDK keeps the token (and its id) for later calls; a 2xx without an access_token, and any other failure, is 'error', the latter carrying the api-errors fields. revoke sends DELETE /v1/auth/api-tokens/{token_id} for the token the SDK signed in with; a token may always revoke itself. The device code and the access token never appear in an error message.",
+ "description": "Device sign-in (RFC 8628) one step at a time, for a caller that runs its own loop -- a Home Assistant config flow shows the code, then polls on its own schedule. begin sends POST /v1/auth/device/authorize with the scopes and client name given and exposes user_code, verification_uri, verification_uri_complete (null when absent), interval (seconds) and expires_in; a verification URL that is not http(s), has no host, or carries credentials is an error. poll sends one POST /v1/auth/device/token {device_code}: 400 authorization_pending is 'pending' with the interval to wait; 400 slow_down is 'pending' with the interval five seconds longer, and the lengthening sticks for later polls of the same code; 400 expired_token is 'expired'; 400 access_denied is 'denied'; 2xx is 'approved' with the token's type, scopes, expires_at and token_id, and the SDK keeps the token (and its id) for later calls; a 2xx without an access_token, and any other failure, is 'error', the latter carrying the api-errors fields. revoke sends DELETE /v1/auth/api-tokens/{token_id} for the token the SDK signed in with; a token may always revoke itself. Revoking the token in use is idempotent: a token already revoked (or expired) cannot authenticate its own revoke, so a 401 there is 'revoked' too, and either way the SDK forgets the token and its id. The device code and the access token never appear in an error message.",
  "source": "thalovant-api app/routes/auth_device.py (authorize, token), app/routes/auth_local.py revoke_api_token; RFC 8628 §3.4-3.5",
  "home_assistant_scopes": [
   "hubs:read",
@@ -425,6 +425,49 @@
       "status": 204,
       "content_type": "application/json",
       "body": ""
+     }
+    }
+   ],
+   "expect": [
+    {
+     "outcome": "revoked"
+    }
+   ]
+  },
+  {
+   "name": "a token already revoked cannot authenticate its own revoke, and that is revoked too",
+   "call": {
+    "op": "revoke",
+    "authorization": {
+     "device_code": "dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24",
+     "interval": 5
+    }
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/auth/device/token",
+      "json": {
+       "device_code": "dc-5f0c2d4e8a614c1f9d2b3e7a9c0b1f24"
+      }
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"access_token\":\"tvt_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:read\",\"clients:write\"],\"expires_at\":\"2027-09-27T10:00:00Z\",\"token_id\":\"7b0e1c52-9a0d-4f64-9d0e-3f1a2b4c5d6e\"}"
+     }
+    },
+    {
+     "request": {
+      "method": "DELETE",
+      "path": "/v1/auth/api-tokens/7b0e1c52-9a0d-4f64-9d0e-3f1a2b4c5d6e",
+      "authorization": "Bearer tvt_synthetic_device_token_do_not_log"
+     },
+     "response": {
+      "status": 401,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":401,\"detail\":\"Could not validate credentials\"}"
      }
     }
    ],

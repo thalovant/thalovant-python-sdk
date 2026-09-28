@@ -538,6 +538,9 @@ class AsyncThalovantControlPlane:
         #: The id of the API token in ``access_token``, when the SDK minted it
         #: (a device login); what :meth:`revoke_api_token` revokes by default.
         self.token_id: str | None = None
+        # Whether the token this client signed in with has been revoked and
+        # forgotten, so that revoking it again is the no-op it should be.
+        self._revoked_own = False
         self.timeout = timeout
         self.user_agent = user_agent
         self.session = session
@@ -579,11 +582,10 @@ class AsyncThalovantControlPlane:
         if recovery_code:
             payload["recovery_code"] = recovery_code
         token = await self._request("POST", "/v1/auth/token", json=payload, auth=False)
-        access_token = token.get("access_token")
-        if not isinstance(access_token, str) or not access_token:
-            raise ThalovantAPIError("Thalovant API token response did not include access_token.")
-        self.access_token = access_token
-        return token
+        # A password sign-in answers with a session token, which has no
+        # token_id: the id of an API token signed in with earlier must not
+        # outlive it, or a later revoke_api_token() revokes that one.
+        return self._accept_token(token)
 
     def _require_secure_token_exchange(self) -> None:
         """Refuse to put an authorization code and its verifier on the wire in
@@ -639,11 +641,7 @@ class AsyncThalovantControlPlane:
             "redirect_uri": redirect_uri,
         }
         token = await self._request("POST", "/v1/auth/native/token", json=payload, auth=False)
-        access_token = token.get("access_token")
-        if not isinstance(access_token, str) or not access_token:
-            raise ThalovantAPIError("Thalovant API token response did not include access_token.")
-        self.access_token = access_token
-        return token
+        return self._accept_token(token)
 
     async def login_with_browser(
         self,
@@ -761,12 +759,19 @@ class AsyncThalovantControlPlane:
         raise _api_error(response)
 
     def _accept_token(self, token: dict[str, Any]) -> dict[str, Any]:
+        """Keep a sign-in's token, and the id it came with or none.
+
+        Every sign-in sets both from its own answer, so ``token_id`` always
+        names the token in ``access_token`` -- or nothing, for a session
+        token -- and never one signed in with before.
+        """
         access_token = token.get("access_token")
         if not isinstance(access_token, str) or not access_token:
             raise ThalovantAPIError("Thalovant API token response did not include access_token.")
         self.access_token = access_token
         token_id = token.get("token_id")
         self.token_id = str(token_id) if isinstance(token_id, str) and token_id else None
+        self._revoked_own = False
         return token
 
     async def begin_device_login(
@@ -817,19 +822,33 @@ class AsyncThalovantControlPlane:
 
         A token may always revoke itself (``DELETE /v1/auth/api-tokens/{id}``),
         whatever its scopes. Revoking the token in use forgets it here too, so
-        a later call fails locally rather than with a 401. A token already
-        revoked is not an error.
+        a later call fails locally rather than with a 401.
+
+        Revoking the token in use is idempotent. A token already revoked, or
+        expired, cannot authenticate its own revoke, so the API answers 401;
+        the token is dead either way, so that counts as revoked and the token
+        is forgotten; revoking it again then sends nothing and succeeds, until
+        the next sign-in. Revoking another token by id is not: the API's own
+        answer -- 404 for one it does not know -- is raised as usual.
         """
 
         target = token_id or self.token_id
         if not target:
+            if self._revoked_own and self.access_token is None:
+                return  # already revoked and forgotten: revoking again changes nothing
             raise ThalovantAPIError(
                 "No API token id to revoke: pass token_id, or sign in with a device login first."
             )
-        await self._request("DELETE", f"/v1/auth/api-tokens/{quote(target, safe='')}")
-        if target == self.token_id:
+        own = target == self.token_id
+        try:
+            await self._request("DELETE", f"/v1/auth/api-tokens/{quote(target, safe='')}")
+        except ThalovantAuthError as error:
+            if not (own and error.status_code == 401):
+                raise
+        if own:
             self.access_token = None
             self.token_id = None
+            self._revoked_own = True
 
     async def get_profile(self) -> dict[str, Any]:
         """The signed-in account: ``id``, ``email``, ``display_name``, ``role``.
@@ -1939,17 +1958,29 @@ class AsyncThalovantControlPlane:
         ``links.self`` path. A ``failed`` or ``timed_out`` operation raises
         :class:`ThalovantAPIError` with the operation's own error; ``timeout``
         seconds without either raise :class:`ThalovantTimeoutError`. A 5xx while
-        polling is ridden out.
+        polling is ridden out, and so is a 429 -- a Free plan allows 60 requests
+        a minute, and a wait must not end over one of them -- after the
+        ``retry_after_seconds`` the API names, never past ``timeout``.
         """
 
         operation_id = _operation_id(operation)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
+            wait = poll_interval
             try:
                 current = await self.get_operation(operation_id)
             except ThalovantAPIError as error:
-                if error.status_code is None or error.status_code < 500:
+                if error.status_code == 429:
+                    wait = max(poll_interval, _retry_after_seconds(error.problem) or 0.0)
+                    if wait > deadline - loop.time():
+                        # The API asks for longer than is left: waiting it out
+                        # would only end in the same timeout, later.
+                        raise ThalovantTimeoutError(
+                            f"Operation {operation_id} did not finish within {timeout:g}s "
+                            "(the API asked to slow down)."
+                        ) from None
+                elif error.status_code is None or error.status_code < 500:
                     raise
                 current = None
             if current is not None:
@@ -1967,7 +1998,7 @@ class AsyncThalovantControlPlane:
                 raise ThalovantTimeoutError(
                     f"Operation {operation_id} did not finish within {timeout:g}s."
                 )
-            await asyncio.sleep(min(poll_interval, remaining))
+            await asyncio.sleep(min(wait, remaining))
 
     async def wait_for_admission(
         self,
@@ -2451,8 +2482,14 @@ class ThalovantControlPlane:
 
         A token may always revoke itself (``DELETE /v1/auth/api-tokens/{id}``),
         whatever its scopes. Revoking the token in use forgets it here too, so
-        a later call fails locally rather than with a 401. A token already
-        revoked is not an error.
+        a later call fails locally rather than with a 401.
+
+        Revoking the token in use is idempotent. A token already revoked, or
+        expired, cannot authenticate its own revoke, so the API answers 401;
+        the token is dead either way, so that counts as revoked and the token
+        is forgotten; revoking it again then sends nothing and succeeds, until
+        the next sign-in. Revoking another token by id is not: the API's own
+        answer -- 404 for one it does not know -- is raised as usual.
         """
         return self._run(self._core.revoke_api_token(token_id))
 
@@ -3118,7 +3155,9 @@ class ThalovantControlPlane:
         ``links.self`` path. A ``failed`` or ``timed_out`` operation raises
         :class:`ThalovantAPIError` with the operation's own error; ``timeout``
         seconds without either raise :class:`ThalovantTimeoutError`. A 5xx while
-        polling is ridden out.
+        polling is ridden out, and so is a 429 -- a Free plan allows 60 requests
+        a minute, and a wait must not end over one of them -- after the
+        ``retry_after_seconds`` the API names, never past ``timeout``.
         """
         return self._run(self._core.wait_for_operation(operation, timeout=timeout, poll_interval=poll_interval))
 
@@ -3402,11 +3441,49 @@ def _linked_client_id(problem: Mapping[str, Any] | None) -> str | None:
 
 
 def _refuses_connection_type(error: ThalovantAPIError) -> bool:
-    """A 422 whose problem is about ``connection_type``."""
+    """A 422 whose problem is about ``connection_type``.
+
+    Read from the problem's ``detail`` and ``code``, and from each validation
+    error's ``loc`` and ``msg`` -- never from the rest of the body. A
+    validation error echoes what was sent as ``input``, and the request
+    always carries ``spec.connection_type``, so a 422 about any other field
+    would otherwise read as "this kind is not supported".
+    """
     if error.status_code != 422:
         return False
-    text = json_dumps(error.problem) if error.problem is not None else str(error)
-    return "connection_type" in text or "connectionType" in text
+    said: list[str] = [text for text in (error.detail, error.code) if isinstance(text, str)]
+    problem = error.problem or {}
+    for key in ("errors", "detail"):
+        entries = problem.get(key)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            location = entry.get("loc")
+            if isinstance(location, (list, tuple)):
+                said.append(".".join(str(part) for part in location))
+            elif isinstance(location, str):
+                said.append(location)
+            if isinstance(entry.get("msg"), str):
+                said.append(entry["msg"])
+    return any("connection_type" in text or "connectionType" in text for text in said)
+
+
+def _retry_after_seconds(problem: Mapping[str, Any] | None) -> float | None:
+    """The ``retry_after_seconds`` of a 429, at the top of the problem or in a detail object.
+
+    The API sends it inside ``detail`` (its 429s are FastAPI's envelope around
+    a structured refusal), as the ``api-errors`` contract reads ``code``.
+    """
+    if not isinstance(problem, Mapping):
+        return None
+    nested = problem.get("detail")
+    for source in (problem, nested if isinstance(nested, Mapping) else {}):
+        value = source.get("retry_after_seconds")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+            return float(value)
+    return None
 
 
 def json_dumps(value: Any) -> str:
