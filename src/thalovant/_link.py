@@ -277,7 +277,16 @@ class SyncLink:
 
         def register() -> None:
             self._call(add, channel, name, entry.target)
-            if entry.discarded:
+            # Settled here, on the registering thread and under the lock that
+            # _take() holds: a retirement either finds the registration still
+            # in flight and leaves it to this thread, or finds it landed and
+            # takes it off itself. Settling it later, back on the loop, left a
+            # window in which neither did, and the handler stayed on the
+            # transport.
+            with self._lock:
+                entry.pending = False
+                retired = entry.discarded
+            if retired:
                 # Retired while the registration was in flight: take it back
                 # off on the same thread, the moment there is something to
                 # take off.
@@ -287,9 +296,17 @@ class SyncLink:
         try:
             await in_thread(register)
         except BaseException:
+            # The registration failed, or the wait for it was cancelled while
+            # it runs on. Either way it must not stay: one still in flight is
+            # taken off when it lands, one that has landed is taken off now.
+            with self._lock:
+                landed = not entry.pending
+                entry.discarded = True
             self._forget(channel, name, handler, entry)
+            if landed:
+                with contextlib.suppress(Exception):
+                    self._call(remove, channel, name, entry.target)
             raise
-        entry.pending = False
         if entry.discarded:
             self._forget(channel, name, handler, entry)
 

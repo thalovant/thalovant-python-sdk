@@ -35,6 +35,19 @@ def hub():
     running.close()
 
 
+def _hub_holds_a_session(hub, timeout=10.0):
+    """Wait until the hub has filed the client's session.
+
+    ``connect()`` returns once the client has sent its encrypted HELLO; the
+    hub files the session when it has read it, which on a slow machine is
+    later. A drop before then drops nothing.
+    """
+    deadline = time.monotonic() + timeout
+    while not hub.hub.sessions:
+        assert time.monotonic() < deadline, "the hub never filed the session"
+        time.sleep(0.01)
+
+
 def _client(hub, tmp_path, record=None, **kwargs):
     record = record or hub.hub.register()
     kwargs.setdefault("reply_settle_seconds", 0.05)
@@ -217,8 +230,9 @@ def test_a_listener_gets_its_link_back_after_the_hub_drops_it(hub, tmp_path, mon
     try:
         client.connect()
         client.on("hub.says", lambda event: (seen.append(event.data["word"]), got.set()))
+        _hub_holds_a_session(hub)
         hub.call(hub.hub.drop_all)
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 15
         while not got.is_set():
             assert time.monotonic() < deadline, "the link never came back"
             if hub.hub.attempts >= 2 and hub.hub.sessions:
@@ -234,6 +248,7 @@ def test_close_stops_the_redial(hub, tmp_path, monkeypatch):
     monkeypatch.setattr(client_module, "_REDIAL_FIRST_SECONDS", 0.1)
     client = _client(hub, tmp_path)
     client.connect()
+    _hub_holds_a_session(hub)
     hub.call(hub.hub.drop_all)
     client.close()
     time.sleep(0.5)
@@ -245,7 +260,12 @@ def test_without_auto_reconnect_a_dropped_link_stays_down(hub, tmp_path, monkeyp
     client = _client(hub, tmp_path, auto_reconnect=False)
     try:
         client.connect()
+        _hub_holds_a_session(hub)
         hub.call(hub.hub.drop_all)
+        deadline = time.monotonic() + 10
+        while alive(client):
+            assert time.monotonic() < deadline, "the drop was never noticed"
+            time.sleep(0.01)
         time.sleep(0.5)
         assert hub.hub.attempts == 1
         assert not alive(client)

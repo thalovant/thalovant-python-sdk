@@ -178,6 +178,7 @@ def test_home_requests_are_answered_back_along_their_route_over_the_callers_sess
             stop = answer_home_requests(session, handler)
             try:
                 await session.connect()
+                await _eventually(lambda: hub.sessions)
                 hub_session = hub.sessions[0]
                 await hub_session.send_bus(
                     "thalovant.home.request",
@@ -211,7 +212,7 @@ def test_subscriptions_follow_every_client_the_session_builds(tmp_path):
         unsubscribe = session.on("hub.says", lambda event: seen.append(event.data["word"]))
         runner = asyncio.ensure_future(session.run())
         try:
-            await _eventually(lambda: session.connected)
+            await _eventually(lambda: session.connected and hub.sessions)
             await hub.sessions[0].send_bus("hub.says", {"word": "one"})
             await _eventually(lambda: seen == ["one"])
             await hub.drop_all()

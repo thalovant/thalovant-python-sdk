@@ -737,7 +737,7 @@
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
       "src/thalovant/_hive.py": "b6fac803a997c15a81fc77f2226bd6c99340380cbfecffa5d154483862f81a7f",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
-      "src/thalovant/_link.py": "798334fd802dc50084922e452c5dadc909b3712609ca7f06a8fc4a3c62fbcb14",
+      "src/thalovant/_link.py": "1b483dfca852f73d1e1797cfc6f82bc9596952f2efe6dd865377026fbc902470",
       "src/thalovant/_loop.py": "a722d2618063286781cc5b44fbd5240c8d043fef862c52189ec36da54f2d19d2",
       "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
       "src/thalovant/_noise_runtime.py": "e6c30541ce66dfa09ae2d75badde63c6fd1b6280b126121bfa75277ff07027ec",
@@ -799,7 +799,7 @@
     "76bc1eb9957da5a6fdf03e89f3905f8d37d3ef2fe7c841ba751718105ca30a45",
     "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16",
     "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d",
-    "7e9b9791ee36f77ebb4c02a909ba8fc53d24c6a9f560ed0ee8318c85f7ed3f6a"
+    "b16579bd501d18147e6b74b02d67d98ce6aeb850f369de2138fbdfb598469b7c"
   ],
   "schema_version": 1
 }
