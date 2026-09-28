@@ -323,4 +323,11 @@ class ThalovantAdmissionTimeoutError(ThalovantConnectionError, ThalovantTimeoutE
 
 
 class ThalovantAdmissionFailedError(ThalovantConnectionError):
-    """Raised when the operation that admits a new connection failed or timed out."""
+    """Raised when the operation that admits a new connection failed or timed out.
+
+    ``error_code`` is the operation's own code, when it had one.
+    """
+
+    def __init__(self, *args: object, error_code: str | None = None) -> None:
+        super().__init__(*args)
+        self.error_code = error_code

@@ -15,10 +15,22 @@ from .inventory import (
     sort_key,
     strip_affix,
 )
-from .session import HubSession, HubSessionPolicy, OriginPreference, hub_hostname, preferred_origin
+from .session import (
+    AsyncHubSession,
+    HubSession,
+    HubSessionPolicy,
+    OriginPreference,
+    hub_hostname,
+    preferred_origin,
+)
 from .control import (
+    ApiToken,
+    AsyncThalovantControlPlane,
     BootstrapIdentityResult,
+    CONNECTION_TYPE_HOME_ASSISTANT,
     DEFAULT_CONTROL_API_URL,
+    DeviceAuthorization,
+    HOME_ASSISTANT_SCOPES,
     HubSkill,
     HubSkillList,
     HubSkillOperation,
@@ -40,9 +52,19 @@ from .native_auth import (
 from .context import build_client_context, build_location, request_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
+    ThalovantAdmissionFailedError,
+    ThalovantAdmissionTimeoutError,
+    ThalovantAlreadyLinkedError,
     ThalovantAPIError,
+    ThalovantAuthError,
     ThalovantConnectionError,
+    ThalovantDeviceLoginDenied,
+    ThalovantDeviceLoginExpired,
+    ThalovantDeviceLoginPending,
     ThalovantError,
+    ThalovantHubRefusedError,
+    ThalovantPlanError,
+    ThalovantUnsupportedConnectionTypeError,
     ThalovantIdentityError,
     ThalovantPolicyDeniedError,
     ThalovantQuota,
@@ -100,11 +122,39 @@ from .protocols import (
     SelectedHubEndpoint,
     select_data_plane_endpoint,
 )
+from .home import (
+    HOME_REQUEST,
+    HOME_RESPONSE,
+    HomeAnswer,
+    HomeRequest,
+    answer_home_requests,
+)
 from .rich import ThalovantDisplayItem, strip_ssml
 from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
 __all__ = [
+    "ApiToken",
+    "AsyncHubSession",
+    "AsyncThalovantControlPlane",
+    "CONNECTION_TYPE_HOME_ASSISTANT",
+    "DeviceAuthorization",
+    "HOME_ASSISTANT_SCOPES",
+    "HOME_REQUEST",
+    "HOME_RESPONSE",
+    "HomeAnswer",
+    "HomeRequest",
+    "ThalovantAdmissionFailedError",
+    "ThalovantAdmissionTimeoutError",
+    "ThalovantAlreadyLinkedError",
+    "ThalovantAuthError",
+    "ThalovantDeviceLoginDenied",
+    "ThalovantDeviceLoginExpired",
+    "ThalovantDeviceLoginPending",
+    "ThalovantHubRefusedError",
+    "ThalovantPlanError",
+    "ThalovantUnsupportedConnectionTypeError",
+    "answer_home_requests",
     "hub_display_name",
     "DEFAULT_NATIVE_SCOPES",
     "NativeSignIn",

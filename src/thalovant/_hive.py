@@ -157,6 +157,11 @@ class AsyncHiveMindTransport:
         self.stopped.set()
         #: The loop this transport runs on, once it has run on one.
         self.owner_loop: asyncio.AbstractEventLoop | None = None
+        #: Whether the hub closed the last session the way it refuses
+        #: credentials (no status, 1000, 1005, 1008). A hub that does not know
+        #: a client's static key says so only by closing right after the
+        #: handshake, so a caller that just connected can tell it from a drop.
+        self.closed_refused = False
 
     # -- identity of the connection -------------------------------------------
 
@@ -467,6 +472,7 @@ class AsyncHiveMindTransport:
             self.session_id = self._new_session_id()
             self._protocol.hello = hello_message(self.session_id, self.identity.site_id)
             self._protocol.reset()
+            self.closed_refused = False
             await self._handshake(carrier, generation)
             self._check(generation)
             self._connecting = False
@@ -539,6 +545,7 @@ class AsyncHiveMindTransport:
                 try:
                     raw = await carrier.receive(None, handshake=False)
                 except _Closed as closed:
+                    self.closed_refused = closed.refused
                     error = ThalovantConnectionError(
                         f"HiveMind {self.carrier_name} connection closed ({closed.code})."
                     )

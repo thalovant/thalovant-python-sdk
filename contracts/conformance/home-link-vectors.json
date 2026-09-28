@@ -1,0 +1,230 @@
+{
+ "schema_version": 1,
+ "description": "The Home Assistant link on the data plane. A hub skill sends thalovant.home.request {request_id, utterance, lang, conversation_id?}; the SDK answers every one with thalovant.home.response {request_id, speech, response_type, error_code?, continue_conversation, conversation_id?}, sent as a reply (OVOS-MSG-1 §5.2): the request's context, deep-copied, with destination set to the request's source and source to the request's destination (its first entry when a list), read from the context as the hub sent it. response_type is action_done, query_answer or error; error_code, only with error, is one of no_intent_match, no_valid_targets, failed_to_handle, unknown, timeout, agent_unavailable. speech is plain text: markup is removed, entities decoded and whitespace collapsed. The reply always goes out, within the hub's 10 s: a handler that raises is failed_to_handle, one that does not answer within timeout_seconds is timeout, one that answers with an unknown response_type or error_code is unknown -- each with speech \"\" unless the handler had some, since the hub speaks its own sentence for the code in the device's language. A request without a request_id is answered with request_id \"\". conversation_id is echoed when the handler gives none. 'reply_context' cases check the routing alone.",
+ "source": "Home Assistant contract v1 (Wire messages); OVOS-MSG-1 §5.2; ovos-bus-client Message.reply",
+ "request_type": "thalovant.home.request",
+ "response_type": "thalovant.home.response",
+ "reply_timeout_seconds": 10,
+ "response_types": [
+  "action_done",
+  "query_answer",
+  "error"
+ ],
+ "error_codes": [
+  "no_intent_match",
+  "no_valid_targets",
+  "failed_to_handle",
+  "unknown",
+  "timeout",
+  "agent_unavailable"
+ ],
+ "cases": [
+  {
+   "name": "the route turns round",
+   "kind": "reply_context",
+   "context": {
+    "source": "thalovant-skill-home",
+    "destination": [
+     "ha-peer",
+     "other"
+    ],
+    "session": {
+     "session_id": "kitchen"
+    },
+    "request_id": "r1"
+   },
+   "expect": {
+    "source": "ha-peer",
+    "destination": "thalovant-skill-home",
+    "session": {
+     "session_id": "kitchen"
+    },
+    "request_id": "r1"
+   }
+  },
+  {
+   "name": "a destination that is one peer",
+   "kind": "reply_context",
+   "context": {
+    "source": "skills",
+    "destination": "ha-peer"
+   },
+   "expect": {
+    "source": "ha-peer",
+    "destination": "skills"
+   }
+  },
+  {
+   "name": "no routing at all stays none",
+   "kind": "reply_context",
+   "context": {
+    "session": {
+     "session_id": "s"
+    }
+   },
+   "expect": {
+    "session": {
+     "session_id": "s"
+    }
+   }
+  },
+  {
+   "name": "an action done",
+   "kind": "answer",
+   "request": {
+    "request_id": "r1",
+    "utterance": "turn off the kitchen light",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "Turned off the kitchen light.",
+    "response_type": "action_done"
+   },
+   "expect": {
+    "request_id": "r1",
+    "speech": "Turned off the kitchen light.",
+    "response_type": "action_done",
+    "continue_conversation": false
+   }
+  },
+  {
+   "name": "a question answered, the conversation kept",
+   "kind": "answer",
+   "request": {
+    "request_id": "r2",
+    "utterance": "is the garage open",
+    "lang": "fr-FR",
+    "conversation_id": "conv-7"
+   },
+   "handler": {
+    "speech": "Oui, la porte du garage est ouverte.",
+    "response_type": "query_answer",
+    "continue_conversation": true
+   },
+   "expect": {
+    "request_id": "r2",
+    "speech": "Oui, la porte du garage est ouverte.",
+    "response_type": "query_answer",
+    "continue_conversation": true,
+    "conversation_id": "conv-7"
+   }
+  },
+  {
+   "name": "Assist's own error speech goes through",
+   "kind": "answer",
+   "request": {
+    "request_id": "r3",
+    "utterance": "turn on the moon",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "Sorry, I couldn't understand that",
+    "response_type": "error",
+    "error_code": "no_intent_match"
+   },
+   "expect": {
+    "request_id": "r3",
+    "speech": "Sorry, I couldn't understand that",
+    "response_type": "error",
+    "error_code": "no_intent_match",
+    "continue_conversation": false
+   }
+  },
+  {
+   "name": "markup is not speech",
+   "kind": "answer",
+   "request": {
+    "request_id": "r4",
+    "utterance": "what is the temperature",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "<speak>It is <say-as interpret-as=\"cardinal\">21</say-as>&nbsp;degrees\n  &amp; rising.</speak>",
+    "response_type": "query_answer"
+   },
+   "expect": {
+    "request_id": "r4",
+    "speech": "It is 21 degrees & rising.",
+    "response_type": "query_answer",
+    "continue_conversation": false
+   }
+  },
+  {
+   "name": "a handler that fails still gets an answer",
+   "kind": "answer",
+   "request": {
+    "request_id": "r5",
+    "utterance": "lock the door",
+    "lang": "en-US"
+   },
+   "handler": {
+    "raises": true
+   },
+   "expect": {
+    "request_id": "r5",
+    "speech": "",
+    "response_type": "error",
+    "error_code": "failed_to_handle",
+    "continue_conversation": false
+   }
+  },
+  {
+   "name": "a handler too slow is a timeout",
+   "kind": "answer",
+   "timeout_seconds": 0.05,
+   "request": {
+    "request_id": "r6",
+    "utterance": "open the blinds",
+    "lang": "en-US"
+   },
+   "handler": {
+    "sleep_seconds": 1
+   },
+   "expect": {
+    "request_id": "r6",
+    "speech": "",
+    "response_type": "error",
+    "error_code": "timeout",
+    "continue_conversation": false
+   }
+  },
+  {
+   "name": "an answer outside the contract is unknown",
+   "kind": "answer",
+   "request": {
+    "request_id": "r7",
+    "utterance": "dim the lights",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "Done.",
+    "response_type": "partial"
+   },
+   "expect": {
+    "request_id": "r7",
+    "speech": "Done.",
+    "response_type": "error",
+    "error_code": "unknown",
+    "continue_conversation": false
+   }
+  },
+  {
+   "name": "a request without an id",
+   "kind": "answer",
+   "request": {
+    "utterance": "turn off the fan",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "Turned off the fan.",
+    "response_type": "action_done"
+   },
+   "expect": {
+    "request_id": "",
+    "speech": "Turned off the fan.",
+    "response_type": "action_done",
+    "continue_conversation": false
+   }
+  }
+ ]
+}

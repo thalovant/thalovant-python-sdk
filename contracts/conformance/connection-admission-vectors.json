@@ -1,0 +1,395 @@
+{
+ "schema_version": 1,
+ "description": "Waiting for a hub to admit a new connection: about ninety seconds while the platform carries the client to its hub. The wait follows the operation the create answered with, polling GET /v1/operations/{id} (its links.self) every poll_interval_seconds. 'ready' is 'admitted'; 'failed' and 'timed_out' are 'failed', with the operation's error_code; requested, committed and applied keep polling. No operation at all, and a 404 (the API no longer tracks it), are 'admitted' at once. A 5xx is ridden out. When timeout_seconds pass first the outcome is 'timeout', which is a connection error and a timeout at once: the connection may still be admitted later. A links.self on another origin than the API's is 'error' and is never fetched: the token goes nowhere else. polls counts the GETs sent.",
+ "source": "thalovant-api app/routes/clients.py _accept_client_sync_operation, app/routes/operations.py, app/services/operation_convergence.py (#358)",
+ "cases": [
+  {
+   "name": "no operation, nothing to wait for",
+   "call": {
+    "op": "wait",
+    "operation": null,
+    "timeout_seconds": 2,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 0
+   }
+  },
+  {
+   "name": "through every stage to ready",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 5,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"requested\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"committed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"applied\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 4
+   }
+  },
+  {
+   "name": "a failed operation",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 5,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"committed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"failed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":\"gitops_push_rejected\",\"error_message\":\"The hub repository refused the change.\",\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "failed",
+    "error_code": "gitops_push_rejected",
+    "polls": 2
+   }
+  },
+  {
+   "name": "an operation the platform gave up on",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 5,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"timed_out\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":\"convergence_timeout\",\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "failed",
+    "error_code": "convergence_timeout",
+    "polls": 1
+   }
+  },
+  {
+   "name": "an operation no longer tracked",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 5,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 404,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":404,\"detail\":\"Operation not found\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 1
+   }
+  },
+  {
+   "name": "a 503 is ridden out",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 5,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 503,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":503,\"detail\":\"Service unavailable\"}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 2
+   }
+  },
+  {
+   "name": "still committed when the wait runs out",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 0.2,
+    "poll_interval_seconds": 0.02
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"committed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     },
+     "repeat": true
+    }
+   ],
+   "expect": {
+    "outcome": "timeout"
+   }
+  },
+  {
+   "name": "a link to another origin is never fetched",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "https://collector.example.invalid/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_seconds": 1,
+    "poll_interval_seconds": 0.01
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "error",
+    "polls": 0
+   }
+  }
+ ]
+}

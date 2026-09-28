@@ -21,7 +21,7 @@ from typing import Any
 
 import aiohttp
 
-__all__ = ["client_ssl", "new_session"]
+__all__ = ["client_ssl", "new_session", "proxy_for"]
 
 
 @lru_cache(maxsize=4)
@@ -65,3 +65,26 @@ def new_session(**kwargs: Any) -> aiohttp.ClientSession:
         ssl=client_ssl(),
     )
     return aiohttp.ClientSession(connector=connector, **kwargs)
+
+
+def proxy_for(url: str) -> str | None:
+    """The proxy the environment names for *url*, the way requests found it.
+
+    ``HTTPS_PROXY``, ``HTTP_PROXY``, ``ALL_PROXY`` and ``NO_PROXY``; a
+    WebSocket follows its HTTP scheme. Credentials in ``.netrc`` are never
+    read, unlike aiohttp's own ``trust_env``.
+    """
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(url)
+    scheme = {"wss": "https", "ws": "http"}.get(parsed.scheme, parsed.scheme)
+    proxies = urllib.request.getproxies_environment()
+    if not proxies:
+        return None
+    try:
+        if urllib.request.proxy_bypass_environment(parsed.hostname or "", proxies):
+            return None
+    except Exception:  # noqa: BLE001 - a malformed NO_PROXY is no reason to fail
+        pass
+    return proxies.get(scheme) or proxies.get("all") or None
