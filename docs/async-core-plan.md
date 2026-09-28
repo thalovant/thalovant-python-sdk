@@ -243,9 +243,9 @@ L0  _noise.py  _wire.py  _noise_store.py  _language.py  _yaml.py      pure code,
 
 ## Dependencies
 
-- **Core:** `aiohttp>=3.11`. `cryptography` keeps today's markers: the
-  `>=50.0.0` security floor, and the Intel-Mac `>=48.0.1,<49` pin, which exists
-  because no x86_64 macOS wheel ships after 48.0.1.
+- **Core:** `aiohttp>=3.11` and `cryptography>=48.0.1`, keeping the Intel-Mac
+  `<49` bound, which exists because no x86_64 macOS wheel ships after 48.0.1.
+  (The plan kept 0.8.7's `>=50.0.0` floor; see the deviations below.)
 - **Extras:**
   - `mqtt`: paho-mqtt
   - `yaml`: PyYAML
@@ -261,7 +261,8 @@ L0  _noise.py  _wire.py  _noise_store.py  _language.py  _yaml.py      pure code,
   - paho-mqtt
   - PyYAML
 - **Check:** `uv pip compile` against Home Assistant's `package_constraints.txt`
-  (Python 3.14, `aiohttp==3.14.3`, `cryptography==50.0.1`).
+  on Python 3.14, x86_64 and aarch64: both the current stable tag (2026.9.4:
+  `aiohttp==3.14.3`, `cryptography==48.0.1`) and dev (`cryptography==50.0.1`).
 
 ## Compatibility risks and what answers each
 
@@ -387,3 +388,13 @@ embedded-c and mcp.
   over HTTPS and MQTT; over WSS, hivemind-bus-client offered to binarize.
   Either way the hub answers `JSON-HEX`, and the binary decoder is there for
   any hub that binarizes.
+- **The cryptography floor is 48.0.1, not 50.0.0.** The first check resolved
+  against Home Assistant's dev constraints only. The stable release, 2026.9,
+  pins `cryptography==48.0.1`, which the 50.0.0 floor refused. That floor
+  existed for GHSA-g6cj-pr64-35w5, a PKCS#7 EnvelopedData decryption bug, and
+  the SDK never calls PKCS#7. The 3.10 CI job runs the suite at the new floor.
+- **`ThalovantAPIUnreachableError`.** Home Assistant asked to tell an API
+  that is out of reach from one that refused. The class is both a
+  `ThalovantAPIError` and a `ThalovantConnectionError`. It is Python-only for
+  now: no vector covers a request that never got an answer, so the other SDKs
+  owe nothing yet.

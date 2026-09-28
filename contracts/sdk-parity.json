@@ -717,7 +717,7 @@
       "dependencies": [
         "aiohttp>=3.11",
         "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-        "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'"
+        "cryptography>=48.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'"
       ],
       "extras": {
         "listing": [
@@ -733,7 +733,7 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "2c8c87e9b0096e65e5c6cccc4a4eb962c4b93ec8a07872773236580f847edc27",
+      "src/thalovant/__init__.py": "dfc535835ba2e441523c92504bd0e1273ceaac6a0bc7326ddd3f01d016fc070e",
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
       "src/thalovant/_hive.py": "b6fac803a997c15a81fc77f2226bd6c99340380cbfecffa5d154483862f81a7f",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
@@ -747,9 +747,9 @@
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "7a1cca78992cd69db9de4a0e1b55e28328959b7ed35359a5fff7079c59a0cde5",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "9c18f6bbf3aced0f06300a4182d15633095bc1ce6a05688b7e0125a80b9bfed9",
+      "src/thalovant/control.py": "249b5bdf88d6155dbef52501ed2660f4823bce60ad83036990e149fbcd2adb8c",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "9f26f5bcd0f89c6cff6d11c5c5f8e8363c70e5857f5cec0bf502a83c2883e179",
+      "src/thalovant/errors.py": "a2d4b447e7da3bb1ee469c34e2d8a96d2d64a5609b7423f55732f44dffbc44c6",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
       "src/thalovant/home.py": "0fdd135843bab34ddccbd0d8bc1387a72a29a25512b86cbe143dbf9fb91f6274",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
@@ -799,7 +799,8 @@
     "76bc1eb9957da5a6fdf03e89f3905f8d37d3ef2fe7c841ba751718105ca30a45",
     "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16",
     "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d",
-    "b16579bd501d18147e6b74b02d67d98ce6aeb850f369de2138fbdfb598469b7c"
+    "b16579bd501d18147e6b74b02d67d98ce6aeb850f369de2138fbdfb598469b7c",
+    "f859eae591c57dfb82c8241c44cc7d46ba52ef2dcd0cafaa6bd0187c2d11f459"
   ],
   "schema_version": 1
 }

@@ -894,7 +894,11 @@ for event in reply.media_events:
 on the caller's event loop and never block it. Reading and writing identity
 files, deriving the argon2id key and loading the CA bundle happen on the loop's
 executor; the test suite runs a whole conversation on a debug loop that fails
-on any blocking call.
+on any blocking call. One exception belongs to the library: before
+cryptography 50.0.0, argon2id holds the GIL while it runs, so the first
+connection to a hub pauses every thread, the loop's included, for about a
+tenth of a second. The key is cached after that, so it happens once per
+identity and hub; with cryptography 50.0.0 or later it does not happen.
 
 ```python
 import asyncio
@@ -1025,6 +1029,10 @@ handshake, and transport health.
   control-plane actions, or pass `access_token=` to `ThalovantControlPlane`.
 - `API access requires a paid plan`: upgrade the workspace before using the SDK
   control-plane API to provision private resources.
+- `Could not reach the Thalovant API.`: the request never got an answer (DNS,
+  the connection, TLS, a proxy, or the timeout). It is raised as
+  `ThalovantAPIUnreachableError`, which is both a `ThalovantAPIError` and a
+  `ThalovantConnectionError` and has no `status_code`; try again later.
 - `Unsupported protocol`: the hub does not expose that protocol, or the
   identity was created before that protocol was enabled.
 - MQTT fails immediately: create or download a fresh client identity after MQTT
@@ -1285,6 +1293,7 @@ What is different:
   `ThalovantAuthError`, `ThalovantPlanError`, `ThalovantAlreadyLinkedError`,
   `ThalovantUnsupportedConnectionTypeError`, `ThalovantHubRefusedError`,
   `ThalovantAdmissionTimeoutError`, `ThalovantAdmissionFailedError` and the
-  three device-login errors. Each subclasses `ThalovantAPIError` or
+  three device-login errors, and `ThalovantAPIUnreachableError` for a
+  control plane that cannot be reached. Each subclasses `ThalovantAPIError` or
   `ThalovantConnectionError`, which is what 0.8.7 raised in the same
   situations, so existing `except` clauses still catch them.

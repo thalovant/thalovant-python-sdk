@@ -37,20 +37,30 @@ dependencies = [
     "aiohttp>=3.11",
     # Noise (X25519, ChaCha20-Poly1305, AES-GCM, BLAKE2s, SHA-256) and the
     # argon2id that derives each hub's pre-shared key.
-    # Security floor: GHSA-g6cj-pr64-35w5. Do not allow an existing vulnerable
-    # install to satisfy the SDK's requirements just because the latest
-    # resolver output is safe.
-    "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    #
+    # The floor is 48.0.1, not 50.0.0, and that is deliberate. 50.0.0 fixes
+    # GHSA-g6cj-pr64-35w5, which is in PKCS#7 EnvelopedData decryption; nothing
+    # in this SDK calls PKCS#7 at all. Noise uses X25519, ChaCha20-Poly1305,
+    # AES-GCM and the hashes, and the pre-shared key is argon2id, all of which
+    # 48.0.1 provides (argon2id since 44.0). A floor above what the SDK needs
+    # only stops it installing next to software that pins lower: Home
+    # Assistant 2026.9 pins cryptography==48.0.1, and a 50.0.0 floor made the
+    # SDK uninstallable there. An application that uses PKCS#7 itself should
+    # require the fixed version in its own dependencies. CI runs the whole
+    # suite at this floor on Python 3.10.
+    # One difference is worth knowing: before 50.0.0, argon2id holds the GIL
+    # for the whole derivation (measured: about 0.12 s), so the first
+    # connection to a hub pauses an asyncio loop that long even though the
+    # SDK derives on the executor. The key is cached afterwards, so this
+    # happens once per identity and hub. 50.0.0 and later release the GIL.
+    "cryptography>=48.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     # Intel Macs: cryptography stopped publishing x86_64 macOS wheels after
-    # 48.0.1, and building it needs a Rust toolchain no desktop has. The one
-    # path GHSA-g6cj-pr64-35w5 reaches, PKCS#7 EnvelopedData decryption, is
-    # called by nothing in this SDK (Noise uses X25519 and ChaCha20-Poly1305,
-    # the PSK argon2id). Without this line the SDK, and every satellite on it,
-    # cannot be installed on an Intel Mac at all.
-    # The upper bound is the half that does the work: 48.0.1 ships
-    # macosx_10_9_universal2, 49.0.0 and everything after it ship
-    # macosx_11_0_arm64 alone, so an open range resolves to a version with no
-    # wheel for this machine and falls back to the sdist it cannot build.
+    # 48.0.1, and building it needs a Rust toolchain no desktop has. The upper
+    # bound is what matters here: 48.0.1 ships macosx_10_9_universal2, 49.0.0
+    # and everything after it ship macosx_11_0_arm64 alone, so an open range
+    # resolves to a version with no wheel for this machine and falls back to
+    # the sdist it cannot build. Without this line the SDK, and every
+    # satellite on it, cannot be installed on an Intel Mac at all.
     "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
