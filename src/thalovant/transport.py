@@ -521,7 +521,7 @@ def quiet_upstream_location_deprecation() -> None:
     """Drop the library's deprecation about the hub's session location shape."""
     try:
         from ovos_utils.log import LOG
-    except ImportError:  # pragma: no cover - the transport cannot run without it
+    except ImportError:  # pragma: no cover - not a dependency since 0.9: nothing to quiet
         return
     if getattr(LOG, "_thalovant_quiet_location", False):
         return

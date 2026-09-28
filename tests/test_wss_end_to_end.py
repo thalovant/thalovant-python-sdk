@@ -13,6 +13,7 @@ import time
 
 import pytest
 
+import thalovant.client as client_module
 from fake_hub import FakeHub, HubThread, speak_back
 from thalovant import (
     AsyncThalovantClient,
@@ -202,6 +203,52 @@ def test_a_dropped_link_reads_as_dead_and_the_next_ask_reconnects(hub, tmp_path)
         assert not alive(client)
         assert client.ask("two", timeout=5).text == "You said two"
         assert hub.hub.attempts == 2
+    finally:
+        client.close()
+
+
+def test_a_listener_gets_its_link_back_after_the_hub_drops_it(hub, tmp_path, monkeypatch):
+    """0.8.7's WebSocket library redialled a dropped link by itself, and a
+    client that only listens relied on that after a hub restart."""
+    monkeypatch.setattr(client_module, "_REDIAL_FIRST_SECONDS", 0.05)
+    client = _client(hub, tmp_path)
+    seen: list[str] = []
+    got = threading.Event()
+    try:
+        client.connect()
+        client.on("hub.says", lambda event: (seen.append(event.data["word"]), got.set()))
+        hub.call(hub.hub.drop_all)
+        deadline = time.monotonic() + 5
+        while not got.is_set():
+            assert time.monotonic() < deadline, "the link never came back"
+            if hub.hub.attempts >= 2 and hub.hub.sessions:
+                hub.call(hub.hub.sessions[-1].send_bus, "hub.says", {"word": "back"})
+            got.wait(0.05)
+        assert set(seen) == {"back"}
+        assert alive(client)
+    finally:
+        client.close()
+
+
+def test_close_stops_the_redial(hub, tmp_path, monkeypatch):
+    monkeypatch.setattr(client_module, "_REDIAL_FIRST_SECONDS", 0.1)
+    client = _client(hub, tmp_path)
+    client.connect()
+    hub.call(hub.hub.drop_all)
+    client.close()
+    time.sleep(0.5)
+    assert hub.hub.attempts == 1
+
+
+def test_without_auto_reconnect_a_dropped_link_stays_down(hub, tmp_path, monkeypatch):
+    monkeypatch.setattr(client_module, "_REDIAL_FIRST_SECONDS", 0.05)
+    client = _client(hub, tmp_path, auto_reconnect=False)
+    try:
+        client.connect()
+        hub.call(hub.hub.drop_all)
+        time.sleep(0.5)
+        assert hub.hub.attempts == 1
+        assert not alive(client)
     finally:
         client.close()
 

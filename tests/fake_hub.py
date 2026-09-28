@@ -99,6 +99,9 @@ class FakeHub:
         self.new_session: asyncio.Queue[Session] = asyncio.Queue()
         #: Called with every bus message a client sends; may answer on the session.
         self.responder: Responder | None = None
+        #: What the client's first Noise payload must be. hivemind-bus-client
+        #: (and so SDK 0.8.7 over WSS) offers to binarize; None accepts either.
+        self.expected_node_payload: dict[str, Any] | None = {"binarize": False, "encodings": []}
         self._psk: dict[tuple[str, str], bytes] = {}
         self._server: TestServer | None = None
         self.url = ""
@@ -135,9 +138,12 @@ class FakeHub:
 
     async def drop_all(self, *, code: int | None = None) -> None:
         for session in list(self.sessions):
-            if code is None:
-                await close_without_status(session.ws)
-            await session.ws.close(code=code or aiohttp.WSCloseCode.GOING_AWAY)
+            try:
+                if code is None:
+                    await close_without_status(session.ws)
+                await session.ws.close(code=code or aiohttp.WSCloseCode.GOING_AWAY)
+            except aiohttp.ClientConnectionResetError:
+                pass  # the client had already gone
         self.sessions.clear()
 
     def psk(self, password: str) -> bytes:
@@ -224,7 +230,8 @@ class FakeHub:
         )
         try:
             node_payload = json.loads(handshake.read_message(bytes.fromhex(first["msg"])))
-            assert node_payload == {"binarize": False, "encodings": []}
+            if self.expected_node_payload is not None:
+                assert node_payload == self.expected_node_payload
             response = handshake.write_message(json.dumps({"encoding": "JSON-HEX"}).encode())
         except _noise.NoiseError:
             await close_without_status(ws)
@@ -337,3 +344,5 @@ class HubThread:
         finally:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(5)
+            if not self.thread.is_alive():
+                self.loop.close()

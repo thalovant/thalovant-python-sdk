@@ -590,7 +590,7 @@ class AsyncThalovantControlPlane:
 
         ``api_url`` accepts an ``http`` scheme -- a self-hosted or local
         control plane may legitimately be served that way -- and ``_request``
-        hands whatever it is given to requests without looking. Every other
+        sends to whatever it is given without looking. Every other
         call that would leak over http leaks a bearer token the caller already
         holds; this one leaks the two secrets that are about to become one, and
         a code is exchangeable by whoever sees it first.

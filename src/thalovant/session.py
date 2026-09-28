@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import math
 import socket
@@ -645,7 +646,7 @@ def _alive_now(client: Any) -> bool:
         except Exception:  # noqa: BLE001 - optimistic by design, as alive()
             return True
         return phase not in ("closed", "error")
-    return alive(client) if not asyncio.iscoroutinefunction(getattr(client, "connection_info", None)) else True
+    return alive(client) if not inspect.iscoroutinefunction(getattr(client, "connection_info", None)) else True
 
 
 def _stopped_event(client: Any) -> asyncio.Event | None:

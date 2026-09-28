@@ -745,7 +745,7 @@
       "src/thalovant/_yaml.py": "54786940b7a3688fcca9d9e93e8ada950f1f1b1b82034a565bdb347b3fd44eaa",
       "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
-      "src/thalovant/client.py": "a3ac72a8ea1c41ff99473f0bdc5f1486e963eb738937bd6a177d6d7ee9f26bff",
+      "src/thalovant/client.py": "7a1cca78992cd69db9de4a0e1b55e28328959b7ed35359a5fff7079c59a0cde5",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
       "src/thalovant/control.py": "9c18f6bbf3aced0f06300a4182d15633095bc1ce6a05688b7e0125a80b9bfed9",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
@@ -761,7 +761,7 @@
       "src/thalovant/native_auth.py": "86f04a39d04aedc580101d72fc4100b65da168d920d05f1b08de2dea91bf8aa8",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
-      "src/thalovant/session.py": "9aede6f7c0d58b36f274d915239b46e73f2383332f8bdd57baf93fa18ad4cb1b",
+      "src/thalovant/session.py": "473c547eadabc731ba113a0ddc436f18f39fc88d5e884bde99a0121275056591",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
       "src/thalovant/transport.py": "32358b00b2225bfefdceabc8d70efa79eb2ffa61a0feccab6edf2e35150348b7"
     }
@@ -799,7 +799,7 @@
     "76bc1eb9957da5a6fdf03e89f3905f8d37d3ef2fe7c841ba751718105ca30a45",
     "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16",
     "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d",
-    "78399ce5be39044cfe0c8450a8b40a737eeb12919156a70d5a67a2bdc357d657"
+    "7e9b9791ee36f77ebb4c02a909ba8fc53d24c6a9f560ed0ee8318c85f7ed3f6a"
   ],
   "schema_version": 1
 }

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import math
+import random
 import threading
 import time
 import weakref
@@ -171,8 +173,18 @@ def _transport_for_protocol(
     raise ThalovantUnsupportedProtocolError(f"Unsupported protocol: {protocol}")
 
 
+log = logging.getLogger("thalovant.client")
+
 # Poll admitted readiness without extending the caller's connect deadline.
 _SETTLE_POLL = 0.02
+#: After the hub drops a link, the first redial waits about this long
+#: (jittered x0.5-1.5), doubling to the ceiling. It is the ladder
+#: hivemind-bus-client ran under 0.8.7's WebSocket transport: a client that
+#: only listens got its link back after a hub restart without calling
+#: anything, and callers rely on that. The jitter keeps a fleet that a hub
+#: restart disconnected at once from dialling back at the same instant.
+_REDIAL_FIRST_SECONDS = 5.0
+_REDIAL_CEILING_SECONDS = 60.0
 #: How long a finished ask keeps listening for the hub's "what the
 #: conversation now is" frame.
 #:
@@ -428,6 +440,8 @@ class AsyncThalovantClient:
         # Work that must outlive the call that started it: cleanups, and the
         # writes and registrations a timed-out caller left behind.
         self._background: set[asyncio.Future[Any]] = set()
+        #: Redials after the hub drops the link; see _redial_after_drops().
+        self._supervisor: asyncio.Future[Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         #: The class whose conversation limits apply: a sync client's.
         self._limits: type | None = None
@@ -468,6 +482,7 @@ class AsyncThalovantClient:
             self._loop = loop
             self._bind_loop_objects()
             self._background = set()
+            self._supervisor = None
         return loop
 
     def _closed(self) -> asyncio.Event:
@@ -666,6 +681,7 @@ class AsyncThalovantClient:
                     if time.monotonic() >= deadline:
                         cancel(timeout_error())
                     elif not cancelled.is_set():
+                        self._supervise_link()
                         done.set()
             except BaseException as exc:  # noqa: BLE001 - handed to the caller
                 cancel(exc)
@@ -728,6 +744,7 @@ class AsyncThalovantClient:
         self._closing += 1
         self._set_closed(False)
         self._connected = False
+        self._stop_supervisor()
         if self._cancel_connect is not None:
             self._cancel_connect(ThalovantConnectionError("Hub connection was closed before it became ready."))
 
@@ -763,12 +780,60 @@ class AsyncThalovantClient:
         Only the SDK's own transport: a transport the caller built and handed
         in is the caller's to close.
         """
+        self._stop_supervisor()
         if not self._link.native:
             return
         try:
             await self._link.retire()
         finally:
             await self._link.release()
+
+    def _supervise_link(self) -> None:
+        """Watch a link that is up, to redial it if the hub drops it."""
+        if not self.auto_reconnect or self._link.stopped() is None:
+            return
+        current = self._supervisor
+        if current is None or current.done():
+            self._supervisor = self._keep(asyncio.ensure_future(self._redial_after_drops()))
+
+    def _stop_supervisor(self) -> None:
+        supervisor, self._supervisor = self._supervisor, None
+        if supervisor is not None and supervisor is not asyncio.current_task():
+            supervisor.cancel()
+
+    async def _redial_after_drops(self) -> None:
+        """Get a dropped link back, on the ladder 0.8.7's WebSocket library ran.
+
+        Only a link the hub or the network dropped: a close, or a connect that
+        failed or was cancelled, ends this. A call made meanwhile reconnects
+        at once, as it always has, and the ladder steps back. Subscriptions
+        come back with the link. Each attempt is logged at DEBUG.
+        """
+        generation = self._connection_generation
+        retry = _REDIAL_FIRST_SECONDS
+        while True:
+            stopped = self._link.stopped()
+            if stopped is None:
+                return
+            await stopped.wait()
+            if generation != self._connection_generation or self._closing or not self._connected:
+                return
+            while stopped.is_set():
+                wait = min(retry, _REDIAL_CEILING_SECONDS) * random.uniform(0.5, 1.5)
+                log.debug("hub link dropped; redialling in %.1fs", wait)
+                await asyncio.sleep(wait)
+                if generation != self._connection_generation or self._closing:
+                    return
+                if not stopped.is_set():
+                    break  # a call reconnected it
+                retry = min(max(retry, 1.0) * 2, _REDIAL_CEILING_SECONDS)
+                try:
+                    await self._connect()
+                except Exception as failure:  # noqa: BLE001 - any failure is retried on the ladder
+                    log.debug("hub link: redial failed (%s)", _redact_error_text(failure))
+                else:
+                    log.debug("hub link: redialled")
+            retry = _REDIAL_FIRST_SECONDS
 
     async def _release_resources(self) -> None:
         try:

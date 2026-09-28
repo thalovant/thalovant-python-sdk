@@ -156,3 +156,6 @@ ignore_missing_imports = true
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["src"]
+# A warning is a failure: an unclosed session or loop, an unawaited coroutine,
+# a deprecated asyncio call. The suite is clean on 3.10 through 3.14.
+filterwarnings = ["error"]
