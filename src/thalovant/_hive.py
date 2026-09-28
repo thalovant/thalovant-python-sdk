@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import re
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -27,11 +28,10 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import aiohttp
+from typing import TYPE_CHECKING
 
 from . import _aiohttp
 from ._loop import OffLoop
-from ._noise_runtime import NoiseClientProtocol, hello_message, noise_identity
 from ._wire import BusMessage, HiveMessage, binary_kind_name
 from .errors import (
     ThalovantConnectionError,
@@ -42,6 +42,11 @@ from .errors import (
 from .events import ThalovantBinary, _runtime_bus_context
 from .identity import ThalovantIdentity
 from .models import ThalovantConnectionInfo, ThalovantHealth
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import aiohttp
+
+    from ._noise_runtime import NoiseClientProtocol
 
 __all__ = [
     "AsyncHiveMindHTTPTransport",
@@ -75,6 +80,19 @@ _MAX_FRAME = 256 * 1024
 WSS_HEARTBEAT_SECONDS = 20.0
 
 Handler = Callable[[Any], Any]
+
+
+def _hello(session_id: str, site_id: str | None) -> dict[str, Any]:
+    from ._noise_runtime import hello_message
+
+    return hello_message(session_id, site_id)
+
+
+def _aio() -> Any:
+    """aiohttp, imported the first time a connection needs it: ``import thalovant`` stays light."""
+    import aiohttp
+
+    return aiohttp
 
 
 def redact_error_text(error: object) -> str:
@@ -176,11 +194,19 @@ class AsyncHiveMindTransport:
     def _pin_id(self) -> str:
         raise NotImplementedError
 
+    def _ssl(self) -> Any:
+        """``ssl=`` for one request: a caller's session keeps its own TLS settings."""
+        if self.self_signed:
+            return False
+        if self._external_session is not None:
+            return True
+        return _aiohttp.client_ssl()
+
     def _http_session(self) -> aiohttp.ClientSession:
         if self._external_session is not None:
             return self._external_session
         if self._own_session is None or self._own_session.closed:
-            self._own_session = _aiohttp.new_session(cookie_jar=aiohttp.DummyCookieJar())
+            self._own_session = _aiohttp.new_session(cookie_jar=_aio().DummyCookieJar())
         return self._own_session
 
     async def aclose(self) -> None:
@@ -383,6 +409,21 @@ class AsyncHiveMindTransport:
     def _new_carrier(self) -> Any:
         raise NotImplementedError
 
+    def _prepare(self) -> NoiseClientProtocol:
+        """The negotiation's state machine, over the identity store. Runs off the loop."""
+        _aio()
+        if self._protocol is not None:
+            return self._protocol
+        from ._noise_runtime import NoiseClientProtocol, noise_identity
+
+        return NoiseClientProtocol(
+            store=noise_identity(self.noise_state_dir),
+            pin_id=self._pin_id(),
+            hello={},
+            password=self.identity.password,
+            access_key=self.identity.access_key,
+        )
+
     def _connect_error(self, error: BaseException) -> BaseException:
         """What a failed connect raises, for this carrier."""
         raise NotImplementedError
@@ -461,16 +502,14 @@ class AsyncHiveMindTransport:
             self._check(generation)
             carrier = self._new_carrier()
             self._carrier = carrier
-            if self._protocol is None:
-                self._protocol = NoiseClientProtocol(
-                    store=noise_identity(self.noise_state_dir),
-                    pin_id=self._pin_id(),
-                    hello=hello_message(self.session_id, self.identity.site_id),
-                    password=self.identity.password,
-                    access_key=self.identity.access_key,
-                )
+            loop = asyncio.get_running_loop()
+            if self._protocol is None or "aiohttp" not in sys.modules:
+                # The identity store reads its files, and the first connection
+                # imports aiohttp: both off the loop.
+                self._protocol = await loop.run_in_executor(None, self._prepare)
+                self._check(generation)
             self.session_id = self._new_session_id()
-            self._protocol.hello = hello_message(self.session_id, self.identity.site_id)
+            self._protocol.hello = _hello(self.session_id, self.identity.site_id)
             self._protocol.reset()
             self.closed_refused = False
             await self._handshake(carrier, generation)
@@ -495,6 +534,9 @@ class AsyncHiveMindTransport:
         protocol = self._protocol
         assert protocol is not None
         loop = asyncio.get_running_loop()
+        if self._external_session is None and not self.self_signed:
+            # Loading the CA bundle reads files: do it once, off the loop.
+            await loop.run_in_executor(None, _aiohttp.client_ssl)
         await carrier.open(self.connect_timeout)
         self._check(generation)
         self._mark_transport_open(socket=carrier.is_socket)
@@ -519,7 +561,11 @@ class AsyncHiveMindTransport:
             self._check(generation)
             if raw is None:
                 continue
-            step = protocol.receive(raw)
+            # The negotiation reads and writes the identity store -- the pin,
+            # the static key, the PSK cache -- so it runs off the loop; an
+            # application's loop never waits on a disk.
+            step = await loop.run_in_executor(None, protocol.receive, raw)
+            self._check(generation)
             if protocol.server_hello is not None and phase == "hello":
                 phase = "offer"
             if step.need_psk is not None:
@@ -527,7 +573,7 @@ class AsyncHiveMindTransport:
                 # argon2id: about a tenth of a second of CPU, off the loop.
                 psk = await loop.run_in_executor(None, protocol.derive_psk)
                 self._check(generation)
-                step = protocol.provide_psk(psk)
+                step = await loop.run_in_executor(None, protocol.provide_psk, psk)
             elif step.send and not protocol.ready:
                 phase = "response"
             for frame in step.send:
@@ -819,22 +865,28 @@ class _WSSCarrier:
 
     async def open(self, timeout: float) -> None:
         transport = self._transport
+        url = transport._authorized_wss_url()
+        options: dict[str, Any] = {}
+        if transport._external_session is None:
+            # A proxy named in the environment, as websocket-client honoured one.
+            options["proxy"] = _aiohttp.proxy_for(url)
         try:
             self._ws = await asyncio.wait_for(
                 transport._http_session().ws_connect(
-                    transport._authorized_wss_url(),
+                    url,
+                    **options,
                     heartbeat=transport.heartbeat,
                     autoping=True,
                     max_msg_size=_MAX_FRAME,
-                    ssl=_aiohttp.client_ssl(self_signed=transport.self_signed),
-                    timeout=aiohttp.ClientWSTimeout(ws_close=min(10.0, transport.send_timeout)),
+                    ssl=transport._ssl(),
+                    timeout=_aio().ClientWSTimeout(ws_close=min(10.0, transport.send_timeout)),
                     headers={"User-Agent": transport.useragent},
                 ),
                 timeout,
             )
         except asyncio.TimeoutError:
             raise ThalovantConnectionError("Could not reach the hub (timed out opening the socket).") from None
-        except aiohttp.WSServerHandshakeError as err:
+        except _aio().WSServerHandshakeError as err:
             # Never chain the cause: its text carries the URL, and the URL
             # carries the access key.
             if err.status in (401, 403):
@@ -844,7 +896,7 @@ class _WSSCarrier:
             raise ThalovantConnectionError(
                 f"The hub refused the WebSocket upgrade (HTTP {err.status})."
             ) from None
-        except (aiohttp.ClientError, OSError) as err:
+        except (_aio().ClientError, OSError) as err:
             raise ThalovantConnectionError(f"Could not reach the hub ({type(err).__name__}).") from None
 
     async def receive(self, timeout: float | None, *, handshake: bool) -> str | bytes | None:
@@ -855,12 +907,12 @@ class _WSSCarrier:
             message = await ws.receive()
         else:
             message = await asyncio.wait_for(ws.receive(), timeout)
-        if message.type is aiohttp.WSMsgType.TEXT:
+        if message.type is _aio().WSMsgType.TEXT:
             return str(message.data)
-        if message.type is aiohttp.WSMsgType.BINARY:
+        if message.type is _aio().WSMsgType.BINARY:
             return bytes(message.data)
-        code = message.data if message.type is aiohttp.WSMsgType.CLOSE else ws.close_code
-        if message.type is aiohttp.WSMsgType.ERROR:
+        code = message.data if message.type is _aio().WSMsgType.CLOSE else ws.close_code
+        if message.type is _aio().WSMsgType.ERROR:
             code = None
         raise _Closed(code, refused=code in _REFUSAL_CODES)
 
@@ -875,7 +927,7 @@ class _WSSCarrier:
                 await asyncio.wait_for(ws.send_bytes(frame), timeout)
         except asyncio.TimeoutError:
             raise ThalovantTimeoutError("HiveMind WSS send timed out.") from None
-        except (aiohttp.ClientError, OSError, RuntimeError) as err:
+        except (_aio().ClientError, OSError, RuntimeError) as err:
             raise ThalovantConnectionError(f"HiveMind WSS send failed: {type(err).__name__}") from None
 
     async def close_socket(self) -> None:
@@ -991,16 +1043,20 @@ class _HTTPCarrier:
             headers = {"User-Agent": transport.useragent}
             if transport._replica_cookie:
                 headers["Cookie"] = transport._replica_cookie
+            options: dict[str, Any] = {}
+            if transport._external_session is None:
+                options["proxy"] = _aiohttp.proxy_for(self.base_url)
             try:
                 async with transport._http_session().request(
                     method,
                     f"{self.base_url}{path}",
+                    **options,
                     params={"authorization": self._auth},
                     data=data,
                     headers=headers,
-                    ssl=_aiohttp.client_ssl(self_signed=transport.self_signed),
+                    ssl=transport._ssl(),
                     allow_redirects=False,
-                    timeout=aiohttp.ClientTimeout(total=remaining),
+                    timeout=_aio().ClientTimeout(total=remaining),
                 ) as response:
                     status = response.status
                     for value in response.headers.getall("Set-Cookie", []):
@@ -1015,7 +1071,7 @@ class _HTTPCarrier:
                     else "HiveMind HTTP request timed out."
                 )
                 raise ThalovantTimeoutError(detail) from None
-            except (aiohttp.ClientError, OSError):
+            except (_aio().ClientError, OSError):
                 raise ThalovantConnectionError("HiveMind HTTP request failed.") from None
         if 300 <= status < 400:
             raise ThalovantConnectionError("HiveMind HTTP endpoint redirected the request.")

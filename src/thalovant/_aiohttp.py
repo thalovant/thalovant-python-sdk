@@ -17,9 +17,10 @@ from __future__ import annotations
 import os
 import ssl
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import aiohttp
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import aiohttp
 
 __all__ = ["client_ssl", "new_session", "proxy_for"]
 
@@ -59,6 +60,8 @@ def client_ssl(*, self_signed: bool = False) -> ssl.SSLContext | bool:
 
 def new_session(**kwargs: Any) -> aiohttp.ClientSession:
     """An SDK-owned session. Call from inside the loop that will use it."""
+    import aiohttp
+
     connector = aiohttp.TCPConnector(
         resolver=aiohttp.ThreadedResolver(),
         use_dns_cache=False,
