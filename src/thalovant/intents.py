@@ -34,7 +34,7 @@ import asyncio
 import math
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Coroutine, Iterable, Mapping, TypeVar, cast
+from typing import Callable, TYPE_CHECKING, Any, Coroutine, Iterable, Mapping, TypeVar, cast
 
 from ._language import closest_lang
 from ._language import usual_form as _usual_form
@@ -80,13 +80,11 @@ _ENGINE_BY_METHOD = {"template": "padatious", "keyword": "adapt"}
 DESCRIBE_BATCH = 32
 
 
-_OPTIONAL = re.compile(r"\[[^\[\]]*\]")
-_GROUP = re.compile(r"\(([^()]*)\)")
 _SLOT = re.compile(r"\{([a-z_][a-z0-9_]*)\}")
 _SPACES = re.compile(r"\s{2,}")
 
 
-def _resolve_group(match: re.Match[str]) -> str:
+def _choose_branch(inside: str) -> str:
     """One alternative out of ``(a|b|c)``, or nothing when the group is optional.
 
     An empty alternative means the group may be left out, but that alone does
@@ -100,11 +98,41 @@ def _resolve_group(match: re.Match[str]) -> str:
     a branch in the first would give "already ask". Counting the non-empty
     branches gets both right.
     """
-    options = [option.strip() for option in match.group(1).split("|")]
+    options = [option.strip() for option in inside.split("|")]
     real = [option for option in options if option]
     if len(real) < len(options) and len(real) <= 1:
         return ""
     return real[0] if real else ""
+
+
+def _resolve_nested(text: str, opening: str, closing: str, resolve: Callable[[str], str]) -> str:
+    """Replace every balanced ``opening ... closing`` pair by *resolve* of its inside, innermost first.
+
+    What repeatedly substituting the innermost pair until none is left does,
+    in one pass: a pair is resolved when its closing character arrives, with
+    whatever pairs it held already resolved, and an opening that is never
+    closed stays in the text, as does a closing that closes nothing.
+    """
+    frames: list[list[str]] = [[]]
+    for char in text:
+        if char == opening:
+            frames.append([])
+        elif char == closing and len(frames) > 1:
+            inside = "".join(frames.pop())
+            frames[-1].append(resolve(inside))
+        else:
+            frames[-1].append(char)
+    # Openings never closed keep their character and what followed them.
+    parts = ["".join(frames[0])]
+    for frame in frames[1:]:
+        parts.append(opening)
+        parts.append("".join(frame))
+    return "".join(parts)
+
+
+def _drop_nested(text: str, opening: str, closing: str) -> str:
+    """Remove every balanced ``opening ... closing`` pair and what it holds."""
+    return _resolve_nested(text, opening, closing, lambda _inside: "")
 
 
 def speakable(pattern: str, slots: Mapping[str, str] | None = None,
@@ -120,17 +148,12 @@ def speakable(pattern: str, slots: Mapping[str, str] | None = None,
     never invents a fact. The empty string for a pattern with nothing left,
     which a caller drops rather than prints.
     """
-    text = pattern
-    # Innermost first, repeatedly: ``mute it [for a (second|bit)]`` has a
-    # group inside an optional part, and the optional part takes it with it.
-    while True:
-        text, changed = _OPTIONAL.subn("", text)
-        if not changed:
-            break
-    while True:
-        text, changed = _GROUP.subn(_resolve_group, text)
-        if not changed:
-            break
+    # Innermost first: ``mute it [for a (second|bit)]`` has a group inside an
+    # optional part, and the optional part takes it with it. One pass each,
+    # with a stack: taking the innermost pair out and starting again cost a
+    # pass per level, and a pattern nested sixteen thousand deep -- it comes
+    # from the hub -- took two seconds.
+    text = _resolve_nested(_drop_nested(pattern, "[", "]"), "(", ")", _choose_branch)
     table = {**listing.slot_examples(lang), **(slots or {})}
     text = _SLOT.sub(lambda m: table.get(m.group(1), m.group(1).replace("_", " ")), text)
     return _SPACES.sub(" ", text).strip(" ,")

@@ -103,7 +103,9 @@ def plain_speech(text: str | None) -> str:
     """
     if not text:
         return ""
-    return _SPACE.sub(" ", decode_references(strip_ssml(str(text)))).strip()
+    # Every White_Space run is one space by now, so trimming spaces trims
+    # exactly White_Space -- str.strip() would also take U+001C..U+001F.
+    return _SPACE.sub(" ", decode_references(strip_ssml(str(text)))).strip(" ")
 
 
 @dataclass(frozen=True)
