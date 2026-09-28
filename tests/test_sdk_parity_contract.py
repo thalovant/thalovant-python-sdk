@@ -41,7 +41,7 @@ def test_unacknowledged_reference_changes_fail(reference, change):
         (reference / "src/thalovant/new_feature.py").write_text("ENABLED = True\n")
     elif change == "dependency":
         path = reference / "pyproject.toml"
-        path.write_text(path.read_text().replace('requests>=2.33.0', 'requests>=2.34.0'))
+        path.write_text(path.read_text().replace('"aiohttp>=3.11"', '"aiohttp>=3.12"'))
     else:
         path = reference / "src/thalovant/session.py"
         path.write_text(path.read_text() + ("\ndef new_api(value): return value\n" if change == "new_api" else "\ndef _private(): return 123\n"))

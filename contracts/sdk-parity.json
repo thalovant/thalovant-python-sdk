@@ -131,9 +131,97 @@
         }
       }
     },
+    "connection-admission": {
+      "description": "Waiting for a hub to admit a new connection by following the operation the create returned: ready is admitted, failed and timed_out are a failure with the operation's code, 404 and no operation at all are admitted at once, a 5xx is ridden out, the deadline is a timeout that is both a connection error and a timeout, and a link to another origin than the API's is never fetched.",
+      "files": [
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client; the caller owns every request it would make.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_home_link_vectors.py"
+      ],
+      "vectors": [
+        "connection-admission-vectors.json"
+      ]
+    },
+    "connection-kinds": {
+      "description": "Creating a hub connection of a named kind (spec.connection_type, home_assistant among them) and deleting one: the kind must come back in the answer, and a client the API made without it is deleted before the call fails as unsupported; a 422 about the field is unsupported; 402 and 403 plan_limit are a plan refusal, 409 home_assistant_already_linked names the client that holds the link, and 401, 423 and 403 'Insufficient scopes' are an authentication refusal, each keeping the api-errors fields. Delete sends If-Match, reading the etag first when none is given, retries once on 412, and counts 404 as deleted.",
+      "files": [
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client; the caller owns every request it would make.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_home_link_vectors.py"
+      ],
+      "vectors": [
+        "connection-kinds-vectors.json"
+      ]
+    },
     "control": {
       "description": "Public control-plane operations, provisioning, skills and runtime lifecycle, including the sign-in grants and the readable naming of what they return",
       "files": [
+        "src/thalovant/_aiohttp.py",
+        "src/thalovant/_loop.py",
         "src/thalovant/control.py",
         "src/thalovant/hubs.py",
         "src/thalovant/native_auth.py"
@@ -212,9 +300,100 @@
         "conversation-vectors.json"
       ]
     },
+    "device-login": {
+      "description": "Device sign-in one step at a time for a caller that runs its own loop: begin returns the code to show and the poll interval; one poll is pending (with the interval, lengthened by five seconds for good on slow_down), expired, denied, or the approved token with its scopes, expiry and id, which the SDK keeps; any other failure carries the api-errors fields. The token a device login minted can revoke itself. Verification URLs with credentials are refused, and neither the device code nor the token appears in an error.",
+      "files": [
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client; the caller owns every request it would make.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_home_link_vectors.py"
+      ],
+      "vectors": [
+        "device-login-vectors.json"
+      ]
+    },
+    "home-link": {
+      "description": "The Home Assistant link on the data plane: every thalovant.home.request is answered with one thalovant.home.response, sent as an OVOS-MSG-1 §5.2 reply built from the context as the hub sent it (deep copy, destination the old source, source the old destination's first entry), in plain text, within the hub's 10 s; response_type and error_code come from the contract's lists, and a handler that raises, is too slow or answers outside them is failed_to_handle, timeout or unknown with empty speech. A long-lived link reconnects on a ladder, treats refusals as not-yet-admitted for a grace period, and reads a close right after the handshake as a refusal.",
+      "files": [
+        "src/thalovant/home.py",
+        "src/thalovant/client.py",
+        "src/thalovant/session.py",
+        "src/thalovant/_hive.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library: the caller owns the socket, the loop and every handler, so there is no connection of the library's own on which to answer a request. The caller builds the reply from the request it holds.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "reason": "An MCP tool call holds a hub connection only for the length of that call, and MCP has no channel to deliver an unsolicited hub request to a model, so nothing could answer one.",
+          "status": "not-applicable"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_home_link_vectors.py",
+        "tests/test_async_hub_session.py"
+      ],
+      "vectors": [
+        "home-link-vectors.json"
+      ]
+    },
     "identity": {
       "description": "Secure client identity and credential handling within the host storage model",
       "files": [
+        "src/thalovant/_yaml.py",
         "src/thalovant/identity.py"
       ],
       "scope": {
@@ -251,6 +430,7 @@
     "inventory": {
       "description": "Presentable skill inventory, locale knowledge, serialization, cache and display helpers",
       "files": [
+        "src/thalovant/_language.py",
         "src/thalovant/inventory.py"
       ],
       "scope": {
@@ -423,6 +603,13 @@
       "description": "Runtime messages, correlation, lifecycle, Noise and inventory queries within each supported transport tier",
       "files": [
         "src/thalovant/__init__.py",
+        "src/thalovant/_aiohttp.py",
+        "src/thalovant/_hive.py",
+        "src/thalovant/_link.py",
+        "src/thalovant/_loop.py",
+        "src/thalovant/_noise.py",
+        "src/thalovant/_noise_runtime.py",
+        "src/thalovant/_wire.py",
         "src/thalovant/agent.py",
         "src/thalovant/client.py",
         "src/thalovant/context.py",
@@ -434,9 +621,7 @@
         "src/thalovant/protocols.py",
         "src/thalovant/rich.py",
         "src/thalovant/subscriptions.py",
-        "src/thalovant/transport.py",
-        "src/thalovant/_http_runtime.py",
-        "src/thalovant/_noise_runtime.py"
+        "src/thalovant/transport.py"
       ],
       "scope": {
         "thalovant-dotnet-sdk": {
@@ -517,7 +702,11 @@
       "api-error-vectors.json": "fbe53320afa5501f7da200a04dafa6f6e3345d86d874288b3e2333ed5396d26e",
       "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
       "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
+      "connection-admission-vectors.json": "a8a60eb70281e3b03ed17c826ea5e4e70b6915a83799bc249a9f86b27d8bcc07",
+      "connection-kinds-vectors.json": "ab7ed485375c115c85804e3f4558e89ffe6c6ef4ecb6067df722c9bbe02d3183",
       "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
+      "device-login-vectors.json": "c9453f86e0ba1c1ab5d424c933ac9653e9e2bf9798af975cfb711cfc6b14be59",
+      "home-link-vectors.json": "fcb1fcd12e63885717e785f7d5e49b762f132d7e87b1c61c992a039473cc898d",
       "inventory-vectors.json": "30e539024818830bb408798e93e3cc1d64c65df04bcf226b63bf545a1ac0d69b",
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
@@ -526,46 +715,55 @@
     },
     "dependencies": {
       "dependencies": [
-        "PyYAML>=6.0.2",
+        "aiohttp>=3.11",
         "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-        "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-        "hivemind-bus-client>=1.1.9a1",
-        "ovos-spec-tools[langcodes]>=1.10.5a1",
-        "paho-mqtt>=2.1.0",
-        "poorman-handshake>=2.0.0a3",
-        "requests>=2.33.0"
+        "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'"
       ],
       "extras": {
         "listing": [
           "thalovant-languages>=0.3.0"
+        ],
+        "mqtt": [
+          "paho-mqtt>=2.1.0"
+        ],
+        "yaml": [
+          "PyYAML>=6.0.2"
         ]
       },
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "f98115a5131d974894a25836491992fe068e3bf0c87a57cc0e2bc303fd5114a5",
-      "src/thalovant/_http_runtime.py": "d7ad4a25cad5616d858909a00c445ab137d17df6d7e713e404372154a60eef8b",
-      "src/thalovant/_noise_runtime.py": "f9e3ecc4507a60a4f22305d8ba1f9e7827b195fde6aaaa16d4d62fb07c497302",
-      "src/thalovant/agent.py": "58b743ebda12add008c388c860e7fd9c79482466e81b715590faaa31b47895ca",
-      "src/thalovant/cli.py": "8051e727674f5d4a81bca128d5dc0511df6d7e9a3291261795676f1dbe021d4d",
-      "src/thalovant/client.py": "86d435e82907881f758a7636dff73dad11bfa405870e520ad61e4f67819cb160",
+      "src/thalovant/__init__.py": "2c8c87e9b0096e65e5c6cccc4a4eb962c4b93ec8a07872773236580f847edc27",
+      "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
+      "src/thalovant/_hive.py": "b6fac803a997c15a81fc77f2226bd6c99340380cbfecffa5d154483862f81a7f",
+      "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
+      "src/thalovant/_link.py": "798334fd802dc50084922e452c5dadc909b3712609ca7f06a8fc4a3c62fbcb14",
+      "src/thalovant/_loop.py": "a722d2618063286781cc5b44fbd5240c8d043fef862c52189ec36da54f2d19d2",
+      "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
+      "src/thalovant/_noise_runtime.py": "e6c30541ce66dfa09ae2d75badde63c6fd1b6280b126121bfa75277ff07027ec",
+      "src/thalovant/_wire.py": "72ce5c3cd475c2e7e66f3901f8995c4839f85822444cb5199b2725b911826c3e",
+      "src/thalovant/_yaml.py": "54786940b7a3688fcca9d9e93e8ada950f1f1b1b82034a565bdb347b3fd44eaa",
+      "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
+      "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
+      "src/thalovant/client.py": "a3ac72a8ea1c41ff99473f0bdc5f1486e963eb738937bd6a177d6d7ee9f26bff",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "4b4bc1e1ce6af4a7d241344dc99dee27e7c6c2a49e15545f0f66cc18879f8411",
+      "src/thalovant/control.py": "9c18f6bbf3aced0f06300a4182d15633095bc1ce6a05688b7e0125a80b9bfed9",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "0d8e971c314e2ca159fe29d86833aaaef8eec6152562b9cf76bf4fc54840e8fc",
+      "src/thalovant/errors.py": "9f26f5bcd0f89c6cff6d11c5c5f8e8363c70e5857f5cec0bf502a83c2883e179",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
+      "src/thalovant/home.py": "0fdd135843bab34ddccbd0d8bc1387a72a29a25512b86cbe143dbf9fb91f6274",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
-      "src/thalovant/identity.py": "22a728080778cf6f988e797b630428e6f78ffdea72edcc16449831c2d69a1a50",
-      "src/thalovant/intents.py": "c3b3577953379f4e828fdc492cd0288a5d801fbd4808552e1e3ca8e20a635480",
-      "src/thalovant/inventory.py": "8c849842eeecda1823703d22ad2dbfe849f5fa0569ecc267d93d0b9f60ebb11a",
-      "src/thalovant/listing.py": "bb98804a949ce6769a618b0fca52750be8fa3c47111c49bc8bc7ed0f37583da0",
+      "src/thalovant/identity.py": "dbce0fc107197ef211d5eccf68f9e0ef163211395b6759c6688ddb8b18f2f5c3",
+      "src/thalovant/intents.py": "297df8fbceff0627765e4358970d5b916bbaf3cd981d0a4e41f07a0ad38d6084",
+      "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
+      "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
       "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
       "src/thalovant/native_auth.py": "86f04a39d04aedc580101d72fc4100b65da168d920d05f1b08de2dea91bf8aa8",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
       "src/thalovant/rich.py": "700dc9225beed31d90ded542ff5846d00710db632ca587cb2e7c0a13551f2ecf",
-      "src/thalovant/session.py": "916ce88568b6980888586649c64f5d1c7259899da9ada12b695039ecb3fcf797",
+      "src/thalovant/session.py": "9aede6f7c0d58b36f274d915239b46e73f2383332f8bdd57baf93fa18ad4cb1b",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "b44a44ad046afe1d397d9b8aaa1feacedf4fad38dcfc49130724663a3a570859"
+      "src/thalovant/transport.py": "32358b00b2225bfefdceabc8d70efa79eb2ffa61a0feccab6edf2e35150348b7"
     }
   },
   "reference_history": [
@@ -600,7 +798,8 @@
     "2377330566e575bb3fda77998d943667bf0795940f9d569a5b8bc7f4f0e5e486",
     "76bc1eb9957da5a6fdf03e89f3905f8d37d3ef2fe7c841ba751718105ca30a45",
     "34a21f2ad875b220a571613e25b6a6e5f3d8de1a776f4949a7ab63ba93e07b16",
-    "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d"
+    "f79d99e9acd2fe299e3b313102541e47b366751defe5fa0dcfa44053aa7f007d",
+    "78399ce5be39044cfe0c8450a8b40a737eeb12919156a70d5a67a2bdc357d657"
   ],
   "schema_version": 1
 }
