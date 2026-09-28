@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -282,10 +283,39 @@ def test_connection_kinds_vectors(case: dict[str, Any], plane_cls: type) -> None
 # -- admission ----------------------------------------------------------------
 
 
-def _closed_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
+class ResettingListener:
+    """A port that accepts a connection and resets it at once.
+
+    What the vectors' "unreachable" means, reached the same way on every
+    platform: a closed port is refused at once on Linux and macOS, but Windows
+    retries the SYN for about two seconds first.
+    """
+
+    def __init__(self) -> None:
+        self._socket = socket.socket()
+        self._socket.bind(("127.0.0.1", 0))
+        self._socket.listen(8)
+        self._socket.settimeout(0.05)
+        self.port = int(self._socket.getsockname()[1])
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        import struct
+
+        while not self._stop.is_set():
+            try:
+                connection, _ = self._socket.accept()
+            except OSError:
+                continue
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            connection.close()  # RST
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(2)
+        self._socket.close()
 
 
 def _placed(value: Any, host: str, port: int) -> Any:
@@ -302,7 +332,8 @@ async def _admission_case(case: dict[str, Any]) -> tuple[dict[str, Any], Scripte
     expect = case["expect"]
     async with ScriptedApi(case["exchanges"]) as api:
         assert api.server is not None
-        url = f"http://127.0.0.1:{_closed_port()}" if call.get("api") == "unreachable" else api.url
+        resetting = ResettingListener() if call.get("api") == "unreachable" else None
+        url = f"http://127.0.0.1:{resetting.port}" if resetting is not None else api.url
         plane = AsyncThalovantControlPlane(url, access_token="synthetic-token")
         operation = _placed(call["operation"], "127.0.0.1", api.server.port)
         started = time.monotonic()
@@ -332,6 +363,8 @@ async def _admission_case(case: dict[str, Any]) -> tuple[dict[str, Any], Scripte
             produced = {"outcome": "admitted", "polls": len(api.sent)}
         finally:
             await plane.aclose()
+            if resetting is not None:
+                resetting.close()
         if "waited_at_least_ms" in expect:
             # Recorded as the bound it met, so every SDK records the same value.
             waited_ms = (time.monotonic() - started) * 1000

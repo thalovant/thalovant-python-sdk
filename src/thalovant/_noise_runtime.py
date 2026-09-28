@@ -714,6 +714,7 @@ class NoiseChannel:
         pin_id: str,
         hello: dict[str, Any],
         write: Callable[[str | bytes], Any],
+        use_xx: bool = False,
     ) -> None:
         self.identity = identity
         self.store = noise_identity(state_dir)
@@ -727,7 +728,15 @@ class NoiseChannel:
             password=str(getattr(identity, "password", "") or ""),
             access_key=getattr(identity, "access_key", None),
         )
+        if use_xx:
+            # The attempt before this one was KK and did not authenticate.
+            self._protocol._xx_retry = True
         self._lock = threading.RLock()
+
+    @property
+    def kk_failed(self) -> bool:
+        """Whether this channel's KK attempt did not authenticate: the next one uses XX."""
+        return self._protocol.kk_failed
 
     @property
     def ready(self) -> bool:

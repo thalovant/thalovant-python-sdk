@@ -40,7 +40,10 @@ class Api:
         app.router.add_post("/v1/auth/device/token", answer(DEVICE_TOKEN))
         app.router.add_post("/v1/auth/token", answer(SESSION_TOKEN))
         app.router.add_post("/v1/auth/native/token", answer(NATIVE_TOKEN))
-        app.router.add_delete("/v1/auth/api-tokens/{token_id}", self.revoke)
+        async def revoke(request: web.Request) -> web.Response:
+            return await self.revoke(request)  # looked up per request, so a test can replace it
+
+        app.router.add_delete("/v1/auth/api-tokens/{token_id}", revoke)
         self.server = TestServer(app, host="127.0.0.1")
         await self.server.start_server()
         return self
@@ -140,3 +143,56 @@ def test_revoking_another_token_keeps_the_apis_answer(status):
             assert plane.token_id == "device-token-id" and plane.access_token == "synthetic-device-token"
 
     run(exercise())
+
+
+def test_a_sign_in_during_a_revoke_keeps_its_new_token():
+    """The revoke of the old token must not forget the one a sign-in installed meanwhile."""
+
+    async def exercise():
+        async with Api() as api:
+            gate = asyncio.Event()
+            original = api.revoke
+
+            async def slow_revoke(request):
+                await gate.wait()
+                return await original(request)
+
+            api.revoke = slow_revoke  # type: ignore[method-assign]
+            async with AsyncThalovantControlPlane(api.url) as plane:
+                await plane.poll_device_login("synthetic-device-code")
+                revoking = asyncio.ensure_future(plane.revoke_api_token())
+                await asyncio.sleep(0.05)  # the DELETE is on its way
+                await plane.complete_native_sign_in("code", "verifier", "client", "app://callback")
+                gate.set()
+                await revoking
+                assert api.revoked == [("device-token-id", "Bearer synthetic-device-token")]
+                assert plane.access_token == "synthetic-native-token"
+                assert plane.token_id == "native-token-id"
+
+    run(exercise())
+
+
+@pytest.mark.parametrize("body", ["[1, 2]", '"text"', '{"token_type": "bearer"}', "not json"])
+def test_an_unusable_2xx_token_answer_reads_the_same_whatever_it_holds(body):
+    """A 2xx the SDK cannot use is a local failure with no status, whether its
+    body is not an object or is an object with no token (device-login-vectors
+    records the second with status null)."""
+
+    async def exercise():
+        async def answer(_request):
+            return web.Response(status=200, text=body, content_type="application/json")
+
+        app = web.Application()
+        app.router.add_post("/v1/auth/device/token", answer)
+        server = TestServer(app, host="127.0.0.1")
+        await server.start_server()
+        try:
+            async with AsyncThalovantControlPlane(f"http://127.0.0.1:{server.port}") as plane:
+                with pytest.raises(ThalovantAPIError) as caught:
+                    await plane.poll_device_login("synthetic-device-code")
+                return caught.value
+        finally:
+            await server.close()
+
+    error = run(exercise())
+    assert error.status_code is None and error.problem is None

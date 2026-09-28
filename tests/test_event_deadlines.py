@@ -15,6 +15,35 @@ async def eventually(predicate):
         await asyncio.sleep(0.005)
 
 
+def close_or_explain(sdk, timeout=10):
+    """Close, and when that does not finish, say what the client was waiting on.
+
+    This test once saw close() wait out its whole budget in CI, and never since
+    in thousands of runs on one or two cores. If it happens again the failure
+    carries the lifecycle state and every task on the client's loop.
+    """
+    try:
+        sdk.close(timeout=timeout)
+    except ThalovantConnectionError as error:
+        import io
+
+        core, lines = sdk._core, io.StringIO()
+        done = threading.Event()
+
+        def dump():
+            print(f"lock held={core._connection_lock.locked()} closing={core._closing} "
+                  f"automatic_cleanups={core._automatic_cleanups} connected={core._connected} "
+                  f"cancel_connect={core._cancel_connect!r}", file=lines)
+            for task in asyncio.all_tasks():
+                print(f"task {task!r}", file=lines)
+                task.print_stack(file=lines)
+            done.set()
+
+        sdk._runner.loop().call_soon_threadsafe(dump)
+        done.wait(5)
+        raise AssertionError(f"{error}\n{lines.getvalue()}") from error
+
+
 def operation(sdk, name, *, timeout=0.02):
     if name == 'listen':
         return next(sdk.listen('event', timeout=timeout))
@@ -65,7 +94,7 @@ def test_event_operations_bound_connect_and_never_subscribe_after_expiry(name):
         assert not transport.bus_handlers and transport.sent == 0
     finally:
         transport.gate.set()
-        sdk.close()
+        close_or_explain(sdk)
 
 
 @pytest.mark.parametrize('name', ['query', 'ask', 'wait_for_event', 'listen'])

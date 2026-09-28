@@ -229,3 +229,45 @@ def test_subscriptions_follow_every_client_the_session_builds(tmp_path):
             await hub.stop()
 
     asyncio.run(exercise())
+
+
+def test_a_reply_withdrawn_while_queued_leaves_the_link_up(tmp_path):
+    """A home reply still waiting behind another frame when the hub's bound
+    passes is withdrawn whole -- never sent late, and the link stays up."""
+    from thalovant import AsyncThalovantClient
+    from thalovant.home import answer_home_request
+    from thalovant.events import ThalovantEvent
+
+    async def exercise():
+        hub = await _hub()
+        record = hub.register()
+        client = AsyncThalovantClient(hub.identity(record), noise_state_dir=str(tmp_path / "noise"),
+                                      reply_settle_seconds=0.05)
+        try:
+            await client.connect()
+            await _eventually(lambda: hub.sessions)
+            session = hub.sessions[0]
+            transport = client._link.transport
+            if transport._send_lock is None:
+                transport._send_lock = asyncio.Lock()
+            await transport._send_lock.acquire()  # another frame is being written
+            event = ThalovantEvent(name="thalovant.home.request",
+                                   data={"request_id": "q1", "utterance": "lights"},
+                                   context={"source": "skill", "destination": "ha"}, raw=None)
+            sent = await answer_home_request(client, event, lambda _request: HomeAnswer(speech="Done."),
+                                             hub_timeout=0.2)
+            assert sent is None  # withdrawn at the bound
+            transport._send_lock.release()
+            await asyncio.sleep(0.2)
+            received = []
+            while not session.received.empty():
+                received.append(session.received.get_nowait()["payload"].get("type"))
+            assert "thalovant.home.response" not in received  # never sent late
+            reply = await client.ask("still there", timeout=5)
+            assert reply.text == "You said still there"
+            assert hub.attempts == 1  # the same link all along
+        finally:
+            await client.close()
+            await hub.stop()
+
+    asyncio.run(exercise())

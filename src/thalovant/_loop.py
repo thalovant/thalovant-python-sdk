@@ -120,7 +120,14 @@ class LoopThread:
         return self.run(invoke())
 
     def stop(self, final: Callable[[], Awaitable[Any]] | None = None, *, timeout: float = 5.0) -> None:
-        """Run *final* on the loop, then stop it, cancelling what is left. Safe to repeat."""
+        """Run *final* on the loop, then stop it, cancelling what is left. Safe to repeat.
+
+        Waits for that from an ordinary thread, never from one that runs an
+        event loop or the SDK's handlers. A garbage collection can run this --
+        through the finalizer of a client nobody holds any more -- on any
+        thread that happens to allocate, and a loop thread that waited here
+        for another loop stood still meanwhile, every connection on it with it.
+        """
         with self._lock:
             loop, thread = self._loop, self._thread
             self._loop, self._thread = None, None
@@ -140,10 +147,19 @@ class LoopThread:
             future = asyncio.run_coroutine_threadsafe(shutdown(), loop)
         except RuntimeError:
             return
-        if threading.current_thread() is not thread:
+        if threading.current_thread() is not thread and not _must_not_block():
             with contextlib.suppress(Exception):
                 future.result(timeout + 1)
             thread.join(timeout)
+
+
+def _must_not_block() -> bool:
+    """Whether the calling thread runs an event loop or the SDK's handlers."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return threading.current_thread().name.startswith("thalovant-")
+    return True
 
 
 def _cancel_all(loop: asyncio.AbstractEventLoop) -> None:

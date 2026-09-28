@@ -717,10 +717,10 @@ class AsyncThalovantControlPlane:
             body = None
         if 200 <= response.status_code < 300:
             if not isinstance(body, dict):
-                raise ThalovantAPIError(
-                    "Thalovant API returned an unexpected response shape.",
-                    status_code=response.status_code,
-                )
+                # No status, like a 2xx that carries no token: the API did not
+                # refuse, the SDK could not use its answer. device-login-vectors
+                # records that case with status null, and both must read alike.
+                raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
             self._device_intervals.pop(device_code, None)
             return body
         error = (
@@ -849,7 +849,10 @@ class AsyncThalovantControlPlane:
         except ThalovantAuthError as error:
             if not (own and error.status_code == 401):
                 raise
-        if own:
+        # Forget the token only if it is still the one revoked: a sign-in that
+        # finished while the revoke was on its way installed another, and
+        # that one is alive.
+        if own and self.token_id == target:
             self.access_token = None
             self.token_id = None
             self._revoked_own = True

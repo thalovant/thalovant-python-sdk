@@ -376,3 +376,37 @@ def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, 
         assert transport.healthcheck().ok
     finally:
         transport.disconnect()
+
+
+def test_mqtt_follows_a_failed_kk_with_xx_in_the_same_connect(tmp_path, monkeypatch):
+    """KK then XX on MQTT too: a KK answer that does not authenticate here."""
+    broker = Broker(tmp_path)
+    module = SimpleNamespace(Client=broker.Client, CallbackAPIVersion=SimpleNamespace(VERSION2=2))
+    transport = HiveMindMQTTTransport(identity(), useragent="conformance", noise_state_dir=str(tmp_path / "client"))
+    monkeypatch.setattr(transport, "_load_mqtt_module", lambda: module)
+    try:
+        transport.connect()  # XX, pinning both ways
+        transport.disconnect()
+        # The hub's KK answer will not authenticate: flip a byte of it.
+        peer = broker.peer
+        original_send = peer.send
+
+        def tampered(raw):
+            message = json.loads(raw) if isinstance(raw, str) else None
+            noise = (message or {}).get("payload", {}).get("noise", {}) if message else {}
+            if peer.patterns and peer.patterns[-1] == "KKpsk0" and "msg" in noise:
+                body = bytearray(bytes.fromhex(noise["msg"]))
+                body[-1] ^= 0x01
+                noise["msg"] = body.hex()
+                raw = json.dumps(message)
+            original_send(raw)
+
+        peer.send = tampered
+        before = len(peer.patterns)
+        transport.connect()
+        # Both in the one connect: KK failed, and XX -- whose answer the
+        # tampering does not touch -- was tried at once and connected.
+        assert peer.patterns[before:] == ["KKpsk0", "XXpsk2"]
+        assert transport.healthcheck().ok
+    finally:
+        transport.disconnect()

@@ -32,6 +32,8 @@ from ._loop import LoopThread as _LoopThread
 from ._loop import on_loop_thread as _on_loop_thread
 from .errors import (
     ThalovantConnectionError,
+    ThalovantHubKeyChangedError,
+    ThalovantHubRefusedError,
     ThalovantRuntimeError,  # noqa: F401 - importable from here, as it always was
     ThalovantTimeoutError,
 )
@@ -650,6 +652,22 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         )
 
     def connect(self) -> None:
+        """Connect and authenticate. One KK attempt that fails is followed at once by XX.
+
+        As on the other transports: a KK handshake that does not authenticate
+        says only that the password or the hub's key is not what was pinned,
+        and only XX says which. The XX attempt's outcome is the connect's.
+        """
+        self._last_channel: Any = None
+        try:
+            self._connect_once(use_xx=False)
+        except ThalovantHubRefusedError:
+            channel = self._last_channel
+            if channel is None or not channel.kk_failed:
+                raise
+            self._connect_once(use_xx=True)
+
+    def _connect_once(self, *, use_xx: bool) -> None:
         if self.is_connected():
             return
         if self.identity.mqtt is None:
@@ -677,7 +695,8 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
             from ._noise_runtime import NoiseChannel
             channel = NoiseChannel(self.identity, state_dir=self.noise_state_dir,
                 pin_id=self.identity.endpoint_base(), hello=self._hello_message(),
-                write=lambda payload: self._publish(payload, client=client))
+                write=lambda payload: self._publish(payload, client=client), use_xx=use_xx)
+            self._last_channel = channel
             incoming: queue.Queue[bytes | None] = queue.Queue(maxsize=256)
             worker = threading.Thread(target=self._receive_loop, args=(client, channel, incoming),
                                       daemon=True, name="thalovant-mqtt")
@@ -727,10 +746,19 @@ class HiveMindMQTTTransport(_ConnectionLifecycle):
         deadline = time.monotonic() + timeout
         while True:
             with self._lifecycle_lock:
-                if self._client is not client or getattr(client, "thalovant_disconnected", False):
+                current = self._client is client
+                if current and self._last_error is not None:
+                    # Why the worker gave up comes first: a refusal and a changed
+                    # hub key keep their class, since they are what a caller
+                    # decides on and neither clears on a retry.
+                    kind = (
+                        type(self._last_error)
+                        if isinstance(self._last_error, (ThalovantHubRefusedError, ThalovantHubKeyChangedError))
+                        else ThalovantConnectionError
+                    )
+                    raise kind(f"HiveMind MQTT {phase} failed.") from self._last_error
+                if not current or getattr(client, "thalovant_disconnected", False):
                     raise ThalovantConnectionError("MQTT connection attempt was cancelled or disconnected.")
-                if self._last_error is not None:
-                    raise ThalovantConnectionError(f"HiveMind MQTT {phase} failed.") from self._last_error
                 if event.is_set():
                     return
             remaining = deadline - time.monotonic()

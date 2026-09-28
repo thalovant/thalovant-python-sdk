@@ -205,3 +205,48 @@ def test_run_stops_at_once_when_the_hub_key_changed(tmp_path: Path) -> None:
             await hub.stop()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(("code", "refused"), [(None, True), (1008, True), (1011, False)])
+def test_a_close_before_connect_returns_is_read_like_one_after(
+    code: int | None, refused: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window between the end of the handshake and connect() returning.
+
+    connect() is held, deterministically, until the reader has seen the hub's
+    close. It used to wait out its whole deadline for a link that was gone and
+    report a timeout -- never a refusal.
+    """
+    import time
+
+    import thalovant.client as client_module
+
+    original = client_module.AsyncThalovantClient._reapply_subscriptions
+
+    async def after_the_close(self: Any) -> None:
+        stopped = self._link.stopped()
+        await asyncio.wait_for(stopped.wait(), 5)
+        await original(self)
+
+    monkeypatch.setattr(client_module.AsyncThalovantClient, "_reapply_subscriptions", after_the_close)
+
+    async def exercise() -> tuple[BaseException, float]:
+        hub = FakeHub()
+        await hub.start()
+        record_ = hub.register()
+        hub.close_after_handshake = True
+        hub.close_after_handshake_code = code
+        client = AsyncThalovantClient(hub.identity(record_), noise_state_dir=str(tmp_path / "noise"), auto_reconnect=False)
+        started = time.monotonic()
+        try:
+            await client.connect(timeout=5)
+        except ThalovantConnectionError as error:
+            return error, time.monotonic() - started
+        finally:
+            await client.close()
+            await hub.stop()
+        raise AssertionError("connected to a hub that had closed")
+
+    error, took = asyncio.run(exercise())
+    assert isinstance(error, ThalovantHubRefusedError) is refused
+    assert took < 2

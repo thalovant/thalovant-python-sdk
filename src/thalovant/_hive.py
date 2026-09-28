@@ -592,41 +592,47 @@ class AsyncHiveMindTransport:
         self._check(generation)
         self._mark_transport_open(socket=carrier.is_socket)
         deadline = loop.time() + self.handshake_timeout
-        while not protocol.ready:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                raise ThalovantTimeoutError(self.handshake_timeout_message)
-            try:
-                raw = await carrier.receive(remaining, handshake=True)
-            except asyncio.TimeoutError:
-                raise ThalovantTimeoutError(self.handshake_timeout_message) from None
-            except _Closed as closed:
-                if closed.refused:
-                    protocol.refused_during_handshake()
-                    raise ThalovantHubRefusedError(
-                        "The hub refused this connection's credentials."
+        try:
+            while not protocol.ready:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise ThalovantTimeoutError(self.handshake_timeout_message)
+                try:
+                    raw = await carrier.receive(remaining, handshake=True)
+                except asyncio.TimeoutError:
+                    raise ThalovantTimeoutError(self.handshake_timeout_message) from None
+                except _Closed as closed:
+                    if closed.refused:
+                        raise ThalovantHubRefusedError(
+                            "The hub refused this connection's credentials."
+                        ) from None
+                    raise ThalovantConnectionError(
+                        f"HiveMind {self.carrier_name} closed before handshake completed ({closed.code})."
                     ) from None
-                raise ThalovantConnectionError(
-                    f"HiveMind {self.carrier_name} closed before handshake completed ({closed.code})."
-                ) from None
-            self._check(generation)
-            if raw is None:
-                continue
-            # The negotiation reads and writes the identity store -- the pin,
-            # the static key, the PSK cache -- so it runs off the loop; an
-            # application's loop never waits on a disk.
-            step = await loop.run_in_executor(None, protocol.receive, raw)
-            self._check(generation)
-            if step.need_psk is not None:
-                # argon2id: about a tenth of a second of CPU, off the loop.
-                psk = await loop.run_in_executor(None, protocol.derive_psk)
                 self._check(generation)
-                step = await loop.run_in_executor(None, protocol.provide_psk, psk)
-            for frame in step.send:
-                await carrier.send(frame, self.send_timeout)
-            self._check(generation)
-            for message in step.messages:
-                self._deliver(message)
+                if raw is None:
+                    continue
+                # The negotiation reads and writes the identity store -- the pin,
+                # the static key, the PSK cache -- so it runs off the loop; an
+                # application's loop never waits on a disk.
+                step = await loop.run_in_executor(None, protocol.receive, raw)
+                self._check(generation)
+                if step.need_psk is not None:
+                    # argon2id: about a tenth of a second of CPU, off the loop.
+                    psk = await loop.run_in_executor(None, protocol.derive_psk)
+                    self._check(generation)
+                    step = await loop.run_in_executor(None, protocol.provide_psk, psk)
+                for frame in step.send:
+                    await carrier.send(frame, self.send_timeout)
+                self._check(generation)
+                for message in step.messages:
+                    self._deliver(message)
+        except ThalovantHubRefusedError:
+            # Any refusal in the middle of the exchange -- a WebSocket closed
+            # with a refusal code, an HTTP request answered 401 or 403 -- is a
+            # verdict on a KK first message too: the next attempt uses XX.
+            protocol.refused_during_handshake()
+            raise
 
     async def _read(self, carrier: Any, generation: int) -> None:
         protocol = self._protocol
@@ -773,15 +779,21 @@ class AsyncHiveMindTransport:
         carrier, protocol = self._require_live()
         if self._send_lock is None:
             self._send_lock = asyncio.Lock()
-        # Shielded: a caller cancelled half-way must not leave half a chunked
-        # message on the wire, or the next sender's frames out of nonce order.
-        write = asyncio.ensure_future(self._write(carrier, protocol, message))
+        lock = self._send_lock
+        # Waiting for the lock can be cancelled: a message still queued behind
+        # another is withdrawn whole, and the link is untouched. Once it holds
+        # the lock the write is shielded: a caller cancelled half-way must not
+        # leave half a chunked message on the wire, or the next sender's frames
+        # out of nonce order.
+        await lock.acquire()
+        write = asyncio.ensure_future(self._write(carrier, protocol, message, lock))
         write.add_done_callback(_consume)
         return await asyncio.shield(write)
 
-    async def _write(self, carrier: Any, protocol: NoiseClientProtocol, message: dict[str, Any]) -> Any:
-        assert self._send_lock is not None
-        async with self._send_lock:
+    async def _write(
+        self, carrier: Any, protocol: NoiseClientProtocol, message: dict[str, Any], lock: asyncio.Lock
+    ) -> Any:
+        try:
             if carrier is not self._carrier:
                 raise ThalovantConnectionError(
                     f"HiveMind {self.carrier_name} transport is not connected"
@@ -799,6 +811,8 @@ class AsyncHiveMindTransport:
                 raise ThalovantConnectionError(
                     f"Could not send the HiveMind {self.carrier_name} message."
                 ) from error
+        finally:
+            lock.release()
 
     def _fail_live(self, carrier: Any, error: BaseException) -> None:
         if carrier is self._carrier:
@@ -1124,6 +1138,10 @@ class _HTTPCarrier:
         if 300 <= status < 400:
             raise ThalovantConnectionError("HiveMind HTTP endpoint redirected the request.")
         if not 200 <= status < 300:
+            if status in (401, 403):
+                # The hub's HTTP listener turning the credentials away, as a
+                # WebSocket upgrade answered 401 or 403 does.
+                raise ThalovantHubRefusedError(f"HiveMind HTTP request was refused with HTTP {status}.")
             raise ThalovantConnectionError(f"HiveMind HTTP request failed with HTTP {status}.")
         try:
             body = json.loads(text)

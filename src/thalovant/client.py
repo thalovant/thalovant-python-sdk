@@ -55,6 +55,7 @@ from .context import request_context
 from .conversation import AsyncThalovantConversation, ThalovantConversation
 from .errors import (
     ThalovantConnectionError,
+    ThalovantHubRefusedError,
     ThalovantRuntimeError,
     ThalovantTimeoutError,
     ThalovantUnsupportedProtocolError,
@@ -675,6 +676,13 @@ class AsyncThalovantClient:
                     if remaining <= 0:
                         cancel(timeout_error())
                         break
+                    closed = self._closed_while_connecting()
+                    if closed is not None:
+                        # The hub closed the link between the end of the
+                        # handshake and this connect returning -- which is how
+                        # a hub that does not know this key refuses it. Not a
+                        # link to wait on until the deadline.
+                        raise closed
                     if await self._link.probe(remaining):
                         if time.monotonic() >= deadline:
                             cancel(timeout_error())
@@ -724,6 +732,21 @@ class AsyncThalovantClient:
             raise
         if errors:
             raise errors[0]
+
+    def _closed_while_connecting(self) -> BaseException | None:
+        """Why the link just opened is already gone, or ``None`` while it is up."""
+        stopped = self._link.stopped()
+        if stopped is None or not stopped.is_set():
+            return None
+        transport = getattr(self._link, "transport", None)
+        if getattr(transport, "closed_refused", False):
+            return ThalovantHubRefusedError(
+                "The hub closed the link right after the handshake: it does not accept these credentials, or not yet."
+            )
+        error = self._link.last_error()
+        return error if isinstance(error, ThalovantConnectionError) else ThalovantConnectionError(
+            "The hub closed the link right after the handshake."
+        )
 
     async def connect_with_info(self, timeout: float | None = None) -> ThalovantConnectionInfo:
         """Connect and return the transport timing snapshot."""
