@@ -155,7 +155,13 @@ seconds:
      written; the five XML entities `&amp; &lt; &gt; &quot; &apos;`; and `&nbsp;`. Nothing
      else: `&eacute;` and `&copy;` stay as written, and a reference needs its `;`.
   3. Collapse every run of Unicode White_Space characters (not your regex's `\s`, which
-     differs by language) to one space, and trim both ends.
+     differs by language) to one space, and trim White_Space -- and only White_Space --
+     from both ends. A language's own trim may take more: Python's `str.strip()` and
+     Kotlin's `trim()` also remove U+001C–U+001F, which are not White_Space.
+  Do all three in linear time: the text comes off the network. A regular expression for
+  the tag rule can backtrack badly (Python's took six seconds on an unclosed tag and 1,600
+  spaces); a hand-written scanner, or one pass from the end that records where a tag
+  scanned from each position would end, cannot.
 - **The code sets are fixed.** `response_type` is one of `action_done`, `query_answer` or
   `error`. `error_code` appears only with `error`, and is one of `no_intent_match`,
   `no_valid_targets`, `failed_to_handle`, `unknown`, `timeout` or `agent_unavailable`.
@@ -178,6 +184,12 @@ seconds:
   reply the hub has already given up on is never sent. Send the answer at the deadline
   whether or not the handler has returned: a handler that ignores cancellation must not
   hold the reply back.
+- **Withdrawing a reply is not a failure of the link.** A reply withdrawn while it waits
+  behind another frame must leave the connection exactly as it was: no close, no
+  reconnect, no error recorded against the link. Only a frame already being written is
+  finished, since half of one would break the Noise stream. Make the wait for your send
+  lock (or queue) cancellable and the write itself not; Python's first version shielded
+  the whole send, so a withdrawn reply still went out once the lock came free.
 
 ### Keeping the link up (`link-keeping-vectors.json`)
 
@@ -203,6 +215,19 @@ holds every constant.
   connection error, not a refusal; never replace the pin yourself.
   A WebSocket upgrade answered 401 or 403 is a refusal; any other failed upgrade is a
   connection failure.
+- **KK then XX on every carrier that does KK.** The retry is not a WebSocket detail; do it
+  wherever your SDK offers KK -- WebSocket, HTTPS polling and MQTT. What says the KK
+  attempt failed differs by carrier:
+
+  | Carrier | A failed KK attempt is |
+  |---|---|
+  | all | the hub's Noise answer does not authenticate here |
+  | WebSocket | also the hub closing during the exchange with 1000, 1005 or 1008 |
+  | HTTPS polling | also a request during the exchange answered 401 or 403 |
+  | MQTT | only the first row: a broker has no refusal of its own to relay |
+
+  A KK attempt that simply runs out of time is not retried: the caller's deadline is
+  already spent.
 - **The supervisor** (Python's `LinkSupervisor`, which `AsyncHubSession.run()` asks after
   every attempt):
 
@@ -217,6 +242,16 @@ holds every constant.
   While a link is up, probe it every 60 s, and every 5 s while none is held.
 - **Logging.** Every attempt is logged at debug level only; the application decides what
   deserves more.
+
+### Known open points (after the release)
+
+- **A close inside the settle window after the hub has spoken.** The rule counts a close
+  with a refusal code within 750 ms of the handshake as a refusal, whatever happened in
+  between. Kotlin treats such a close as a drop once the hub has already sent an
+  authenticated frame on the new link, on the reasoning that a hub that answered has
+  accepted the credentials. That is not what the reference or the vectors say today, and
+  neither changes before the release; the question is recorded here to be decided with
+  evidence from real hubs afterwards.
 
 ## The Python reference
 
@@ -233,6 +268,31 @@ holds every constant.
 | closes and handshakes | `thalovant._hive.close_refuses(code, closed_after_handshake_ms=…, code_late_ms=…)`, `REFUSAL_CLOSE_CODES`, `REFUSAL_SETTLE_MS`, `CLOSE_CODE_GRACE_MS`; `ThalovantHubRefusedError`, `ThalovantHubKeyChangedError` (a `ThalovantConnectionError`) |
 | the supervisor | `thalovant.session.LinkSupervisor(policy).after(outcome, now)` → `LinkDecision(action, wait_seconds, reason)` |
 | a kept link | `AsyncHubSession(connect)` / `.for_identity(identity, session=…)`: `connect()`, `run()`, `on()`, `on_state_change()`, `reply()`, `close()` |
+
+## Recording results canonically
+
+Every digest in `contracts/conformance-results.json` -- each case's, and each vector
+file's -- is the SHA-256 of one canonical JSON text: exactly what Python's
+`json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)` writes
+(`tests/conformance_record.py`). A port's encoder must produce the same bytes:
+
+- Object keys sorted by Unicode code point, at every depth. No whitespace at all: `,`
+  between items and `:` between a key and its value.
+- `true`, `false`, `null`. Whole numbers as plain decimal integers -- a produced `1.0` is
+  written `1`. The vectors hold no other numbers.
+- Strings in double quotes, UTF-8, with only these escapes: `\"`, `\\`, `\b`, `\f`, `\n`,
+  `\r`, `\t`, and `\u00xx` (four lowercase hex digits) for every other character below
+  U+0020. Everything else is written raw: `/`, U+007F, every non-ASCII character, and
+  U+2028 and U+2029 in particular (the speech vectors hold them).
+- Encoders that do otherwise by default: Go's `encoding/json` escapes `<`, `>` and `&`
+  and writes U+2028 and U+2029 as ` ` and ` ` (turn HTML escaping off and
+  unescape those two); .NET's `System.Text.Json` escapes non-ASCII unless given a relaxed
+  encoder. Check `\b` and `\f` in particular: several encoders spell them `\u0008` and
+  `\u000c` (or with uppercase hex), which the reference does not. JavaScript's
+  `JSON.stringify` matches once the keys are sorted.
+- The results file is `{"schema_version": 1, "results": {...}}` as
+  `json.dumps(..., indent=2, sort_keys=True)` writes it, plus a final newline. Only the
+  digests inside it are compared, but writing it the same way keeps diffs readable.
 
 ## Idioms per language
 
@@ -304,14 +364,20 @@ Per language:
    the one the case names: method, path, body or body subset, `If-Match`,
    `Authorization`. Answer with the case's status, content type, body and `headers` (a
    429 carries `Retry-After` or `RateLimit-Reset`). Fill `{api_host}` and `{api_port}` in
-   an operation's `links.self` with the loopback server's, and point the SDK at a port
-   nothing listens on for `"api": "unreachable"`. Then compare what your SDK produced with
+   an operation's `links.self` with the loopback server's. For `"api": "unreachable"`,
+   point the SDK at a listener that accepts and resets every connection (`SO_LINGER` 0,
+   then close), not at a closed port: Windows retries a SYN to a closed port for about two
+   seconds before refusing it, which makes the case slow and timing-dependent there. The
+   vector's description still says "a port where nothing listens"; both mean an API that
+   cannot be reached. Then compare what your SDK produced with
    `expect`, shaped exactly as the case shapes it. `tests/test_home_link_vectors.py` and
    `tests/test_link_keeping_vectors.py` are the Python runners; the second drives a real
    Noise handshake against an in-process hub for the `handshake` cases, and the pure
    close rule and supervisor for the others.
 3. Record the results (`THALOVANT_CONFORMANCE_OUT`) and declare the capability in your
    `contracts/sdk-parity.json`, with implementation and test evidence and the vendored
-   paths.
+   paths. Write the JSON the way the reference does (below): the checker compares
+   digests of it, per case and per vector file, and a different spelling of the same
+   value is a different digest.
 4. Acknowledge the new reference digest. Until then the gate reports your SDK as one
    reference behind, and a Python release waits for it.

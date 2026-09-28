@@ -740,35 +740,35 @@
     "files": {
       "src/thalovant/__init__.py": "3a608fa7e13eeb2981d936fe907ecef1769dd75825bf39943946077bdf729ad8",
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
-      "src/thalovant/_hive.py": "7bb32df1a2c11f26bb1e99ac6ac4302783a4904f30d95535fb3ecad52fc18e06",
+      "src/thalovant/_hive.py": "0d3bba5c9b6ba0424d7138ce37c5952fe771e6556db78419c880a37a132c3168",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
       "src/thalovant/_link.py": "1b483dfca852f73d1e1797cfc6f82bc9596952f2efe6dd865377026fbc902470",
-      "src/thalovant/_loop.py": "a722d2618063286781cc5b44fbd5240c8d043fef862c52189ec36da54f2d19d2",
+      "src/thalovant/_loop.py": "c96774c24ed1af6c488fd9a30d2980d9169772d98a23010962ffcf231ec2d0d3",
       "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
-      "src/thalovant/_noise_runtime.py": "79fc6423b8f2d2aaeafbabcdfbbd5d94145f448a2da727087a9952565b56aec3",
+      "src/thalovant/_noise_runtime.py": "fc1176067a452221f9886f103ea3d8d7c46d2900ce3a9613c55a7b1a9af81b8b",
       "src/thalovant/_wire.py": "72ce5c3cd475c2e7e66f3901f8995c4839f85822444cb5199b2725b911826c3e",
       "src/thalovant/_yaml.py": "54786940b7a3688fcca9d9e93e8ada950f1f1b1b82034a565bdb347b3fd44eaa",
       "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
-      "src/thalovant/client.py": "490ad30b66cd8623190fcb23630cb7cda6983f1913ec8b73b021674e8453f5de",
+      "src/thalovant/client.py": "38d913274c78d557d134ccdbc32cc0166fbd45e9f4035e75e5d766f631c0bf4a",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "f73a396ca76d07d7748cd69d9ca7f5f25c928945801f238735e4799861ca79e8",
+      "src/thalovant/control.py": "63f95d9f942044317f0d1ccec2f6c339b493a0e77e8efb1df28aac9093f4584e",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "effb57d38d2b5ec6a5016add6f7bd6262ce7ad2c526bc0ada5a3b273f622004d",
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
-      "src/thalovant/home.py": "74f9f1a40efa3111f2f0aceaf8ee2089063d121416198952d681f170b1370630",
+      "src/thalovant/home.py": "85161fda0bc91a1a099794117b0250e55ab9173f9d0e2203f5bc9efeb432b41f",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "dbce0fc107197ef211d5eccf68f9e0ef163211395b6759c6688ddb8b18f2f5c3",
-      "src/thalovant/intents.py": "297df8fbceff0627765e4358970d5b916bbaf3cd981d0a4e41f07a0ad38d6084",
+      "src/thalovant/intents.py": "ac3ca26ed92f6db54f783c4ff5320cf39d2f266d1dce2d93a9b87f55c7db9900",
       "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
       "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
       "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
       "src/thalovant/native_auth.py": "86f04a39d04aedc580101d72fc4100b65da168d920d05f1b08de2dea91bf8aa8",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
-      "src/thalovant/rich.py": "2bbc769be258ca114e7afe41a2b7b88851715ebfa847e313f3611b1bf110897c",
+      "src/thalovant/rich.py": "7b4046ead3abca687e7cd353e653ced2e60b66f6d0b8b776367e8172fe218beb",
       "src/thalovant/session.py": "1e15647f0d07dc1bd8188b551db1d8ea50ac5353b443a8f3a0b60bb0bd013896",
       "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "32358b00b2225bfefdceabc8d70efa79eb2ffa61a0feccab6edf2e35150348b7"
+      "src/thalovant/transport.py": "755c4ae9ef4e3390f3d845ed6585e4ad4fba193ca79ee85f6f41b39e7064e96c"
     }
   },
   "reference_history": [
@@ -807,7 +807,8 @@
     "b16579bd501d18147e6b74b02d67d98ce6aeb850f369de2138fbdfb598469b7c",
     "f859eae591c57dfb82c8241c44cc7d46ba52ef2dcd0cafaa6bd0187c2d11f459",
     "f1593522f0af94b56d35ea92909d8bd71d1ae5fc7f6596b6212a0cc4c01c0329",
-    "3cdc3e21b6f5505794d2d0988ea92febe3c4acce228429e84e87e93da07c4bab"
+    "3cdc3e21b6f5505794d2d0988ea92febe3c4acce228429e84e87e93da07c4bab",
+    "2460eb90bd56b1b182be3db365ba29bfef712d4ea2748061652ba0f28dcf6f50"
   ],
   "schema_version": 1
 }
