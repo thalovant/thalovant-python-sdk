@@ -1,0 +1,538 @@
+{
+ "schema_version": 1,
+ "description": "Keeping a long-lived hub link up: how a close is read, how a failed handshake is classified, and what a supervisor such as AsyncHubSession.run() does after each outcome. The policy block holds every constant; every duration is whole milliseconds. 'close' cases: a close is the hub refusing the credentials ('refused') when its RFC 6455 code is one of refusal_close_codes (1005 includes a close frame with no status at all) and it happened during the handshake (when 'handshake') or within settle_ms after it (when 'after_handshake', after_ms after it). A transport may learn the code late (code_late_ms after the close) and it still counts within close_code_grace_ms; the close's own time, not when it was learnt, decides the window. Anything else -- another code, a socket that ended with no close frame (code null, which RFC 6455 reports as 1006), a close after the window, a code learnt too late -- is 'dropped'. 'handshake' cases run one connect in a situation and list the patterns the hub saw, in order. A Noise handshake message that does not authenticate under the key the password derives (a wrong password) is 'refused'. A KK attempt that fails -- its answer does not authenticate, or the hub closes during it with a refusal code, which is what a hub does when it cannot read a KK first message -- is followed at once, inside the same connect, by one XX attempt, and the XX attempt's outcome is the connect's: only XX tells a changed password from a changed hub key. A hub whose static key is not the one pinned for it is 'key_changed': a connection error, not a refusal, and the pin is never replaced. A WebSocket upgrade answered 401 or 403 is 'refused'; any other failed upgrade is 'failed'. 'supervise' cases: events are the outcome of each attempt, at_ms after the first, and expect is the decision after each: 'up' holds, and resets the ladder and the refusal clock; 'dropped' (an established link went down) retries at once, wait_ms 0; 'failed' waits the ladder's step -- retry_ms, doubling to retry_ceiling_ms -- and stops counting refusals; 'refused' waits the ladder's step the same way until refusals have lasted refusal_grace_ms since the first of them (inclusive), then gives up with reason 'refused'; 'key_changed' gives up at once with reason 'key_changed'. While a link is up it is probed every probe_ms, and every probe_down_ms while none is held. Every attempt is logged at debug level only.",
+ "source": "hivemind-core 5.x (hivemind_core/protocol.py: the unauthenticated close, the Noise abort); RFC 6455 §7.1.5, §7.4.1; the Home Assistant contract v1 (keeping the link)",
+ "policy": {
+  "retry_ms": 10000,
+  "retry_ceiling_ms": 120000,
+  "probe_ms": 60000,
+  "probe_down_ms": 5000,
+  "refusal_grace_ms": 600000,
+  "settle_ms": 750,
+  "close_code_grace_ms": 250,
+  "refusal_close_codes": [
+   1000,
+   1005,
+   1008
+  ]
+ },
+ "cases": [
+  {
+   "name": "no status during the handshake is a refusal",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1005,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "1008 during the handshake is a refusal",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1008,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "1000 during the handshake is a refusal",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1000,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "1011 during the handshake is the hub's trouble",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1011,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "1013 during the handshake is the hub's trouble",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1013,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "1001 during the handshake is a hub going away",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1001,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "a socket that ended without a close frame is a drop",
+   "kind": "close",
+   "when": "handshake",
+   "code": null,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "1006 is a drop",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1006,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "no status right after the handshake is a refusal",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 100,
+   "code": 1005,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "the settle window's last moment still counts",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 750,
+   "code": 1008,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "after the settle window a refusal code is a drop",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 751,
+   "code": 1008,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "a code learnt late still counts within the grace",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 700,
+   "code": 1005,
+   "code_late_ms": 250,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "the close's own time decides the window, not when it was learnt",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 600,
+   "code": 1000,
+   "code_late_ms": 200,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
+   "name": "a code learnt too late is no code",
+   "kind": "close",
+   "when": "handshake",
+   "code": 1008,
+   "code_late_ms": 251,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "a pinned hub with the right password connects over KK",
+   "kind": "handshake",
+   "situation": "pinned",
+   "expect": {
+    "outcome": "connected",
+    "patterns": [
+     "KK"
+    ]
+   }
+  },
+  {
+   "name": "a wrong password on first contact is a refusal",
+   "kind": "handshake",
+   "situation": "wrong_password",
+   "expect": {
+    "outcome": "refused",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "a password changed since pinning: KK fails, XX at once, and XX refuses",
+   "kind": "handshake",
+   "situation": "password_changed_since_pinning",
+   "expect": {
+    "outcome": "refused",
+    "patterns": [
+     "KK",
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "a hub key changed since pinning: KK fails, XX at once, and XX meets the pin",
+   "kind": "handshake",
+   "situation": "hub_key_changed",
+   "hub_offers_kk": true,
+   "expect": {
+    "outcome": "key_changed",
+    "patterns": [
+     "KK",
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "a hub key changed, from a hub that offers only XX",
+   "kind": "handshake",
+   "situation": "hub_key_changed",
+   "hub_offers_kk": false,
+   "expect": {
+    "outcome": "key_changed",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "an upgrade refused with 401",
+   "kind": "handshake",
+   "situation": "upgrade_status",
+   "status": 401,
+   "expect": {
+    "outcome": "refused",
+    "patterns": []
+   }
+  },
+  {
+   "name": "an upgrade refused with 403",
+   "kind": "handshake",
+   "situation": "upgrade_status",
+   "status": 403,
+   "expect": {
+    "outcome": "refused",
+    "patterns": []
+   }
+  },
+  {
+   "name": "an upgrade the hub could not serve",
+   "kind": "handshake",
+   "situation": "upgrade_status",
+   "status": 503,
+   "expect": {
+    "outcome": "failed",
+    "patterns": []
+   }
+  },
+  {
+   "name": "the ladder doubles to its ceiling",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 10000,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 30000,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 70000,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 150000,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 270000,
+     "outcome": "failed"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 20000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 40000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 80000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 120000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 120000
+    }
+   ]
+  },
+  {
+   "name": "coming up resets the ladder, and a drop dials again at once",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 10000,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 30000,
+     "outcome": "up"
+    },
+    {
+     "at_ms": 90000,
+     "outcome": "dropped"
+    },
+    {
+     "at_ms": 90000,
+     "outcome": "failed"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 20000
+    },
+    {
+     "action": "hold"
+    },
+    {
+     "action": "retry",
+     "wait_ms": 0
+    },
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    }
+   ]
+  },
+  {
+   "name": "refusals are retried through the grace, then given up",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 10000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 30000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 70000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 150000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 270000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 390000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 510000,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 630000,
+     "outcome": "refused"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 20000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 40000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 80000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 120000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 120000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 120000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 120000
+    },
+    {
+     "action": "give_up",
+     "reason": "refused"
+    }
+   ]
+  },
+  {
+   "name": "the grace ends exactly at refusal_grace_ms",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 600000,
+     "outcome": "refused"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "give_up",
+     "reason": "refused"
+    }
+   ]
+  },
+  {
+   "name": "a link that came up restarts the refusal clock",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 590000,
+     "outcome": "up"
+    },
+    {
+     "at_ms": 620000,
+     "outcome": "refused"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "hold"
+    },
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    }
+   ]
+  },
+  {
+   "name": "a failure in between restarts the refusal clock",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 10000,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 620000,
+     "outcome": "refused"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 20000
+    },
+    {
+     "action": "retry",
+     "wait_ms": 40000
+    }
+   ]
+  },
+  {
+   "name": "a changed hub key stops at once",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "failed"
+    },
+    {
+     "at_ms": 10000,
+     "outcome": "key_changed"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "give_up",
+     "reason": "key_changed"
+    }
+   ]
+  }
+ ]
+}

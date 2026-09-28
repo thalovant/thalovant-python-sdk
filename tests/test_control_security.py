@@ -64,35 +64,74 @@ def test_redirect_never_contacts_target_or_forwards_credentials(status, auth):
                 api.session.close()
 
 
-def test_credential_transport_policy_checks_before_requests_and_keeps_explicit_loopback(monkeypatch):
+class _Answer:
+    """What aiohttp's request() hands back, answering 200 with a body."""
+
+    def __init__(self, body):
+        self.status = 200
+        self.headers = {}
+        self._body = body
+
+    async def text(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+
+@pytest.mark.parametrize("sdk_session", [True, False], ids=["aiohttp", "requests-session"])
+def test_credential_transport_policy_checks_before_requests_and_keeps_explicit_loopback(monkeypatch, sdk_session):
+    import aiohttp
+
     calls = []
-    def request(session, method, url, **kwargs):
-        calls.append((url, kwargs))
-        response = requests.Response()
-        response.status_code = 200
-        response._content = b'{"access_token":"synthetic-token","hubs":[]}'
-        return response
-    monkeypatch.setattr(requests.Session, "request", request)
+    if sdk_session:
+        def request(session, method, url, **kwargs):
+            calls.append((url, kwargs))
+            return _Answer('{"access_token":"synthetic-token","hubs":[]}')
+        monkeypatch.setattr(aiohttp.ClientSession, "request", request)
+        build = lambda url, **kw: ThalovantControlPlane(url, **kw)  # noqa: E731
+    else:
+        def request(session, method, url, **kwargs):
+            calls.append((url, kwargs))
+            response = requests.Response()
+            response.status_code = 200
+            response._content = b'{"access_token":"synthetic-token","hubs":[]}'
+            return response
+        monkeypatch.setattr(requests.Session, "request", request)
+        build = lambda url, **kw: ThalovantControlPlane(url, session=requests.Session(), **kw)  # noqa: E731
     for url in ("http://example.invalid", "http://localhost.example.invalid", "ftp://127.0.0.1", "https://user:synthetic-password@example.invalid"):
         with pytest.raises(ThalovantAPIError):
-            ThalovantControlPlane(url, access_token="synthetic-token").list_hubs()
+            build(url, access_token="synthetic-token").list_hubs()
         with pytest.raises(ThalovantAPIError):
-            ThalovantControlPlane(url).login("synthetic@example.invalid", "synthetic-password")
+            build(url).login("synthetic@example.invalid", "synthetic-password")
     assert calls == []
     for url in ("https://custom.example.invalid", "http://localhost", "http://127.0.0.1", "http://[::1]"):
-        ThalovantControlPlane(url, access_token="synthetic-token").list_hubs()
-        ThalovantControlPlane(url).login("synthetic@example.invalid", "synthetic-password")
+        build(url, access_token="synthetic-token").list_hubs()
+        build(url).login("synthetic@example.invalid", "synthetic-password")
     assert len(calls) == 8
     assert all(kwargs["allow_redirects"] is False for _, kwargs in calls)
 
 
-def test_request_exception_traceback_does_not_expose_credentials(monkeypatch):
+@pytest.mark.parametrize("sdk_session", [True, False], ids=["aiohttp", "requests-session"])
+def test_request_exception_traceback_does_not_expose_credentials(monkeypatch, sdk_session):
+    import aiohttp
+
     secret = "synthetic-secret-do-not-log"
-    def request(*args, **kwargs):
-        raise requests.ConnectionError("https://example.invalid?authorization=" + secret)
-    monkeypatch.setattr(requests.Session, "request", request)
+    if sdk_session:
+        def request(*args, **kwargs):
+            raise aiohttp.ClientConnectionError("https://example.invalid?authorization=" + secret)
+        monkeypatch.setattr(aiohttp.ClientSession, "request", request)
+        api = ThalovantControlPlane(access_token="synthetic-token")
+    else:
+        def request(*args, **kwargs):
+            raise requests.ConnectionError("https://example.invalid?authorization=" + secret)
+        monkeypatch.setattr(requests.Session, "request", request)
+        api = ThalovantControlPlane(access_token="synthetic-token", session=requests.Session())
     with pytest.raises(ThalovantAPIError) as caught:
-        ThalovantControlPlane(access_token="synthetic-token").list_hubs()
+        api.list_hubs()
     assert secret not in "".join(traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__))
     assert caught.value.__cause__ is None
     assert caught.value.__suppress_context__
@@ -120,6 +159,7 @@ def test_injected_session_credentials_require_tls_even_for_public_get(monkeypatc
 
 
 def test_anonymous_plaintext_discovery_does_not_load_ambient_netrc_credentials(monkeypatch):
+    """A requests-style session passed in keeps 0.8's protection."""
     def netrc(*args, **kwargs):
         raise AssertionError("Anonymous plaintext discovery must not load netrc")
     sent = []
@@ -131,7 +171,7 @@ def test_anonymous_plaintext_discovery_does_not_load_ambient_netrc_credentials(m
         return response
     monkeypatch.setattr(requests.sessions, "get_netrc_auth", netrc)
     monkeypatch.setattr(requests.Session, "send", send)
-    api = ThalovantControlPlane("http://custom.example.invalid")
+    api = ThalovantControlPlane("http://custom.example.invalid", session=requests.Session())
     try:
         api.list_public_hubs()
         assert len(sent) == 1
@@ -139,3 +179,30 @@ def test_anonymous_plaintext_discovery_does_not_load_ambient_netrc_credentials(m
         assert "cookie" not in sent[0].headers
     finally:
         api.session.close()
+
+
+def test_the_sdk_session_never_reads_netrc_or_keeps_cookies(monkeypatch, tmp_path):
+    """aiohttp reads ~/.netrc only with trust_env, which the SDK never sets."""
+    netrc = tmp_path / ".netrc"
+    netrc.write_text("machine 127.0.0.1 login synthetic password synthetic-netrc-secret\n")
+    monkeypatch.setenv("NETRC", str(netrc))
+    seen = []
+
+    def handler(peer):
+        seen.append({key.lower(): value for key, value in peer.headers.items()})
+        peer.send_response(200)
+        peer.send_header("set-cookie", "tracking=synthetic; Path=/")
+        peer.send_header("content-type", "application/json")
+        peer.end_headers()
+        peer.wfile.write(b'{"data": []}')
+
+    with server(handler) as url:
+        api = ThalovantControlPlane(url)
+        try:
+            api.list_public_hubs()
+            api.list_public_hubs()
+        finally:
+            api.close()
+    assert len(seen) == 2
+    assert all("authorization" not in headers for headers in seen)
+    assert "cookie" not in seen[1], "a cookie the API set must not ride along on the next request"

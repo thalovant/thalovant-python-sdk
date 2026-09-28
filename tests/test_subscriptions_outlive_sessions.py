@@ -94,11 +94,12 @@ def test_close_during_reconnect_cannot_restore_a_closed_handler():
         reconnect = workers.submit(sdk.connect)
         try:
             assert transport.registering.wait(5)
+            # Closed while its registration is in flight. In 0.6.9 the removal
+            # completed first and the registration then revived it; now the
+            # registration that lands takes it straight back off, and the
+            # handler, closed, never runs again either way.
             closed = workers.submit(subscription.close)
-            # Removal must serialize with the in-flight registration. In 0.6.9
-            # it completed first, and the subsequent registration revived it.
-            with pytest.raises(TimeoutError):
-                closed.result(timeout=0.1)
+            closed.result(timeout=5)
         finally:
             transport.release_registration.set()
         reconnect.result(timeout=5)
@@ -191,14 +192,16 @@ def test_subscription_handoff_while_connection_is_pending(monkeypatch, close_pen
     existing = sdk.on("existing", lambda event: seen.append(event))
     adding = threading.Event()
     release_add = threading.Event()
-    original_add = sdk._add_subscription
+    original_add = sdk._core._add_subscription
 
-    def paused_add(name, handler):
+    async def paused_add(name, handler):
+        import asyncio
+
         adding.set()
-        assert release_add.wait(5)
-        original_add(name, handler)
+        assert await asyncio.to_thread(release_add.wait, 5)
+        await original_add(name, handler)
 
-    monkeypatch.setattr(sdk, "_add_subscription", paused_add)
+    monkeypatch.setattr(sdk._core, "_add_subscription", paused_add)
     with ThreadPoolExecutor(max_workers=2) as workers:
         added = workers.submit(sdk.on, "event", lambda event: seen.append(event))
         try:

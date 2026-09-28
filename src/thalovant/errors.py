@@ -1,5 +1,7 @@
 """SDK exception hierarchy."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -108,10 +110,12 @@ class ThalovantPolicyDeniedError(ThalovantRuntimeError):
 
     @classmethod
     def from_event(cls, event: "Any") -> "ThalovantPolicyDeniedError":
-        data = getattr(event, "data", None) or {}
+        raw = getattr(event, "data", None)
+        data: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
         # The policy's own detail rides nested under data.data
         # (hivemind-core _send_policy_denied: "data": verdict.data).
-        inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+        nested = data.get("data")
+        inner: Mapping[str, Any] = nested if isinstance(nested, dict) else {}
         allowed = inner.get("allowed")
         code = str(data.get("code") or "")
         quota = None
@@ -213,11 +217,32 @@ class ThalovantAPIError(ThalovantError):
         read_code, read_detail = _problem_fields(self.problem)
         self.code = code if code is not None else read_code
         self.detail = detail if detail is not None else read_detail
+        #: How long the API asked the caller to wait before trying again, in
+        #: seconds, when it said: a 429's ``retry_after_seconds`` (at the top
+        #: of the problem or inside its ``detail`` object), else its
+        #: ``Retry-After`` or ``RateLimit-Reset`` header. ``None`` otherwise.
+        self.retry_after_seconds: float | None = _retry_after(self.problem)
 
 
 def _problem_text(value: Any) -> str | None:
     """A string with something in it, exactly as sent; anything else is absent."""
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _retry_after(problem: Mapping[str, Any] | None) -> float | None:
+    """A problem's ``retry_after_seconds``, at its top or inside a ``detail`` object.
+
+    The API's per-token 429 is FastAPI's envelope around a structured refusal,
+    so the number sits inside ``detail``, as ``code`` does.
+    """
+    if not isinstance(problem, Mapping):
+        return None
+    nested = problem.get("detail")
+    for source in (problem, nested if isinstance(nested, Mapping) else {}):
+        value = source.get("retry_after_seconds")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+            return float(value)
+    return None
 
 
 def _problem_fields(problem: Mapping[str, Any] | None) -> tuple[str | None, str | None]:
@@ -238,5 +263,136 @@ def _problem_fields(problem: Mapping[str, Any] | None) -> tuple[str | None, str 
     return code, detail
 
 
+class ThalovantAPIUnreachableError(ThalovantAPIError, ThalovantConnectionError):
+    """Raised when the control plane could not be reached at all.
+
+    DNS, the TCP connection, TLS, a proxy, or the request's own timeout: the
+    API never answered, so there is no ``status_code``, ``code``, ``detail`` or
+    ``problem``. Both an API error, which is what 0.8 raised here, so an
+    ``except ThalovantAPIError`` still catches it, and a connection error, so
+    a caller can tell "the API is out of reach, try again later" from "the API
+    answered no" without reading the message.
+    """
+
+
 class ThalovantUnsupportedProtocolError(ThalovantError):
     """Raised when a requested data-plane protocol is not supported locally."""
+
+
+class ThalovantHubRefusedError(ThalovantConnectionError):
+    """Raised when a hub turns this connection's credentials away.
+
+    A hub closes the socket without a status for an access key it does not
+    know, with 1008 for a malformed authorization, and aborts the Noise
+    handshake for a wrong password. None of those clears up on its own the way
+    a dropped network does: the connection was deleted, or its secret changed.
+    A caller that reconnects forever on this is dialling a door that is shut.
+    """
+
+
+class ThalovantHubKeyChangedError(ThalovantConnectionError):
+    """Raised when a hub answers with a different Noise key than the one pinned for it.
+
+    The first connection to a hub pins its static key; every later one must
+    present the same key. A different one is either the hub being replaced or
+    somebody in between, and the SDK cannot tell which, so it never connects
+    and never replaces the pin by itself. It is a connection error rather than
+    a refusal -- the hub did not turn the credentials away -- but retrying
+    changes nothing: :meth:`AsyncHubSession.run` stops on it at once. Remove
+    the pin only once the new key is known to be the hub's.
+    """
+
+
+class ThalovantAuthError(ThalovantAPIError):
+    """Raised when the control plane rejects the API token itself.
+
+    A 401: the token is unknown, expired or revoked. Signing in again is the
+    fix, which is not true of any other refusal.
+    """
+
+
+class ThalovantPlanError(ThalovantAPIError):
+    """Raised when the account's plan does not allow the request.
+
+    A 402, or a 403 whose code is ``plan_limit``. ``problem`` carries the
+    ``resource``, ``limit`` and ``used`` the API reported.
+    """
+
+
+class ThalovantAlreadyLinkedError(ThalovantAPIError):
+    """Raised when a hub already has the one connection of this kind it allows.
+
+    A 409 ``home_assistant_already_linked``: a hub takes one Home Assistant
+    connection. ``client_id`` names the connection that holds the link when
+    the API said which.
+    """
+
+    def __init__(self, *args: object, client_id: str | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.client_id = client_id
+
+
+class ThalovantUnsupportedConnectionTypeError(ThalovantAPIError):
+    """Raised when the API does not know the connection type asked for.
+
+    A 422 naming ``connection_type``, or a created connection whose type did
+    not come back as asked: an API that silently ignores the field would hand
+    out an ordinary connection with the grants of one. The SDK deletes such a
+    connection before raising.
+    """
+
+
+class ThalovantDeviceLoginPending(ThalovantAPIError):
+    """Raised by one device-login poll while the person has not decided yet.
+
+    ``interval`` is how many seconds to wait before the next poll, already
+    lengthened when the API asked to slow down.
+    """
+
+    def __init__(self, *args: object, interval: float = 5.0, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.interval = interval
+
+
+class ThalovantDeviceLoginExpired(ThalovantAPIError):
+    """Raised when the device code expired before anybody approved it."""
+
+
+class ThalovantDeviceLoginDenied(ThalovantAPIError):
+    """Raised when the person declined the sign-in."""
+
+
+class ThalovantAdmissionTimeoutError(ThalovantConnectionError, ThalovantTimeoutError):
+    """Raised when a hub has not admitted a new connection within the wait.
+
+    Both a connection error and a timeout: the connection exists and may still
+    be admitted, so waiting longer, or connecting later, can succeed.
+    """
+
+
+class ThalovantAdmissionFailedError(ThalovantConnectionError):
+    """Raised when a new connection will not be admitted.
+
+    Either the operation that admits it failed or timed out on the platform --
+    ``error_code`` is the operation's own code -- or the API refused the wait
+    itself, and then ``status_code``, ``code``, ``detail`` and ``problem``
+    keep what it answered, as a :class:`ThalovantAPIError` does. An
+    authentication refusal is not this: it is raised as the API's own error.
+    """
+
+    def __init__(
+        self,
+        *args: object,
+        error_code: str | None = None,
+        status_code: int | None = None,
+        code: str | None = None,
+        detail: str | None = None,
+        problem: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(*args)
+        self.error_code = error_code
+        self.status_code = status_code
+        self.problem: dict[str, Any] | None = dict(problem) if isinstance(problem, Mapping) else None
+        read_code, read_detail = _problem_fields(self.problem)
+        self.code = code if code is not None else read_code
+        self.detail = detail if detail is not None else read_detail

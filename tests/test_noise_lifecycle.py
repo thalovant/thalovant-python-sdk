@@ -137,58 +137,103 @@ def test_disconnect_cleans_owned_mqtt_resources_once():
     assert transport._client is None and transport._noise is None
 
 
+class FakeCarrier:
+    """A carrier with no network: it opens when told to and never says anything."""
+
+    is_socket = False
+
+    def __init__(self, transport, *, fail=None, gate=None, entered=None):
+        self.transport = transport
+        self.fail = fail
+        self.gate = gate
+        self.entered = entered
+        self.cleanup_task = None
+        self.cleanup_error = None
+        self.closes = 0
+        self.opened = False
+        self.closed = None
+
+    def open_ok(self):
+        return self.opened and self.closes == 0
+
+    def alive(self):
+        return self.open_ok()
+
+    def start(self):
+        pass
+
+    async def open(self, timeout):
+        import asyncio
+
+        self.closed = asyncio.Event()
+        if self.entered is not None:
+            self.entered.set()
+        if self.gate is not None:
+            await asyncio.to_thread(self.gate.wait, 2)
+        if self.fail is not None:
+            raise self.fail
+        self.opened = True
+
+    async def receive(self, timeout, *, handshake):
+        await self.closed.wait()
+        from thalovant._hive import _Closed
+
+        raise _Closed(None, refused=False)
+
+    async def send(self, frame, timeout):
+        return None
+
+    async def close_socket(self):
+        if self.closed is not None:
+            self.closed.set()
+
+    async def close(self):
+        self.closes += 1
+        await self.close_socket()
+
+
+def _ready_handshake(monkeypatch):
+    """Skip the negotiation: a carrier that opens is a session that is ready."""
+    from thalovant._hive import AsyncHiveMindTransport
+
+    async def handshake(self, carrier, generation):
+        await carrier.open(self.connect_timeout)
+        self._check(generation)
+        self._protocol.ready = True
+
+    monkeypatch.setattr(AsyncHiveMindTransport, "_handshake", handshake)
+
+
 def test_http_connect_exception_cleans_client_and_reservation(monkeypatch):
-    from thalovant import _http_runtime
+    from thalovant._hive import AsyncHiveMindHTTPTransport
     created = []
 
-    class Failing:
-        def __init__(self, transport):
-            self.closes = 0
-            created.append(self)
+    def failing(self):
+        carrier = FakeCarrier(self, fail=OSError("synthetic dial failure"))
+        created.append(carrier)
+        return carrier
 
-        def connect(self):
-            raise OSError("synthetic dial failure")
-
-        def close(self):
-            self.closes += 1
-
-    monkeypatch.setattr(_http_runtime, "HTTPNoiseClient", Failing)
+    monkeypatch.setattr(AsyncHiveMindHTTPTransport, "_new_carrier", failing)
     transport = HiveMindHTTPTransport(identity(), useragent="fixture")
     with pytest.raises(ThalovantConnectionError):
         transport.connect()
-    assert created[0].closes == 1 and transport._client is None and not transport._connecting
+    assert created[0].closes == 1 and transport._carrier is None and not transport._connecting
     assert transport.connection_info().phase == "error"
 
 
 def test_cancelled_old_http_connect_cannot_mark_new_connection_ready_or_close_it(monkeypatch):
-    from thalovant import _http_runtime
+    from thalovant._hive import AsyncHiveMindHTTPTransport
     entered, release = threading.Event(), threading.Event()
     created = []
 
-    class Client:
-        def __init__(self, transport):
-            self.connected = threading.Event()
-            self.handshake_event = threading.Event()
-            self.channel = SimpleNamespace(ready=False)
-            self.closes = 0
-            self.index = len(created)
-            created.append(self)
+    def carrier(self):
+        first = not created
+        made = FakeCarrier(self, gate=release if first else None, entered=entered if first else None)
+        created.append(made)
+        return made
 
-        def connect(self):
-            if self.index == 0:
-                entered.set()
-                assert release.wait(2)
-            self.channel.ready = True
-            self.connected.set(); self.handshake_event.set()
-
-        def close(self):
-            self.closes += 1
-            self.connected.clear(); self.handshake_event.clear()
-
-        def is_alive(self):
-            return self.connected.is_set()
-
-    monkeypatch.setattr(_http_runtime, "HTTPNoiseClient", Client)
+    monkeypatch.setattr(AsyncHiveMindHTTPTransport, "_new_carrier", carrier)
+    _ready_handshake(monkeypatch)
     transport = HiveMindHTTPTransport(identity(), useragent="fixture")
     with ThreadPoolExecutor(max_workers=1) as pool:
         old_connect = pool.submit(transport.connect)
@@ -197,12 +242,12 @@ def test_cancelled_old_http_connect_cannot_mark_new_connection_ready_or_close_it
             transport.connect()
         transport.disconnect()
         transport.connect()
-        assert transport._client is created[1] and transport.connection_info().phase == "ready"
+        assert transport._carrier is created[1] and transport.connection_info().phase == "ready"
         release.set()
         with pytest.raises(ThalovantConnectionError):
             old_connect.result(timeout=1)
     assert created[0].closes == 1 and created[1].closes == 0
-    assert transport._client is created[1] and transport.connection_info().phase == "ready"
+    assert transport._carrier is created[1] and transport.connection_info().phase == "ready"
     transport.disconnect()
 
 

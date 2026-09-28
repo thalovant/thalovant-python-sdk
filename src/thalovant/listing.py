@@ -18,13 +18,19 @@ as a defect and so does a Spanish question closed with a full stop.
 """
 from __future__ import annotations
 
+import importlib
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
-try:
-    import thalovant_languages as _languages
-except ImportError:  # pragma: no cover - exercised by monkeypatching below
-    _languages = None  # type: ignore[assignment]
+
+def _load() -> Any:
+    try:
+        return importlib.import_module("thalovant_languages")
+    except ImportError:  # pragma: no cover - exercised by monkeypatching below
+        return None
+
+
+_languages: Any = _load()
 
 
 def available() -> bool:
@@ -32,18 +38,18 @@ def available() -> bool:
     return _languages is not None
 
 
-def language_data(lang: str | None) -> dict:
+def language_data(lang: str | None) -> dict[str, Any]:
     """What is known about a language: its file in ``thalovant-languages``,
     by the closest tag. An empty mapping for a language nothing describes,
     for none at all, and for a client without the language data."""
-    return _languages.language(lang) if _languages is not None else {}
+    return dict(_languages.language(lang)) if _languages is not None else {}
 
 
 def sentence_ends() -> str:
     """Every mark a sentence ends on, in any script."""
     if _languages is None:
         return ""
-    return _languages.marks("sentence_ends", "spaced") + _languages.marks("sentence_ends", "unspaced")
+    return str(_languages.marks("sentence_ends", "spaced")) + str(_languages.marks("sentence_ends", "unspaced"))
 
 
 def slot_examples(lang: str | None) -> dict[str, str]:
@@ -93,7 +99,7 @@ def asks(text: str, lang: str | None) -> bool:
         return False
     if text.rstrip()[-1:] in _QUESTION_MARKS_15_1:
         return True
-    return _languages.asks(text, lang)
+    return bool(_languages.asks(text, lang))
 
 
 def as_sentence(text: str, lang: str | None = None) -> str:
@@ -138,7 +144,7 @@ def rank(phrases: Iterable[str], lang: str | None) -> tuple[str, ...]:
     pair. Capped at eight words, because past that a phrase is a recital;
     among equals the shorter string wins, so the choice stays stable.
     """
-    def key(text: str) -> tuple:
+    def key(text: str) -> tuple[Any, ...]:
         words = len(text.split())
         return (dangling(text, lang), "{" in text, -min(words, _FULL_ENOUGH_WORDS), len(text))
 

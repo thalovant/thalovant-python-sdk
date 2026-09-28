@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ovos_spec_tools.language import closest_lang
+from ._language import closest_lang
 
 from .listing import rank
 
@@ -385,6 +385,6 @@ def humanize(name: str) -> str:
     return " ".join(_tokens(name))
 
 
-def sort_key(name: str):
+def sort_key(name: str) -> list[int | str]:
     """Alphabetical, but with runs of digits compared as numbers."""
     return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", name) if chunk]

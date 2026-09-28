@@ -4,11 +4,41 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import re
 from typing import Any, Iterable, Mapping
 
 
-_SSML_RE = re.compile(r"<{1}/?[^>]*>{1}")
+_QUOTES = "\"'"
+
+
+def _tag_ends(text: str) -> list[int]:
+    """For every position, where a tag's ``>`` is when scanning from there, or -1.
+
+    Scanning a tag's inside is: a ``>`` ends it, a quote skips to its partner
+    (and a quote with none ends the scan with no tag), anything else moves on.
+    That makes the answer from one position the answer from the next, or from
+    just past the partner quote -- so one pass from the end computes all of
+    them, and no input takes more than linear time. A regular expression for
+    the same rule backtracked: an unclosed tag followed by 1,600 spaces took
+    six seconds, on text that comes off the network.
+    """
+    size = len(text)
+    ends = [-1] * (size + 1)
+    after: dict[str, int] = {quote: -1 for quote in _QUOTES}
+    for index in range(size - 1, -1, -1):
+        char = text[index]
+        if char == ">":
+            ends[index] = index
+        elif char in _QUOTES:
+            partner = after[char]
+            ends[index] = -1 if partner < 0 else ends[partner + 1]
+            after[char] = index
+        else:
+            ends[index] = ends[index + 1]
+    return ends
+
+
+def _is_letter(char: str) -> bool:
+    return ("a" <= char <= "z") or ("A" <= char <= "Z")
 
 
 @dataclass(frozen=True)
@@ -36,9 +66,56 @@ class ThalovantDisplayItem:
 
 
 def strip_ssml(text: str) -> str:
-    """Remove simple SSML/XML tags from display text."""
+    """Remove SSML/XML tags, comments and processing instructions from display text.
 
-    return _SSML_RE.sub("", text)
+    A tag is ``<`` or ``</`` immediately followed by an ASCII letter, then
+    everything up to the next ``>`` that is not inside a quoted attribute
+    value; a comment is ``<!--`` to ``-->``, a processing instruction ``<?``
+    to ``?>``. Any other ``<`` is text, so "5 < 6 and 7 > 3" survives whole,
+    and so does an unclosed tag. Entities are left as they are. Linear in the
+    length of the text, whatever it holds.
+    """
+
+    if "<" not in text:
+        return text
+    size = len(text)
+    ends: list[int] | None = None
+    # Once a closer is missing from some point on, it is missing from every
+    # later point: remember that rather than search again.
+    missing: dict[str, int] = {}
+    out: list[str] = []
+    index = 0
+    while index < size:
+        char = text[index]
+        if char != "<":
+            nxt = text.find("<", index)
+            nxt = size if nxt < 0 else nxt
+            out.append(text[index:nxt])
+            index = nxt
+            continue
+        closer = "-->" if text.startswith("<!--", index) else "?>" if text.startswith("<?", index) else None
+        if closer is not None:
+            begin = index + (4 if closer == "-->" else 2)
+            found = -1
+            if begin < missing.get(closer, size + 1):
+                found = text.find(closer, begin)
+                if found < 0:
+                    missing[closer] = begin
+            if found >= 0:
+                index = found + len(closer)
+                continue
+        else:
+            name = index + 2 if index + 1 < size and text[index + 1] == "/" else index + 1
+            if name < size and _is_letter(text[name]):
+                if ends is None:
+                    ends = _tag_ends(text)
+                end = ends[name + 1]
+                if end >= 0:
+                    index = end + 1
+                    continue
+        out.append("<")
+        index += 1
+    return "".join(out)
 
 
 def rich_media_from_data(data: Mapping[str, Any]) -> dict[str, Any]:

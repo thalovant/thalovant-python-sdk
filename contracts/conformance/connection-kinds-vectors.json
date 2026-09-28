@@ -1,0 +1,666 @@
+{
+ "schema_version": 1,
+ "description": "Creating a connection of a given kind, and deleting one. create sends POST /v1/clients with spec.connection_type set to the kind and spec.version \"1\" (plus the connection's own credentials, which the vectors leave out); the kind is a spec field -- a top-level kind is ignored by the API. The answer must echo the kind in spec.connection_type: when it does, the outcome is 'created' with the client id, the echoed type and the id of the operation that admits it (null when the API sent none); when it does not, the SDK deletes the client it just made (DELETE with If-Match: the answer's etag) and the outcome is 'unsupported', deleted=true. Refusals map to kinds a caller can branch on: a 422 is 'unsupported' when connection_type is named in the problem's detail or code, or in the loc or msg of one of its validation errors (under errors, or under detail when that is a list) -- never anywhere else, since a validation error echoes the request, connection_type included, as its input; 402, and 403 with code plan_limit, are 'plan'; 409 home_assistant_already_linked is 'already_linked' with the client_id the problem names; 401, 423, and 403 'Insufficient scopes' are 'auth'; every other refusal is 'error'. Each carries the api-errors fields status, code and detail. delete sends DELETE /v1/clients/{id} with If-Match: the etag given, or the etag a GET of the client answers when none is given; a 412 reads the etag again and retries once; a 404, on the GET or the DELETE, means already deleted. requests lists what the SDK sent, in order, as 'METHOD path' with ' If-Match=<etag>' when set.",
+ "source": "thalovant-api app/routes/clients.py (create, get, delete), app/schemas/clients.py; the Home Assistant contract v1 (409 home_assistant_already_linked)",
+ "message_excludes": [
+  "synthetic-hub-password",
+  "synthetic-access-key"
+ ],
+ "cases": [
+  {
+   "name": "the kind comes back as asked",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"id\":\"c0ffee00-1111-4222-8333-444455556666\",\"owner_id\":\"11111111-2222-4333-8444-555566667777\",\"hub_id\":\"4a1b2c3d-0000-4000-8000-000000000001\",\"name\":\"Home Assistant (Kitchen hub)\",\"slug\":\"home-assistant-kitchen-hub\",\"active\":true,\"is_locked\":false,\"spec\":{\"version\":\"1\",\"siteId\":\"home-assistant-kitchen-hub\",\"connection_type\":\"home_assistant\"},\"etag\":\"etag-1\",\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"initial_identify\":{\"password\":\"synthetic-hub-password\",\"access_key\":\"synthetic-access-key\",\"site_id\":\"home-assistant-kitchen-hub\",\"default_port\":443,\"default_master\":\"wss://kitchen.thalovant.io\"},\"operation\":{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"requested\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "created",
+    "client_id": "c0ffee00-1111-4222-8333-444455556666",
+    "connection_type": "home_assistant",
+    "operation_id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "an API that ignored the kind gets its client deleted",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"id\":\"c0ffee00-1111-4222-8333-444455556666\",\"owner_id\":\"11111111-2222-4333-8444-555566667777\",\"hub_id\":\"4a1b2c3d-0000-4000-8000-000000000001\",\"name\":\"Home Assistant (Kitchen hub)\",\"slug\":\"home-assistant-kitchen-hub\",\"active\":true,\"is_locked\":false,\"spec\":{\"version\":\"1\",\"siteId\":\"home-assistant-kitchen-hub\"},\"etag\":\"etag-1\",\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"initial_identify\":{\"password\":\"synthetic-hub-password\",\"access_key\":\"synthetic-access-key\",\"site_id\":\"home-assistant-kitchen-hub\",\"default_port\":443,\"default_master\":\"wss://kitchen.thalovant.io\"},\"operation\":{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"requested\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}}"
+     }
+    },
+    {
+     "request": {
+      "method": "DELETE",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666",
+      "if_match": "etag-1"
+     },
+     "response": {
+      "status": 204,
+      "content_type": "application/json",
+      "body": ""
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "unsupported",
+    "deleted": true,
+    "requests": [
+     "POST /v1/clients",
+     "DELETE /v1/clients/c0ffee00-1111-4222-8333-444455556666 If-Match=etag-1"
+    ]
+   }
+  },
+  {
+   "name": "an API that does not know the kind yet",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 422,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":422,\"detail\":\"Schema validation failed: 'home_assistant' is not one of ['voice_satellite', 'web_chat', 'developer', 'embedded'] at spec.connection_type\",\"code\":\"schema_validation_failed\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "unsupported",
+    "status": 422,
+    "code": "schema_validation_failed",
+    "detail": "Schema validation failed: 'home_assistant' is not one of ['voice_satellite', 'web_chat', 'developer', 'embedded'] at spec.connection_type",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a validation error located at the kind",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 422,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"RequestValidationError\",\"status\":422,\"detail\":\"Request validation failed\",\"errors\":[{\"type\":\"literal_error\",\"loc\":[\"body\",\"spec\",\"connection_type\"],\"msg\":\"Input should be 'voice_satellite', 'web_chat', 'developer' or 'embedded'\",\"input\":\"home_assistant\"}]}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "unsupported",
+    "status": 422,
+    "code": null,
+    "detail": "Request validation failed",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "an unrelated 422 that echoes the kind in its input is an ordinary error",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 422,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"RequestValidationError\",\"status\":422,\"detail\":\"Request validation failed\",\"errors\":[{\"type\":\"missing\",\"loc\":[\"body\",\"spec\",\"siteId\"],\"msg\":\"Field required\",\"input\":{\"version\":\"1\",\"connection_type\":\"home_assistant\"}}]}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "error",
+    "status": 422,
+    "code": null,
+    "detail": "Request validation failed",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a plan that does not include the kind",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 402,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":402,\"detail\":\"API access requires a paid plan.\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "plan",
+    "status": 402,
+    "code": null,
+    "detail": "API access requires a paid plan.",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a plan limit",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 403,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":403,\"detail\":\"Free plan allows up to 1 connection.\",\"code\":\"plan_limit\",\"resource\":\"client\",\"limit\":1,\"used\":1}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "plan",
+    "status": 403,
+    "code": "plan_limit",
+    "detail": "Free plan allows up to 1 connection.",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "the hub already has its Home Assistant link",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 409,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":409,\"detail\":\"This hub is already linked to a Home Assistant.\",\"code\":\"home_assistant_already_linked\",\"client_id\":\"c0ffee00-9999-4222-8333-444455556666\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "already_linked",
+    "status": 409,
+    "code": "home_assistant_already_linked",
+    "detail": "This hub is already linked to a Home Assistant.",
+    "client_id": "c0ffee00-9999-4222-8333-444455556666",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a token without the scope",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 403,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":403,\"detail\":\"Insufficient scopes\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "auth",
+    "status": 403,
+    "code": null,
+    "detail": "Insufficient scopes",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a revoked token",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 401,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":401,\"detail\":\"Could not validate credentials\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "auth",
+    "status": 401,
+    "code": null,
+    "detail": "Could not validate credentials",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "a name already taken is an ordinary conflict",
+   "call": {
+    "op": "create",
+    "hub": {
+     "id": "4a1b2c3d-0000-4000-8000-000000000001",
+     "name": "Kitchen hub",
+     "domain": "kitchen.thalovant.io",
+     "wss_enabled": true,
+     "http_enabled": true
+    },
+    "name": "Home Assistant (Kitchen hub)",
+    "connection_type": "home_assistant"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "POST",
+      "path": "/v1/clients",
+      "json_subset": {
+       "hub_id": "4a1b2c3d-0000-4000-8000-000000000001",
+       "name": "Home Assistant (Kitchen hub)",
+       "spec": {
+        "version": "1",
+        "connection_type": "home_assistant"
+       }
+      }
+     },
+     "response": {
+      "status": 409,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":409,\"detail\":\"Client name already exists\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "error",
+    "status": 409,
+    "code": null,
+    "detail": "Client name already exists",
+    "requests": [
+     "POST /v1/clients"
+    ]
+   }
+  },
+  {
+   "name": "delete with the etag in hand",
+   "call": {
+    "op": "delete",
+    "client_id": "c0ffee00-1111-4222-8333-444455556666",
+    "etag": "etag-1"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "DELETE",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666",
+      "if_match": "etag-1"
+     },
+     "response": {
+      "status": 204,
+      "content_type": "application/json",
+      "body": ""
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "deleted",
+    "requests": [
+     "DELETE /v1/clients/c0ffee00-1111-4222-8333-444455556666 If-Match=etag-1"
+    ]
+   }
+  },
+  {
+   "name": "delete reads the etag first",
+   "call": {
+    "op": "delete",
+    "client_id": "c0ffee00-1111-4222-8333-444455556666",
+    "etag": null
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"c0ffee00-1111-4222-8333-444455556666\",\"owner_id\":\"11111111-2222-4333-8444-555566667777\",\"hub_id\":\"4a1b2c3d-0000-4000-8000-000000000001\",\"name\":\"Home Assistant (Kitchen hub)\",\"slug\":\"home-assistant-kitchen-hub\",\"active\":true,\"is_locked\":false,\"spec\":{\"version\":\"1\",\"siteId\":\"home-assistant-kitchen-hub\",\"connection_type\":\"home_assistant\"},\"etag\":\"etag-2\",\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"initial_identify\":{\"password\":\"synthetic-hub-password\",\"access_key\":\"synthetic-access-key\",\"site_id\":\"home-assistant-kitchen-hub\",\"default_port\":443,\"default_master\":\"wss://kitchen.thalovant.io\"},\"operation\":{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"requested\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}}"
+     }
+    },
+    {
+     "request": {
+      "method": "DELETE",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666",
+      "if_match": "etag-2"
+     },
+     "response": {
+      "status": 204,
+      "content_type": "application/json",
+      "body": ""
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "deleted",
+    "requests": [
+     "GET /v1/clients/c0ffee00-1111-4222-8333-444455556666",
+     "DELETE /v1/clients/c0ffee00-1111-4222-8333-444455556666 If-Match=etag-2"
+    ]
+   }
+  },
+  {
+   "name": "a changed client is read again, once",
+   "call": {
+    "op": "delete",
+    "client_id": "c0ffee00-1111-4222-8333-444455556666",
+    "etag": "etag-1"
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "DELETE",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666",
+      "if_match": "etag-1"
+     },
+     "response": {
+      "status": 412,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":412,\"detail\":\"ETag mismatch\"}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"c0ffee00-1111-4222-8333-444455556666\",\"owner_id\":\"11111111-2222-4333-8444-555566667777\",\"hub_id\":\"4a1b2c3d-0000-4000-8000-000000000001\",\"name\":\"Home Assistant (Kitchen hub)\",\"slug\":\"home-assistant-kitchen-hub\",\"active\":true,\"is_locked\":false,\"spec\":{\"version\":\"1\",\"siteId\":\"home-assistant-kitchen-hub\",\"connection_type\":\"home_assistant\"},\"etag\":\"etag-3\",\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"initial_identify\":{\"password\":\"synthetic-hub-password\",\"access_key\":\"synthetic-access-key\",\"site_id\":\"home-assistant-kitchen-hub\",\"default_port\":443,\"default_master\":\"wss://kitchen.thalovant.io\"},\"operation\":{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"requested\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}}"
+     }
+    },
+    {
+     "request": {
+      "method": "DELETE",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666",
+      "if_match": "etag-3"
+     },
+     "response": {
+      "status": 204,
+      "content_type": "application/json",
+      "body": ""
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "deleted",
+    "requests": [
+     "DELETE /v1/clients/c0ffee00-1111-4222-8333-444455556666 If-Match=etag-1",
+     "GET /v1/clients/c0ffee00-1111-4222-8333-444455556666",
+     "DELETE /v1/clients/c0ffee00-1111-4222-8333-444455556666 If-Match=etag-3"
+    ]
+   }
+  },
+  {
+   "name": "a client already gone is deleted",
+   "call": {
+    "op": "delete",
+    "client_id": "c0ffee00-1111-4222-8333-444455556666",
+    "etag": null
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/clients/c0ffee00-1111-4222-8333-444455556666"
+     },
+     "response": {
+      "status": 404,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":404,\"detail\":\"Client not found\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "deleted",
+    "requests": [
+     "GET /v1/clients/c0ffee00-1111-4222-8333-444455556666"
+    ]
+   }
+  }
+ ]
+}

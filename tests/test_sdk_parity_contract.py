@@ -41,7 +41,7 @@ def test_unacknowledged_reference_changes_fail(reference, change):
         (reference / "src/thalovant/new_feature.py").write_text("ENABLED = True\n")
     elif change == "dependency":
         path = reference / "pyproject.toml"
-        path.write_text(path.read_text().replace('requests>=2.33.0', 'requests>=2.34.0'))
+        path.write_text(path.read_text().replace('"aiohttp>=3.11"', '"aiohttp>=3.12"'))
     else:
         path = reference / "src/thalovant/session.py"
         path.write_text(path.read_text() + ("\ndef new_api(value): return value\n" if change == "new_api" else "\ndef _private(): return 123\n"))
@@ -281,6 +281,42 @@ def test_only_a_name_reaching_a_call_is_evidence():
         'let u = "https://example.com//x"; load("binary-vectors.json")',
     ):
         assert names_vector(text, "binary-vectors"), text
+
+
+def test_the_scanner_knows_what_a_quote_means_in_each_language():
+    """A Rust lifetime is not an opening quote.
+
+    Treating every ``'`` as one made ``&'static str`` swallow every literal
+    after it, so a Rust test that plainly loads its vectors read as not
+    loading them. The same goes for ``#[test]`` and raw strings.
+    """
+    names_vector = parity.names_vector
+    loads = {
+        "tests/home.rs": (
+            'fn name() -> &\'static str { "home" }\n'
+            '#[test] fn vectors() { let v = load("home-link-vectors.json"); }'
+        ),
+        "tests/raw.rs": 'let v = include_str!(r#"../contracts/conformance/home-link-vectors.json"#);',
+        "tests/label.rs": "'outer: loop { break 'outer; }\nload(\"home-link-vectors.json\")",
+        "tests/Home.kt": "val quote = '\\''; val v = load(\"home-link-vectors.json\")",
+        "tests/home.go": "r := 'x'; v := load(`home-link-vectors.json`)",
+        "tests/home.py": "vectors('home-link-vectors.json')  # a comment's 'quote",
+        "tests/home.test.ts": "const v = load('home-link-vectors.json'); // it's fine",
+        "tests/HomeTests.swift": 'let url = Bundle.module.url(forResource: "home-link-vectors", withExtension: "json")',
+        "tests/Home.cs": "var c = '\\''; var v = Load(\"home-link-vectors.json\");",
+    }
+    for path, text in loads.items():
+        assert names_vector(text, "home-link-vectors", path), path
+    ignored = {
+        "tests/unused.rs": 'const UNUSED: &\'static str = "home-link-vectors";',
+        "tests/comment.rs": '// load("home-link-vectors.json")\nfn nothing() {}',
+        "tests/comment.py": "# load('home-link-vectors.json')",
+        "tests/floor.py": "x = a // b; load('other.json')",
+    }
+    for path, text in ignored.items():
+        assert not names_vector(text, "home-link-vectors", path), path
+    # Without a path, the old reading stands.
+    assert names_vector("load('home-link-vectors.json')", "home-link-vectors")
 
 
 def _results(tmp_path, payload):

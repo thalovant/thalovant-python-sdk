@@ -10,7 +10,7 @@ import re
 import stat
 from typing import Any, Mapping
 
-import yaml
+from . import _yaml
 
 from .errors import ThalovantIdentityError
 from .protocols import (
@@ -159,14 +159,17 @@ class ThalovantIdentity:
         config_path = Path(path).expanduser() if path is not None else default_config_path()
         _assert_secure_config_file(config_path)
         try:
-            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            raw = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         except OSError as exc:
             raise ThalovantIdentityError(
                 f"Unable to read Thalovant config file: {config_path}"
             ) from exc
-        except yaml.YAMLError as exc:
+        except _yaml.YAMLError as exc:
+            # Without PyYAML a small reader handles what a config holds; what
+            # it will not guess at, it names the extra for.
+            hint = f" ({exc})" if "thalovant[yaml]" in str(exc) else ""
             raise ThalovantIdentityError(
-                f"Thalovant config file is not valid YAML: {config_path}"
+                f"Thalovant config file is not valid YAML: {config_path}{hint}"
             ) from exc
         if not isinstance(raw, Mapping):
             raise ThalovantIdentityError("Thalovant config file must contain a YAML object.")

@@ -19,24 +19,35 @@ every ask tries for itself, and only the unattended attempts back off.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import inspect
 import logging
 import math
 import socket
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable, Iterator
 from urllib.parse import urlsplit
 
-from .errors import ThalovantConnectionError, ThalovantRuntimeError
+from .errors import (
+    ThalovantConnectionError,
+    ThalovantHubKeyChangedError,
+    ThalovantHubRefusedError,
+    ThalovantRuntimeError,
+    ThalovantTimeoutError,
+)
 
 log = logging.getLogger("thalovant.session")
 _RESOLVER_LOCK = threading.RLock()
 
 __all__ = [
+    "AsyncHubSession",
     "HubSession",
     "HubSessionPolicy",
+    "LinkDecision",
+    "LinkSupervisor",
     "OriginPreference",
     "alive",
     "hub_hostname",
@@ -56,9 +67,15 @@ class HubSessionPolicy:
     probe_seconds: float = 60.0
     #: How often the probe comes round while no session is held.
     probe_down_seconds: float = 5.0
+    #: How long :meth:`AsyncHubSession.run` keeps trying through refusals
+    #: before it gives up. A connection just created is refused until its hub
+    #: has admitted it -- about ninety seconds -- so a refusal is only final
+    #: once it has lasted this long.
+    refusal_grace_seconds: float = 600.0
 
     def __post_init__(self) -> None:
-        for name in ("retry_seconds", "retry_ceiling_seconds", "probe_seconds", "probe_down_seconds"):
+        for name in ("retry_seconds", "retry_ceiling_seconds", "probe_seconds", "probe_down_seconds",
+                     "refusal_grace_seconds"):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
@@ -67,6 +84,69 @@ class HubSessionPolicy:
 
     def next_wait(self, current: float) -> float:
         return min(current * 2, self.retry_ceiling_seconds)
+
+
+@dataclass(frozen=True)
+class LinkDecision:
+    """What to do after one outcome of keeping a link up.
+
+    ``action`` is ``"hold"`` (the link is up), ``"retry"`` after
+    ``wait_seconds``, or ``"give_up"`` for ``reason`` -- ``"refused"`` or
+    ``"key_changed"``.
+    """
+
+    action: str
+    wait_seconds: float = 0.0
+    reason: str | None = None
+
+
+class LinkSupervisor:
+    """How a long-lived link is kept up, as a pure function of what happened and when.
+
+    :meth:`AsyncHubSession.run` asks it after every attempt; every SDK follows
+    the same rules (``link-keeping-vectors.json``):
+
+    - ``"up"``: hold, and start the ladder and the refusal clock afresh.
+    - ``"dropped"`` (an established link went down): dial again at once.
+    - ``"failed"`` (the hub or the network could not be reached): wait the
+      ladder's step -- ``retry_seconds``, doubling to
+      ``retry_ceiling_seconds`` -- and stop counting refusals.
+    - ``"refused"``: the hub turned the credentials away. A new connection is
+      refused until its hub admits it, so wait the ladder's step as for a
+      failure, until the refusals have lasted ``refusal_grace_seconds`` since
+      the first of them; then give up.
+    - ``"key_changed"``: the hub's Noise key is not the pinned one. Retrying
+      cannot change that, so give up at once.
+    """
+
+    OUTCOMES = ("up", "dropped", "failed", "refused", "key_changed")
+
+    def __init__(self, policy: HubSessionPolicy | None = None) -> None:
+        self.policy = policy or HubSessionPolicy()
+        self._wait = float(self.policy.retry_seconds)
+        self._refused_since: float | None = None
+
+    def after(self, outcome: str, now: float) -> LinkDecision:
+        """The decision after *outcome*, observed at *now* (seconds, any monotonic origin)."""
+        if outcome == "up":
+            self._wait = float(self.policy.retry_seconds)
+            self._refused_since = None
+            return LinkDecision("hold")
+        if outcome == "dropped":
+            return LinkDecision("retry", 0.0)
+        if outcome == "key_changed":
+            return LinkDecision("give_up", reason="key_changed")
+        if outcome == "refused":
+            if self._refused_since is None:
+                self._refused_since = now
+            if now - self._refused_since >= self.policy.refusal_grace_seconds:
+                return LinkDecision("give_up", reason="refused")
+        elif outcome == "failed":
+            self._refused_since = None
+        else:
+            raise ValueError(f"unknown outcome {outcome!r}")
+        wait, self._wait = self._wait, self.policy.next_wait(self._wait)
+        return LinkDecision("retry", wait)
 
 
 def alive(client: Any) -> bool:
@@ -81,7 +161,7 @@ def alive(client: Any) -> bool:
         return False
     try:
         phase = getattr(client.connection_info(), "phase", None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optimistic by design: see the docstring
         return True
     return phase not in ("closed", "error") if isinstance(phase, str) else True
 
@@ -338,6 +418,327 @@ class HubSession:
                 raise
 
 
+class AsyncHubSession:
+    """One long-lived hub connection on asyncio, kept by policy: :class:`HubSession`'s twin.
+
+    ``connect`` builds and connects a client -- an
+    :class:`~thalovant.AsyncThalovantClient`, or anything with ``on``,
+    ``reply``, ``ask``, ``emit`` and ``close`` -- and returns it;
+    :meth:`for_identity` builds that for an identity. Subscriptions made with
+    :meth:`on` are wired onto every client the session builds.
+
+    :meth:`connect` makes one attempt. :meth:`run` stays connected until
+    :meth:`close`: after a failed attempt it waits ``retry_seconds``, doubling
+    up to ``retry_ceiling_seconds``, and a held link is looked at every
+    ``probe_seconds``. A link that :meth:`connect` already opened is the one
+    :meth:`run` keeps; it does not dial again. A hub that refuses the
+    credentials is retried like any other failure until the refusals have
+    lasted ``refusal_grace_seconds`` -- a new connection is refused until its
+    hub admits it -- and then :meth:`run` raises
+    :class:`~thalovant.errors.ThalovantHubRefusedError`. A hub whose Noise key
+    is not the pinned one ends :meth:`run` at once with
+    :class:`~thalovant.errors.ThalovantHubKeyChangedError`: retrying cannot
+    change it. :class:`LinkSupervisor` holds these rules. A close with a
+    refusal code within ``settle_seconds`` (0.75) of the handshake is a
+    refusal: a hub that does not know the client's key says so only that way.
+    Every attempt, drop and recovery is logged at DEBUG on
+    ``thalovant.session``; what deserves more is for the application to say.
+    """
+
+    def __init__(
+        self,
+        connect: Callable[[], Awaitable[Any]],
+        *,
+        policy: HubSessionPolicy | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        settle_seconds: float = 0.75,
+    ) -> None:
+        if not math.isfinite(settle_seconds) or settle_seconds < 0:
+            raise ValueError("settle_seconds must be finite and not negative")
+        self._connect_fn = connect
+        self.policy = policy or HubSessionPolicy()
+        self._clock = clock
+        #: How long a new link must stay up before it counts: a hub that does
+        #: not know the client's static key says so only by closing right
+        #: after the handshake.
+        self.settle_seconds = settle_seconds
+        self._client: Any = None
+        self._closed = False
+        self._subscriptions: list[tuple[str, Callable[[Any], Any]]] = []
+        # (event, handler, subscription, client) for every binding made.
+        self._bound: list[tuple[str, Callable[[Any], Any], Any, Any]] = []
+        self._state_callbacks: list[Callable[[bool], Any]] = []
+        self._state = False
+        self._supervisor = LinkSupervisor(self.policy)
+        self._lock: asyncio.Lock | None = None
+        self._wake: asyncio.Event | None = None
+
+    @classmethod
+    def for_identity(
+        cls,
+        identity: Any,
+        *,
+        session: Any = None,
+        policy: HubSessionPolicy | None = None,
+        settle_seconds: float = 0.75,
+        **client_kwargs: Any,
+    ) -> AsyncHubSession:
+        """A session whose clients connect with *identity*, over *session* when given."""
+        from .client import AsyncThalovantClient
+
+        async def connect() -> Any:
+            client = AsyncThalovantClient(identity, session=session, **client_kwargs)
+            try:
+                await client.connect()
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await client.close()
+                raise
+            return client
+
+        return cls(connect, policy=policy, settle_seconds=settle_seconds)
+
+    # -- state -------------------------------------------------------------
+
+    @property
+    def held(self) -> bool:
+        """Whether a client is currently held (not whether it is alive)."""
+        return self._client is not None
+
+    @property
+    def connected(self) -> bool:
+        """Whether a client is held and its link is up."""
+        return self._client is not None and _alive_now(self._client)
+
+    @property
+    def client(self) -> Any:
+        """The client currently held, if any."""
+        return self._client
+
+    def on_state_change(self, callback: Callable[[bool], Any]) -> Callable[[], None]:
+        """Call *callback* with ``True``/``False`` whenever the link comes up or goes down."""
+        self._state_callbacks.append(callback)
+
+        def unsubscribe() -> None:
+            with contextlib.suppress(ValueError):
+                self._state_callbacks.remove(callback)
+
+        return unsubscribe
+
+    def _set_state(self, up: bool) -> None:
+        if up == self._state:
+            return
+        self._state = up
+        for callback in tuple(self._state_callbacks):
+            try:
+                result = callback(up)
+                if asyncio.iscoroutine(result):
+                    asyncio.ensure_future(result)
+            except Exception:
+                log.exception("a state callback raised")
+
+    def on(self, event_name: str, handler: Callable[[Any], Any]) -> Callable[[], None]:
+        """Subscribe on the current client and on every one built after it. Returns an unsubscriber."""
+        if self._closed:
+            raise ThalovantConnectionError("Hub session is closed")
+        entry = (event_name, handler)
+        self._subscriptions.append(entry)
+        if self._client is not None:
+            self._bind(self._client, event_name, handler)
+
+        def unsubscribe() -> None:
+            with contextlib.suppress(ValueError):
+                self._subscriptions.remove(entry)
+            for bound in tuple(self._bound):
+                if bound[0] == event_name and bound[1] is handler:
+                    self._bound.remove(bound)
+                    _close_subscription(bound[2])
+
+        return unsubscribe
+
+    def _bind(self, client: Any, event_name: str, handler: Callable[[Any], Any]) -> None:
+        self._bound.append((event_name, handler, client.on(event_name, handler), client))
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def _guard(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    def _waker(self) -> asyncio.Event:
+        if self._wake is None:
+            self._wake = asyncio.Event()
+        return self._wake
+
+    async def connect(self) -> None:
+        """Make one attempt: return with a live link, or raise why there is none.
+
+        Raises :class:`ThalovantHubRefusedError` when the hub turns the
+        credentials away and :class:`ThalovantConnectionError` (or
+        :class:`ThalovantTimeoutError`) for everything else.
+        """
+        async with self._guard():
+            if self._closed:
+                raise ThalovantConnectionError("Hub session is closed")
+            if self._client is not None:
+                if _alive_now(self._client):
+                    return
+                await self._drop()
+            log.debug("hub link: connecting")
+            client = await self._connect_fn()
+            try:
+                for event_name, handler in self._subscriptions:
+                    self._bind(client, event_name, handler)
+                await self._settle(client)
+            except BaseException:
+                await self._retire(client)
+                raise
+            self._client = client
+            self._supervisor.after("up", self._clock())
+            log.debug("hub link: up")
+            self._set_state(True)
+
+    async def _settle(self, client: Any) -> None:
+        stopped = _stopped_event(client)
+        if stopped is None or self.settle_seconds <= 0:
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(stopped.wait()), self.settle_seconds)
+        except asyncio.TimeoutError:
+            return
+        if _refused(client):
+            raise ThalovantHubRefusedError(
+                "The hub closed the link right after the handshake: it does not accept these credentials, or not yet."
+            )
+        raise ThalovantConnectionError("The hub closed the link right after the handshake.")
+
+    async def run(self) -> None:
+        """Stay connected until :meth:`close`, by policy; see the class docstring."""
+        wake = self._waker()
+        while not self._closed:
+            if self._client is not None and _alive_now(self._client):
+                stopped = _stopped_event(self._client)
+                waiters = [asyncio.ensure_future(wake.wait())]
+                if stopped is not None:
+                    waiters.append(asyncio.ensure_future(stopped.wait()))
+                try:
+                    await asyncio.wait(waiters, timeout=self.policy.probe_seconds,
+                                       return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for waiter in waiters:
+                        waiter.cancel()
+                wake.clear()
+                if self._closed:
+                    break
+                if self._client is not None and not _alive_now(self._client):
+                    log.debug("hub link: dropped")
+                    async with self._guard():
+                        await self._drop()
+                continue
+            try:
+                await self.connect()
+            except ThalovantHubKeyChangedError as changed:
+                log.debug("hub link: the hub's key changed (%s)", changed)
+                self._supervisor.after("key_changed", self._clock())
+                raise
+            except ThalovantHubRefusedError as refusal:
+                log.debug("hub link: refused (%s)", refusal)
+                decision = self._supervisor.after("refused", self._clock())
+                if decision.action == "give_up":
+                    raise
+            except (ThalovantConnectionError, ThalovantTimeoutError, OSError) as failure:
+                log.debug("hub link: attempt failed (%s)", failure)
+                decision = self._supervisor.after("failed", self._clock())
+            else:
+                continue
+            if self._closed or (self._client is not None and _alive_now(self._client)):
+                continue
+            log.debug("hub link: next attempt in %.0fs", decision.wait_seconds)
+            try:
+                await asyncio.wait_for(wake.wait(), decision.wait_seconds)
+            except asyncio.TimeoutError:
+                pass
+            wake.clear()
+
+    async def _drop(self) -> None:
+        client, self._client = self._client, None
+        self._set_state(False)
+        if client is not None:
+            await self._retire(client)
+
+    async def _retire(self, client: Any) -> None:
+        self._bound = [bound for bound in self._bound if bound[3] is not client]
+        with contextlib.suppress(Exception):
+            await client.close()
+
+    async def close(self) -> None:
+        """Close the link and stop :meth:`run`. A closed session cannot be reopened."""
+        self._closed = True
+        self._waker().set()
+        async with self._guard():
+            await self._drop()
+
+    # -- calls ---------------------------------------------------------------
+
+    async def ask(self, text: str, **kwargs: Any) -> Any:
+        """``client.ask`` on a live link, without replaying an ambiguous call."""
+        return await self._call("ask", text, **kwargs)
+
+    async def emit(self, event_type: str, data: Any = None, context: Any = None) -> Any:
+        """``client.emit`` on a live link; a dead socket is dropped, not retried."""
+        return await self._call("emit", event_type, data, context)
+
+    async def reply(self, event: Any, msg_type: str, data: Any = None, context: Any = None) -> Any:
+        """``client.reply``: answer a message back along the route it came."""
+        return await self._call("reply", event, msg_type, data, context)
+
+    async def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        if self._client is None or not _alive_now(self._client):
+            await self.connect()
+        client = self._client
+        try:
+            return await getattr(client, method)(*args, **kwargs)
+        except ThalovantRuntimeError:
+            # A remote refusal proves a live, authenticated session.
+            raise
+        except Exception:
+            async with self._guard():
+                if self._client is client:
+                    await self._drop()
+            raise
+
+
+def _alive_now(client: Any) -> bool:
+    """Whether *client* still has a live link, without dialling or awaiting."""
+    link = getattr(client, "_link", None)
+    if link is not None:
+        try:
+            phase = link.connection_info().phase
+        except Exception:  # noqa: BLE001 - optimistic by design, as alive()
+            return True
+        return phase not in ("closed", "error")
+    return alive(client) if not inspect.iscoroutinefunction(getattr(client, "connection_info", None)) else True
+
+
+def _stopped_event(client: Any) -> asyncio.Event | None:
+    link = getattr(client, "_link", None)
+    stopped = getattr(link, "stopped", None)
+    return stopped() if callable(stopped) else None
+
+
+def _refused(client: Any) -> bool:
+    transport = getattr(getattr(client, "_link", None), "transport", None)
+    return bool(getattr(transport, "closed_refused", False))
+
+
+def _close_subscription(subscription: Any) -> None:
+    close = getattr(subscription, "close", subscription)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            close()
+
+
 # -- one origin before the public path ------------------------------------
 
 
@@ -358,7 +759,7 @@ def hub_hostname(default_master: Any) -> str:
 
 
 @contextlib.contextmanager
-def preferred_origin(host: str, address: str):
+def preferred_origin(host: str, address: str) -> Iterator[None]:
     """Resolve one hostname to one address, for the life of this block.
 
     Scoped to the process and to the block rather than written into
@@ -375,11 +776,11 @@ def preferred_origin(host: str, address: str):
     with _RESOLVER_LOCK:
         real = socket.getaddrinfo
 
-        def resolve(node, port, *args, **kwargs):
+        def resolve(node: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
             target = address if node == host else node
             return real(target, port, *args, **kwargs)
 
-        socket.getaddrinfo = resolve
+        socket.getaddrinfo = resolve  # type: ignore[assignment]
         try:
             yield
         finally:

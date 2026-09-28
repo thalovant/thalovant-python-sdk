@@ -11,6 +11,12 @@ Python SDK         -> connect to the hub data plane
 Hub runtime        -> skills, events, replies
 ```
 
+The SDK is asyncio at its core. `AsyncThalovantClient` and
+`AsyncThalovantControlPlane` are the implementation; `ThalovantClient` and
+`ThalovantControlPlane` run the same code on a private event-loop thread, so a
+script, a CLI or a voice satellite can call them without an event loop of its
+own.
+
 Full docs: <https://docs.thalovant.com/developers/sdks/python/>
 
 ## What You Need
@@ -25,6 +31,21 @@ Full docs: <https://docs.thalovant.com/developers/sdks/python/>
 ```bash
 pip install thalovant
 ```
+
+The core needs two libraries: `aiohttp` and `cryptography`. The Noise
+handshake, the HiveMind wire format and the language data are part of the SDK,
+so installing it does not pull in the OVOS or HiveMind stacks. Neither library
+is imported until the first connection or API call, which keeps
+`import thalovant` quick for a CLI.
+
+Extras:
+
+- `thalovant[mqtt]`: the MQTT transport (paho-mqtt).
+- `thalovant[yaml]`: read the config file with PyYAML. Without it, a small
+  built-in reader handles what a config file holds and names this extra when a
+  file needs more.
+- `thalovant[listing]`: the per-language rules an intent listing uses to phrase
+  examples (thalovant-languages).
 
 For local SDK development:
 
@@ -62,6 +83,27 @@ with ThalovantClient(result.identity, protocol="wss") as client:
     print(reply.text)
 ```
 
+The same flow in an asyncio application:
+
+```python
+import asyncio
+
+from thalovant import AsyncThalovantClient, AsyncThalovantControlPlane
+
+
+async def main():
+    async with AsyncThalovantControlPlane() as api:
+        await api.login("you@example.com", "password")
+        result = await api.create_client_identity("hub-id", name="python-demo-client")
+
+    async with AsyncThalovantClient(result.identity) as client:
+        reply = await client.ask("Tell me a short clean joke.")
+        print(reply.text)
+
+
+asyncio.run(main())
+```
+
 Accounts created through Google sign-in have no password. Use the browser
 device flow instead of `login(...)`:
 
@@ -73,6 +115,40 @@ This prints a short code and a verification URL, opens your browser to the
 approval page, and waits for you to approve the request in the dashboard. On
 approval the SDK stores a scoped, revocable API token, exactly like
 `login(...)`.
+
+An application that shows the code in its own interface (a setup screen, a
+config flow) runs the device flow one step at a time instead:
+
+```python
+import asyncio
+
+from thalovant import AsyncThalovantControlPlane, ThalovantDeviceLoginPending
+
+
+async def sign_in(api: AsyncThalovantControlPlane):
+    authorization = await api.begin_device_login(scopes=["hubs:read", "clients:write"])
+    show(authorization.verification_uri, authorization.user_code)  # your UI
+
+    interval = authorization.interval
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            return await api.poll_device_login(authorization)
+        except ThalovantDeviceLoginPending as pending:
+            interval = pending.interval  # longer after a slow_down
+```
+
+The sync `ThalovantControlPlane` has the same two methods.
+
+Each poll asks once. It returns the token (stored on `api`), or raises
+`ThalovantDeviceLoginPending` (poll again after its `interval`),
+`ThalovantDeviceLoginExpired` or `ThalovantDeviceLoginDenied`. The token lives
+365 days and has no refresh token. Keep `token.token_id`:
+`api.revoke_api_token()` revokes the token the client signed in with, which is
+what an application should do when the person removes it. It is idempotent: a
+token that is already revoked cannot authenticate its own revoke, so the API
+answers 401, and that counts as revoked too. Every sign-in sets `token_id`
+from its own answer, so a password `login()` after a device login clears it.
 
 `ThalovantControlPlane()` uses `https://api.thalovant.com` by default. Pass a
 different URL only for local development or a self-hosted control plane.
@@ -560,9 +636,11 @@ password and the hub node ID using Argon2id. Both `25519_ChaChaPoly_SHA256` and
 `25519_AESGCM_SHA256` are supported: XXpsk2 on first contact, or KKpsk0 when a
 trusted server key is available. Older non-Noise offers are refused.
 
-The SDK uses the published `hivemind-bus-client` and `poorman-handshake`
-primitives; HTTPS and MQTT do not require a private or patched client wheel.
-HTTPS preserves the replica-affinity cookie and exchanges ciphertext through
+From 0.9.0 the handshake and the HiveMind framing are the SDK's own, written
+on `cryptography`; `hivemind-bus-client` and `poorman-handshake` are no longer
+installed. The client key and the server pins stay where those libraries kept
+them, in the same format, so an existing identity keeps its pins and reconnects
+with KKpsk0 as before. HTTPS preserves the replica-affinity cookie and exchanges ciphertext through
 the binary endpoints. MQTT uses the identity's broker credentials and topics,
 then exchanges raw Noise ciphertext. After broker loss, reconnect the transport
 (or use the client's normal reconnect-on-send behavior).
@@ -591,7 +669,10 @@ state instead of deleting it to retry. From 0.5.6, an expired HTTPS Noise
 handshake raises `ThalovantTimeoutError` after cleaning up the failed connection.
 
 HTTPS and WSS verify server certificates by default. Configure a trusted CA for
-private certificates; HTTPS also honors Requests' `REQUESTS_CA_BUNDLE`. For an
+private certificates: `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` or `SSL_CERT_FILE`
+name a bundle, as they did when HTTPS went through Requests, and WSS honours
+them too. Proxies named in `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and
+`NO_PROXY` apply to both; `.netrc` is never read. For an
 explicit development-only exception, construct a transport with
 `self_signed=True` and pass it as the client's `transport`. This opt-in disables
 certificate verification and should not be used for public hubs.
@@ -688,6 +769,14 @@ active connection/write it owns; a queued caller cannot close another caller's
 session. Transport status checks run outside the waiting caller's thread.
 
 Live `on()` subscriptions survive reconnects. Call `subscription.close()` to remove them permanently; concurrent registration and removal are serialized with session restoration.
+
+When the hub or the network drops a WSS or HTTPS link, the client dials back
+by itself, as 0.8.7's WebSocket library did: about five seconds later
+(jittered between half and one and a half times that), doubling up to a minute,
+until the link is back or the client is closed. A client that only listens gets
+its events back after a hub restart without calling anything. A call made in
+the meantime reconnects at once. `auto_reconnect=False` turns the background
+redial off. Each attempt is logged at DEBUG on `thalovant.client`.
 
 `wait_for_event(timeout=...)` and `listen(timeout=...)` include connection and
 subscription setup in the deadline. A listener without a timeout uses the normal
@@ -804,6 +893,16 @@ for event in reply.media_events:
 
 ## Async Apps
 
+`AsyncThalovantClient`, `AsyncThalovantControlPlane` and `AsyncHubSession` run
+on the caller's event loop and never block it. Reading and writing identity
+files, deriving the argon2id key and loading the CA bundle happen on the loop's
+executor; the test suite runs a whole conversation on a debug loop that fails
+on any blocking call. One exception belongs to the library: before
+cryptography 50.0.0, argon2id holds the GIL while it runs, so the first
+connection to a hub pauses every thread, the loop's included, for about a
+tenth of a second. The key is cached after that, so it happens once per
+identity and hub; with cryptography 50.0.0 or later it does not happen.
+
 ```python
 import asyncio
 from thalovant import AsyncThalovantClient
@@ -817,6 +916,118 @@ async def main():
 
 asyncio.run(main())
 ```
+
+An application that already has an `aiohttp.ClientSession` passes it as
+`session=`. The SDK uses it as given and never closes it:
+
+```python
+api = AsyncThalovantControlPlane(access_token=token, session=http)
+client = AsyncThalovantClient(identity, session=http)
+```
+
+Without one, each object opens its own and closes it in `close()` (or
+`aclose()` for the control plane, or at the end of `async with`).
+
+`AsyncHubSession` keeps one hub connection up for a long-running application:
+
+```python
+from thalovant import AsyncHubSession
+
+session = AsyncHubSession.for_identity(identity, session=http)
+session.on_state_change(lambda up: print("hub link", "up" if up else "down"))
+session.on("mycroft.volume.set", on_volume)  # follows every reconnect
+
+await session.connect()                      # one attempt; raises if it fails
+runner = asyncio.create_task(session.run())  # keeps that link, redials after a drop
+reply = await session.ask("What time is it?")
+...
+await session.close()
+```
+
+`connect()` makes one attempt, so a setup step can report a failure straight
+away. `run()` keeps the link `connect()` opened rather than dialling a second
+one. After a drop it dials again at once, and after a failed attempt it waits
+on the same ladder as `HubSession`: 10, 20, 40, 80, then 120 seconds. A new
+connection is refused until its hub has admitted it, so a refusal is retried
+for `refusal_grace_seconds` (600 s by default) before `run()` raises
+`ThalovantHubRefusedError`. A refusal is a close with 1000, 1005 or 1008
+during the handshake or within 0.75 s after it, a Noise handshake that does
+not authenticate (a wrong password), or an upgrade answered 401 or 403. A hub
+whose Noise key is not the one pinned for it ends `run()` at once with
+`ThalovantHubKeyChangedError`, since retrying cannot change that. A hub that
+cannot be reached is retried until `close()`. Every attempt is logged at DEBUG
+on `thalovant.session`.
+
+## Home Assistant Link
+
+A Home Assistant integration holds one connection of type `home_assistant` to
+a hub. A home skill on the hub sends it `thalovant.home.request` with what was
+said; the integration answers with `thalovant.home.response`. The SDK covers
+each step:
+
+```python
+from thalovant import (
+    AsyncHubSession,
+    AsyncThalovantControlPlane,
+    HomeAnswer,
+    answer_home_requests,
+)
+
+api = AsyncThalovantControlPlane(access_token=token, session=http)
+hubs = await api.list_hubs()
+
+result = await api.create_client_identity(
+    hub_id, name="Home Assistant", connection_type="home_assistant"
+)
+await api.wait_for_admission(result)  # about ninety seconds
+
+
+async def handle(request):
+    speech = await ask_home_assistant(request.utterance, request.lang)
+    return HomeAnswer(speech=speech, response_type="action_done")
+
+
+session = AsyncHubSession.for_identity(result.identity, session=http)
+stop = answer_home_requests(session, handle)
+await session.connect()
+runner = asyncio.create_task(session.run())
+```
+
+- `create_client_identity(..., connection_type=...)` sends
+  `spec.connection_type` and checks that the API created that kind of
+  connection. If the API does not know the type, it raises
+  `ThalovantUnsupportedConnectionTypeError`. If the API created an ordinary
+  connection instead, it deletes that connection first and then raises the
+  same error. A plan that does not allow the type raises `ThalovantPlanError`.
+  A hub that already has its Home Assistant link raises
+  `ThalovantAlreadyLinkedError`, whose `client_id` names that link.
+- `wait_for_admission(result)` polls the operation the create returned. It
+  returns once the hub has admitted the connection. It raises
+  `ThalovantAdmissionFailedError` when the platform reports a failure or the
+  API refuses the wait (keeping its status and body), and
+  `ThalovantAdmissionTimeoutError` when the wait runs out; the timeout error is
+  a `ThalovantConnectionError`, so the connection can be kept and the wait
+  tried again later. A revoked token surfaces as `ThalovantAuthError` and an
+  API out of reach as `ThalovantAPIUnreachableError`, never as a failed
+  admission. A 429 is waited out for the time the API names.
+- `answer_home_requests(session, handler)` answers each request at most once,
+  and never after the hub's ten seconds: the handler gets nine of them, and
+  the reply's sending gets what the handler left. A reply that could only
+  arrive after the hub gave up is not sent, and a handler that ignores
+  cancellation does not hold the answer back. The answer goes back along the
+  route the request came in on (`client.reply(event, ...)`), and its speech is
+  plain text: tags removed, the portable set of character references decoded
+  (numeric, the five XML entities and `&nbsp;`), white space collapsed. A
+  handler that raises, runs out of time, or answers outside the contract
+  produces an `error` answer with an `error_code`; the hub then speaks its own
+  sentence for that code in the device's language.
+- `delete_client(client_id)` removes the connection; it reads the `etag` the
+  API needs when you do not pass one. `revoke_api_token()` revokes the token
+  from a device login, for when the person removes the integration.
+
+The same rules, as language-neutral vectors, are in
+`contracts/conformance/home-link-vectors.json` and the three control-plane
+vector files beside it; every Thalovant SDK runs them.
 
 ## CLI Diagnostics
 
@@ -834,6 +1045,10 @@ handshake, and transport health.
   control-plane actions, or pass `access_token=` to `ThalovantControlPlane`.
 - `API access requires a paid plan`: upgrade the workspace before using the SDK
   control-plane API to provision private resources.
+- `Could not reach the Thalovant API.`: the request never got an answer (DNS,
+  the connection, TLS, a proxy, or the timeout). It is raised as
+  `ThalovantAPIUnreachableError`, which is both a `ThalovantAPIError` and a
+  `ThalovantConnectionError` and has no `status_code`; try again later.
 - `Unsupported protocol`: the hub does not expose that protocol, or the
   identity was created before that protocol was enabled.
 - MQTT fails immediately: create or download a fresh client identity after MQTT
@@ -847,7 +1062,9 @@ handshake, and transport health.
   call quota. The response names which in `quota`, alongside `limit` and
   `used`, and carries a `Retry-After` header and a matching
   `retry_after_seconds` pointing at the next UTC day or month. The SDK does
-  not retry either 429 for you.
+  not retry either 429 for you, with one exception: `wait_for_admission()`
+  waits out a 429 for the time it names, since the connection is still on its
+  way, unless that is longer than the wait has left.
 
 ## Reading An API Error
 
@@ -948,6 +1165,34 @@ what it was sent) is only ever in `problem`, never in the message.
 - `client.send_code(value, ...)`
 - `client.listen(event_name, ...)`
 - `client.conversation(...)`
+- `client.reply(event, msg_type, data=None, context=None)` answers an event
+  back along its route (new in 0.9.0)
+
+Async and Home Assistant surface, new in 0.9.0 (every control-plane method
+below is on `ThalovantControlPlane` too):
+
+- `AsyncThalovantClient(identity, ..., session=None)`: the same methods as
+  `ThalovantClient`, awaited
+- `AsyncThalovantControlPlane(api_url=..., access_token=..., session=None)`:
+  every method of `ThalovantControlPlane`, awaited; `aclose()`
+- `control.begin_device_login(scopes=None, client_name=None)` returns a
+  `DeviceAuthorization`
+- `control.poll_device_login(authorization)` returns an `ApiToken` or raises
+  `ThalovantDeviceLoginPending`, `ThalovantDeviceLoginExpired` or
+  `ThalovantDeviceLoginDenied`
+- `control.revoke_api_token(token_id=None)`
+- `control.get_profile()`
+- `control.create_client_identity(hub_id, ..., connection_type=None)`, whose
+  result carries `operation`, `client_id` and `connection_type`
+- `control.wait_for_admission(result_or_operation, timeout=..., poll_interval=...)`
+- `control.list_clients(hub_id=..., ...)`, `control.get_client(client_id)`,
+  `control.delete_client(client_id, etag=None)`
+- `AsyncHubSession(connect, policy=..., settle_seconds=0.75)` and
+  `AsyncHubSession.for_identity(identity, session=None, ...)`: `connect()`,
+  `run()`, `ask()`, `emit()`, `reply()`, `on()`, `on_state_change()`,
+  `close()`
+- `answer_home_requests(client_or_session, handler, timeout=9.0)`,
+  `HomeRequest`, `HomeAnswer`, `home_response()`, `plain_speech()`
 
 ## Development
 
@@ -1031,7 +1276,42 @@ resolver work inside that scope. TLS validation remains enabled.
 
 ### Inbound BUS compatibility
 
-Version 0.7.4 requires `hivemind-bus-client>=1.1.9a1`, including the upstream
-fix for duplicate BUS delivery (#251/#252). WSS callbacks run once per frame
-after protocol processing. The SDK no longer suppresses events by Python
-object identity, so custom transports may reuse message objects.
+Each BUS frame is delivered once, after protocol processing, as it has been
+since 0.7.4 (hivemind-bus-client #251/#252). The SDK does not suppress events
+by Python object identity, so custom transports may reuse message objects. A
+custom transport keeps working unchanged in 0.9.0: its handlers are called on
+the thread it calls them from, as before.
+
+## Upgrading To 0.9
+
+Nothing is required. Every public name, signature and behaviour of 0.8.7 is
+still there, and code that worked against 0.8.7 works against 0.9.0 unchanged.
+What is different:
+
+- **Dependencies.** The core installs `aiohttp` and `cryptography` and nothing
+  else. `hivemind-bus-client`, `ovos-bus-client`, `ovos-utils`,
+  `poorman-handshake`, `websocket-client`, `requests`, `PyYAML`, `paho-mqtt`
+  and `ovos-spec-tools` are no longer installed with it. MQTT needs
+  `thalovant[mqtt]`. The config file is read without PyYAML unless
+  `thalovant[yaml]` is installed. If your own code imported one of those
+  libraries without declaring it, declare it now.
+- **Identity state.** Keys and pins are read from and written to the same files
+  in the same format. Nothing is migrated and no handshake starts over.
+- **Threads.** Each sync `ThalovantClient` and `ThalovantControlPlane` owns one
+  private event-loop thread. Sync handlers passed to `on()` still run off
+  that loop, on a `thalovant-handlers` thread, so a handler can call the
+  client while another thread waits in `ask()`.
+- **`ThalovantControlPlane(session=...)`** still accepts a requests-style
+  session and sends through it. An `aiohttp.ClientSession` belongs to
+  `AsyncThalovantControlPlane`; passing one to the sync class raises
+  `TypeError` with that advice.
+- **New:** the async control plane, `AsyncHubSession`, device login in single
+  steps, token revocation, connection types with the admission wait,
+  `client.reply()`, and the Home Assistant link (see above). New errors:
+  `ThalovantAuthError`, `ThalovantPlanError`, `ThalovantAlreadyLinkedError`,
+  `ThalovantUnsupportedConnectionTypeError`, `ThalovantHubRefusedError`,
+  `ThalovantAdmissionTimeoutError`, `ThalovantAdmissionFailedError` and the
+  three device-login errors, and `ThalovantAPIUnreachableError` for a
+  control plane that cannot be reached. Each subclasses `ThalovantAPIError` or
+  `ThalovantConnectionError`, which is what 0.8.7 raised in the same
+  situations, so existing `except` clauses still catch them.

@@ -54,7 +54,7 @@ def test_two_clients_remerge_original_deltas_after_conflict():
     deltas = [{"intents": {"one": True}}, {"intents": {"two": True}}]
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(api.update_runtime_group_config, "g", delta)
-                   for api, delta in zip((first, second), deltas)]
+                   for api, delta in zip((first, second), deltas, strict=True)]
         for future in futures:
             future.result(timeout=10)
     assert server.config == {"env": original_env, "intents": {"one": True, "two": True}}

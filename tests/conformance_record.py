@@ -56,6 +56,13 @@ def _same_number_everywhere(value: Any) -> Any:
 def canonical_digest(value: Any) -> str:
     """A stable digest of a produced value.
 
+    The text hashed is ``json.dumps(value, sort_keys=True, separators=(",",
+    ":"), ensure_ascii=False)``, byte for byte: keys sorted by code point, no
+    whitespace, only the escapes ``\\"`` ``\\\\`` ``\\b`` ``\\f`` ``\\n``
+    ``\\r`` ``\\t`` and ``\\u00xx`` for the rest below U+0020, everything else
+    raw -- U+2028 and U+2029 included. docs/home-link-porting.md ("Recording
+    results canonically") spells it out for the other SDKs.
+
     Sorted keys, no insignificant whitespace, and a whole number spelled the
     one way, so the same value recorded by two SDKs in two languages digests
     the same. Values that are not JSON -- bytes from a binary frame, say -- are

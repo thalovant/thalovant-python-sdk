@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import threading
-from typing import Any
+from typing import Any, Callable, Union, overload
 
 from .events import EVENT_SPEAK, EventHandler
 from .identity import ThalovantIdentity
 from .subscriptions import ThalovantSubscription
+
+#: What registering a handler gives back: its subscription once the agent
+#: runs, the handler itself before.
+Registered = Union[EventHandler, ThalovantSubscription]
 
 
 class ThalovantAgent:
@@ -49,22 +53,32 @@ class ThalovantAgent:
     def __exit__(self, *_: Any) -> None:
         self.close()
 
+    @overload
+    def on(self, event_name: str, handler: None = None) -> Callable[[EventHandler], Registered]: ...
+
+    @overload
+    def on(self, event_name: str, handler: EventHandler) -> Registered: ...
+
     def on(
         self,
         event_name: str,
         handler: EventHandler | None = None,
-    ) -> EventHandler | ThalovantSubscription:
-        """Register a handler now, or use as a decorator before `run_forever`."""
+    ) -> Registered | Callable[[EventHandler], Registered]:
+        """Register a handler now, or use as a decorator before `run_forever`.
+
+        Returns the subscription (or the handler, before the agent runs), or
+        with no handler the decorator that registers one.
+        """
 
         if handler is None:
-            def decorator(callback: EventHandler) -> EventHandler:
+            def decorator(callback: EventHandler) -> Registered:
                 return self._register(event_name, callback)
 
             return decorator
 
         return self._register(event_name, handler)
 
-    def _register(self, event_name: str, handler: EventHandler) -> EventHandler | ThalovantSubscription:
+    def _register(self, event_name: str, handler: EventHandler) -> Registered:
         if self._running:
             subscription = self.client.on(event_name, handler)
             self._subscriptions.append(subscription)
@@ -72,7 +86,9 @@ class ThalovantAgent:
         self._registrations.append((event_name, handler))
         return handler
 
-    def on_speak(self, handler: EventHandler | None = None) -> EventHandler | ThalovantSubscription:
+    def on_speak(
+        self, handler: EventHandler | None = None
+    ) -> Registered | Callable[[EventHandler], Registered]:
         if handler is None:
             return self.on(EVENT_SPEAK)
         return self.on(EVENT_SPEAK, handler)
@@ -158,20 +174,26 @@ class AsyncThalovantAgent:
     async def __aexit__(self, *_: Any) -> None:
         await self.close()
 
+    @overload
+    def on(self, event_name: str, handler: None = None) -> Callable[[EventHandler], Registered]: ...
+
+    @overload
+    def on(self, event_name: str, handler: EventHandler) -> Registered: ...
+
     def on(
         self,
         event_name: str,
         handler: EventHandler | None = None,
-    ) -> EventHandler | ThalovantSubscription:
+    ) -> Registered | Callable[[EventHandler], Registered]:
         if handler is None:
-            def decorator(callback: EventHandler) -> EventHandler:
+            def decorator(callback: EventHandler) -> Registered:
                 return self._register(event_name, callback)
 
             return decorator
 
         return self._register(event_name, handler)
 
-    def _register(self, event_name: str, handler: EventHandler) -> EventHandler | ThalovantSubscription:
+    def _register(self, event_name: str, handler: EventHandler) -> Registered:
         if self._running:
             subscription = self.client.on(event_name, handler)
             self._subscriptions.append(subscription)
@@ -179,7 +201,9 @@ class AsyncThalovantAgent:
         self._registrations.append((event_name, handler))
         return handler
 
-    def on_speak(self, handler: EventHandler | None = None) -> EventHandler | ThalovantSubscription:
+    def on_speak(
+        self, handler: EventHandler | None = None
+    ) -> Registered | Callable[[EventHandler], Registered]:
         if handler is None:
             return self.on(EVENT_SPEAK)
         return self.on(EVENT_SPEAK, handler)

@@ -186,7 +186,7 @@ def test_https_noise_cookie_encrypted_chunked_reply_and_same_object_reconnect(ht
             replies = []
             transport.on_mycroft("speak", replies.append)
             with ThreadPoolExecutor(max_workers=3) as pool:
-                list(pool.map(lambda n: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
+                list(pool.map(lambda n, attempt=attempt: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
             deadline = time.monotonic() + 4
             while len(replies) < 3 and time.monotonic() < deadline: time.sleep(0.01)
             assert sorted(reply.context["request_id"] for reply in replies) == [f"{attempt}-{n}" for n in range(3)]
@@ -211,7 +211,7 @@ def test_https_handshake_deadline_preserves_timeout_and_releases_admission(http_
         with pytest.raises(ThalovantTimeoutError, match="handshake timed out"):
             transport.connect()
         assert not peer.admitted
-        assert transport._client is None and not transport._connecting
+        assert transport._carrier is None and not transport._connecting
         assert transport.connection_info().phase == "error"
         assert not transport.healthcheck().ok
         monkeypatch.setattr(peer, "start", original_start)
@@ -301,7 +301,7 @@ def test_mqtt_noise_raw_frames_threaded_replies_reconnect_and_pin_preservation(t
             assert broker.client.tls
             assert transport.healthcheck().ok
             with ThreadPoolExecutor(max_workers=3) as pool:
-                list(pool.map(lambda n: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
+                list(pool.map(lambda n, attempt=attempt: transport.emit_event("ovos.intent.list", {"large": "x" * 140000}, {"request_id": f"{attempt}-{n}"}), range(3)))
             deadline = time.monotonic() + 3
             while len(replies) < (attempt + 1) * 3 and time.monotonic() < deadline: time.sleep(0.01)
             assert len(replies) == (attempt + 1) * 3
@@ -333,24 +333,34 @@ def test_https_poll_failure_reconnect_clears_previous_admission(http_peer, tmp_p
     finally: transport.disconnect()
 
 
-@pytest.mark.parametrize("timeout_name", ["ConnectTimeout", "ReadTimeout"])
+@pytest.mark.parametrize("timeout_name", ["ConnectionTimeoutError", "SocketTimeoutError"])
 def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, tmp_path, monkeypatch, timeout_name):
-    import requests
+    import aiohttp
     import traceback
 
     peer, endpoint = http_peer
-    request = requests.Session.request
+    request = aiohttp.ClientSession.request
     inject = True
     sensitive_query = "authorization=synthetic-access-key-do-not-log"
 
+    class Raising:
+        def __init__(self, error):
+            self.error = error
+
+        async def __aenter__(self):
+            raise self.error
+
+        async def __aexit__(self, *_):
+            return False
+
     def timed_request(session, method, url, **options):
         nonlocal inject
-        if inject and url.endswith("/get_messages"):
+        if inject and str(url).endswith("/get_messages"):
             inject = False
-            raise getattr(requests, timeout_name)(f"synthetic HTTP deadline at {url}?{sensitive_query}")
+            return Raising(getattr(aiohttp, timeout_name)(f"synthetic HTTP deadline at {url}?{sensitive_query}"))
         return request(session, method, url, **options)
 
-    monkeypatch.setattr(requests.Session, "request", timed_request)
+    monkeypatch.setattr(aiohttp.ClientSession, "request", timed_request)
     transport = HiveMindHTTPTransport(identity(endpoint), useragent="conformance",
         noise_state_dir=str(tmp_path / "client"), connect_timeout=2, handshake_timeout=2)
     try:
@@ -361,8 +371,42 @@ def test_https_request_timeout_preserves_type_and_releases_admission(http_peer, 
         assert caught.value.__cause__ is None
         assert caught.value.__suppress_context__ is True
         assert not peer.admitted
-        assert transport._client is None and not transport._connecting
+        assert transport._carrier is None and not transport._connecting
         transport.connect()
+        assert transport.healthcheck().ok
+    finally:
+        transport.disconnect()
+
+
+def test_mqtt_follows_a_failed_kk_with_xx_in_the_same_connect(tmp_path, monkeypatch):
+    """KK then XX on MQTT too: a KK answer that does not authenticate here."""
+    broker = Broker(tmp_path)
+    module = SimpleNamespace(Client=broker.Client, CallbackAPIVersion=SimpleNamespace(VERSION2=2))
+    transport = HiveMindMQTTTransport(identity(), useragent="conformance", noise_state_dir=str(tmp_path / "client"))
+    monkeypatch.setattr(transport, "_load_mqtt_module", lambda: module)
+    try:
+        transport.connect()  # XX, pinning both ways
+        transport.disconnect()
+        # The hub's KK answer will not authenticate: flip a byte of it.
+        peer = broker.peer
+        original_send = peer.send
+
+        def tampered(raw):
+            message = json.loads(raw) if isinstance(raw, str) else None
+            noise = (message or {}).get("payload", {}).get("noise", {}) if message else {}
+            if peer.patterns and peer.patterns[-1] == "KKpsk0" and "msg" in noise:
+                body = bytearray(bytes.fromhex(noise["msg"]))
+                body[-1] ^= 0x01
+                noise["msg"] = body.hex()
+                raw = json.dumps(message)
+            original_send(raw)
+
+        peer.send = tampered
+        before = len(peer.patterns)
+        transport.connect()
+        # Both in the one connect: KK failed, and XX -- whose answer the
+        # tampering does not touch -- was tried at once and connected.
+        assert peer.patterns[before:] == ["KKpsk0", "XXpsk2"]
         assert transport.healthcheck().ok
     finally:
         transport.disconnect()

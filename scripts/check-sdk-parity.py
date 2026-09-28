@@ -14,6 +14,7 @@ import argparse
 import ast
 import hashlib
 import json
+import re
 from pathlib import Path
 import sys
 import tomllib
@@ -100,7 +101,24 @@ def file_hash(root, name):
     return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
-def _quoted_arguments(text):
+#: Languages where a single quote opens a string, as a double quote does.
+_SINGLE_QUOTED_STRINGS = {".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx", ".jsx"}
+#: Languages where ``#`` starts a comment.
+_HASH_COMMENTS = {".py", ".sh", ".rb", ".toml", ".yaml", ".yml"}
+#: Languages where a single quote is a character literal ('a', '\\n'), and
+#: any other single quote -- a Rust lifetime (&'static str), a loop label --
+#: is not a delimiter at all.
+_CHARACTER_LITERALS = {".rs", ".kt", ".kts", ".java", ".cs", ".c", ".h", ".cc", ".cpp", ".hpp", ".go", ".swift", ".m"}
+_CHARACTER_LITERAL = re.compile(r"'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|u[0-9A-Fa-f]{4}|.)|[^\\'\n])'")
+_RUST_RAW_STRING = re.compile(r'b?r(#*)"')
+
+
+def _syntax(path):
+    suffix = Path(str(path)).suffix.lower() if path else ""
+    return suffix
+
+
+def _quoted_arguments(text, path=None):
     """Yield every string literal that is passed as a call argument.
 
     Walks the source rather than matching it. A regex cannot do this job: a
@@ -109,6 +127,14 @@ def _quoted_arguments(text):
     the start of one. Only a scanner that knows whether it is inside a string
     can tell those apart.
 
+    What a quote means depends on the language, which *path*'s suffix names.
+    A single quote opens a string in Python and JavaScript; in Rust, Kotlin,
+    Java, C#, C, Go and Swift it is a character literal or nothing at all,
+    and a Rust lifetime (``&'static str``) read as an opening quote swallowed
+    every literal after it. ``#`` is a comment only where it is one (in Rust
+    it starts ``#[test]`` and raw strings ``r#"..."#``). Without a path both
+    quotes open strings and ``#`` starts a comment, as before.
+
     "Passed as an argument" is the part that matters. Any quoted string
     containing the name is too weak -- `const unused = "binary-vectors"` has
     read nothing -- so a literal counts only where a call could receive it:
@@ -116,11 +142,39 @@ def _quoted_arguments(text):
     a labelled one (`url(forResource: "x")`).
     """
 
+    suffix = _syntax(path)
+    known = bool(suffix)
+    quotes = "\"'" if not known or suffix in _SINGLE_QUOTED_STRINGS else '"'
+    if suffix == ".go" or suffix in {".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx", ".jsx"}:
+        quotes += "`"
+    hash_comments = not known or suffix in _HASH_COMMENTS
+    slash_comments = not known or suffix not in {".py", ".sh", ".rb", ".toml", ".yaml", ".yml"}
+    character_literals = known and suffix in _CHARACTER_LITERALS
     index, length = 0, len(text)
     previous = ""            # last significant character outside a string
     while index < length:
         char = text[index]
-        if char in "\"'":
+        if suffix == ".rs" and char in "br":
+            raw = _RUST_RAW_STRING.match(text, index)
+            if raw and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")):
+                closing = '"' + raw.group(1)
+                start = raw.end()
+                end = text.find(closing, start)
+                end = length if end == -1 else end
+                yield previous, text[start:end]
+                index = end + len(closing)
+                previous = '"'
+                continue
+        if char == "'" and character_literals:
+            literal = _CHARACTER_LITERAL.match(text, index)
+            if literal:
+                index = literal.end()
+                previous = "'"
+                continue
+            previous = char  # a lifetime or a label: not a delimiter
+            index += 1
+            continue
+        if char in quotes:
             quote, start = char, index + 1
             index += 1
             while index < length and text[index] != quote:
@@ -129,11 +183,11 @@ def _quoted_arguments(text):
             index += 1
             previous = '"'
             continue
-        if char == "#" or text.startswith("//", index):
+        if (hash_comments and char == "#") or (slash_comments and text.startswith("//", index)):
             while index < length and text[index] != "\n":
                 index += 1
             continue
-        if text.startswith("/*", index):
+        if slash_comments and text.startswith("/*", index):
             closing = text.find("*/", index + 2)
             index = length if closing == -1 else closing + 2
             continue
@@ -142,17 +196,18 @@ def _quoted_arguments(text):
         index += 1
 
 
-def names_vector(text, stem):
+def names_vector(text, stem, path=None):
     """True when a test passes ``stem`` to something that loads it.
 
     It still cannot prove the test *executed* the vectors -- only a recorded
     conformance result can, and consumers do not produce one yet. What it does
     establish is that the name reaches a call, which a comment and an unused
-    constant do not.
+    constant do not. *path* names the file, whose language decides what a
+    quote and a comment are.
     """
 
     return any(stem in literal and preceding in "(,:"
-               for preceding, literal in _quoted_arguments(text))
+               for preceding, literal in _quoted_arguments(text, path))
 
 
 def read_text(root, path):
@@ -211,7 +266,7 @@ def validate_reference(reference):
                     f"Capability {name} names conformance vectors but no test "
                     f"that runs them; the reference owes the same evidence it "
                     f"asks every consumer for")
-            if not any(names_vector(read_text(reference, path), Path(vector).stem)
+            if not any(names_vector(read_text(reference, path), Path(vector).stem, path)
                        for path in tests):
                 raise ValueError(
                     f"Capability {name}: no reference test reads {vector}")
@@ -351,7 +406,7 @@ def validate_consumer(reference_manifest, root, repo, planned):
             # resource without one. Requiring the exact string made the rule a
             # test of naming conventions rather than of what the test reads.
             named = Path(where).stem
-            if not any(names_vector(read_text(root, path), named)
+            if not any(names_vector(read_text(root, path), named, path)
                        for path in entry.get("tests", {})):
                 raise ValueError(
                     f"{repo}/{name}: no test names {named}; the capability's "

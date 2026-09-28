@@ -1,0 +1,873 @@
+{
+ "schema_version": 1,
+ "description": "Waiting for a hub to admit a new connection: about ninety seconds while the platform carries the client to its hub. The wait follows the operation the create answered with, polling GET /v1/operations/{id} (its links.self) every poll_interval_ms, and no read may run past the wait's own deadline. 'ready' is 'admitted'; 'failed' and 'timed_out' are 'failed', with the operation's error_code and status null; requested, committed and applied keep polling. No operation at all, and a 404 (the API no longer tracks it), are 'admitted' at once. A 5xx is ridden out. So is a 429 (a Free plan allows 60 requests a minute): the next poll waits the problem's retry_after_seconds -- the API puts it inside the detail object, as api-errors reads code; read it at the top too -- else the Retry-After header, else RateLimit-Reset (the API's own rate limiter answers in plain text with only that header), or poll_interval_ms when that is longer or none is given; when that is more than the time left the outcome is 'timeout' at once. A 401 or 403 is 'auth': the API's own authentication error, passed through, never a failed admission. Any other refusal of the wait itself is 'failed' with error_code null and the api-errors status, code and detail. An API that cannot be reached is 'unreachable', the SDK's own error for that, never a failed admission (call.api 'unreachable' points the SDK at a port where nothing listens). When timeout_ms pass first the outcome is 'timeout', which is a connection error and a timeout at once, and whose message ends \"it may still admit it later\". A links.self whose origin -- scheme, host and port, the scheme's default port spelled out -- is not the API's is 'error' and is never fetched: the token goes nowhere else. In links.self, {api_host} and {api_port} stand for the host and port of the API the SDK is pointed at. polls counts the GETs sent; waited_at_least_ms, when present, is the least time the wait must have taken. Every duration is whole milliseconds; response headers are listed when the API sends any that matter.",
+ "source": "thalovant-api app/routes/clients.py _accept_client_sync_operation, app/routes/operations.py, app/services/operation_convergence.py (#358); app/auth/deps.py (token_rate_limited, token_quota_exceeded), app/middleware/errors.py (the Problem+JSON envelope), app/middleware/ratelimit.py (the plain 429)",
+ "cases": [
+  {
+   "name": "no operation, nothing to wait for",
+   "call": {
+    "op": "wait",
+    "operation": null,
+    "timeout_ms": 2000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 0
+   }
+  },
+  {
+   "name": "through every stage to ready",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"requested\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"committed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"applied\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 4
+   }
+  },
+  {
+   "name": "a failed operation",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"committed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"failed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":\"gitops_push_rejected\",\"error_message\":\"The hub repository refused the change.\",\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "failed",
+    "error_code": "gitops_push_rejected",
+    "status": null,
+    "polls": 2
+   }
+  },
+  {
+   "name": "an operation the platform gave up on",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"timed_out\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":\"convergence_timeout\",\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "failed",
+    "error_code": "convergence_timeout",
+    "status": null,
+    "polls": 1
+   }
+  },
+  {
+   "name": "an operation no longer tracked",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 404,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":404,\"detail\":\"Operation not found\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 1
+   }
+  },
+  {
+   "name": "a 503 is ridden out",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 503,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":503,\"detail\":\"Service unavailable\"}"
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 2
+   }
+  },
+  {
+   "name": "a 429 waits the time the API names, then polls again",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 429,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":429,\"instance\":\"urn:problem:4f1d2c3b-0000-4000-8000-000000000429\",\"detail\":{\"code\":\"token_rate_limited\",\"message\":\"API token request rate limit for your plan was exceeded. Retry after the current window resets.\",\"retry_after_seconds\":1}}",
+      "headers": {
+       "Retry-After": "1"
+      }
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 2,
+    "waited_at_least_ms": 1000
+   }
+  },
+  {
+   "name": "the API's rate limiter answers in plain text, and RateLimit-Reset is the wait",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 429,
+      "content_type": "text/plain; charset=utf-8",
+      "body": "Too Many Requests",
+      "headers": {
+       "RateLimit-Limit": "60",
+       "RateLimit-Remaining": "0",
+       "RateLimit-Reset": "1"
+      }
+     }
+    },
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 2,
+    "waited_at_least_ms": 1000
+   }
+  },
+  {
+   "name": "a 429 asking for longer than is left is a timeout at once",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 2000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 429,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":429,\"instance\":\"urn:problem:4f1d2c3b-0000-4000-8000-000000000429\",\"detail\":{\"code\":\"token_rate_limited\",\"message\":\"API token request rate limit for your plan was exceeded. Retry after the current window resets.\",\"retry_after_seconds\":60}}",
+      "headers": {
+       "Retry-After": "60"
+      }
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "timeout",
+    "polls": 1
+   }
+  },
+  {
+   "name": "a revoked token while waiting is the authentication error, not a failed admission",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 401,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":401,\"detail\":\"Could not validate credentials\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "auth",
+    "status": 401,
+    "polls": 1
+   }
+  },
+  {
+   "name": "a token without the scope while waiting is the authentication error too",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 403,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":403,\"detail\":\"Insufficient scopes\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "auth",
+    "status": 403,
+    "polls": 1
+   }
+  },
+  {
+   "name": "the API refusing the wait itself keeps what it said",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 400,
+      "content_type": "application/problem+json",
+      "body": "{\"type\":\"about:blank\",\"title\":\"HTTPException\",\"status\":400,\"detail\":\"Operation id is not valid.\",\"code\":\"invalid_operation_id\"}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "failed",
+    "error_code": null,
+    "status": 400,
+    "code": "invalid_operation_id",
+    "detail": "Operation id is not valid.",
+    "polls": 1
+   }
+  },
+  {
+   "name": "an API out of reach is reported as it is",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 2000,
+    "poll_interval_ms": 10,
+    "api": "unreachable"
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "unreachable",
+    "polls": 0
+   }
+  },
+  {
+   "name": "still committed when the wait runs out",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 200,
+    "poll_interval_ms": 20
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"committed\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     },
+     "repeat": true
+    }
+   ],
+   "expect": {
+    "outcome": "timeout"
+   }
+  },
+  {
+   "name": "a link on the API's own origin is followed",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "http://{api_host}:{api_port}/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 5000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [
+    {
+     "request": {
+      "method": "GET",
+      "path": "/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     },
+     "response": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\",\"kind\":\"client.sync\",\"aggregate_type\":\"client\",\"aggregate_id\":\"c0ffee00-1111-4222-8333-444455556666\",\"status\":\"ready\",\"details\":{\"reason\":\"create\"},\"git_commit_sha\":null,\"error_code\":null,\"error_message\":null,\"created_at\":\"2026-09-27T10:00:00Z\",\"updated_at\":\"2026-09-27T10:00:00Z\",\"committed_at\":null,\"applied_at\":null,\"ready_at\":null,\"terminal_at\":null,\"links\":{\"self\":\"/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50\"}}"
+     }
+    }
+   ],
+   "expect": {
+    "outcome": "admitted",
+    "polls": 1
+   }
+  },
+  {
+   "name": "a link to another origin is never fetched",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "https://collector.example.invalid/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 1000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "error",
+    "polls": 0
+   }
+  },
+  {
+   "name": "the same host over another scheme is another origin",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "https://{api_host}:{api_port}/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 1000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "error",
+    "polls": 0
+   }
+  },
+  {
+   "name": "the same host on another port is another origin",
+   "call": {
+    "op": "wait",
+    "operation": {
+     "id": "0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50",
+     "kind": "client.sync",
+     "aggregate_type": "client",
+     "aggregate_id": "c0ffee00-1111-4222-8333-444455556666",
+     "status": "requested",
+     "details": {
+      "reason": "create"
+     },
+     "git_commit_sha": null,
+     "error_code": null,
+     "error_message": null,
+     "created_at": "2026-09-27T10:00:00Z",
+     "updated_at": "2026-09-27T10:00:00Z",
+     "committed_at": null,
+     "applied_at": null,
+     "ready_at": null,
+     "terminal_at": null,
+     "links": {
+      "self": "http://{api_host}:9/v1/operations/0b9e7c1a-2f44-4d5e-8a3b-6c1d2e9f7a50"
+     }
+    },
+    "timeout_ms": 1000,
+    "poll_interval_ms": 10
+   },
+   "exchanges": [],
+   "expect": {
+    "outcome": "error",
+    "polls": 0
+   }
+  }
+ ]
+}

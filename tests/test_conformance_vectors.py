@@ -154,79 +154,71 @@ def test_the_envelope_is_the_shape_the_vectors_describe():
     assert set(envelope["payload"]["payload"]) == {"type", "data", "context"}
 
 
+def _bin_frame(kind: int, payload: bytes, metadata: dict[str, Any]) -> bytes:
+    """A BINARY frame as a hub writes it: WIRE-1, uncompressed.
+
+    A marker bit, the five-bit type (12, BINARY) and the compression bit fill
+    the first byte, the metadata length the second, then the metadata; then
+    four bits naming the payload type and the payload itself, which is
+    therefore not byte-aligned, and four bits of padding.
+    """
+    meta = json.dumps(metadata).encode()
+    bits = f"{kind & 0xF:04b}" + "".join(f"{byte:08b}" for byte in payload) + "0000"
+    body = int(bits, 2).to_bytes(len(bits) // 8, "big")
+    return bytes((0x80 | (12 << 1), len(meta))) + meta + body
+
+
+def _native_transport() -> Any:
+    from thalovant._hive import AsyncHiveMindWSSTransport
+    from thalovant.identity import ThalovantIdentity
+
+    return AsyncHiveMindWSSTransport(
+        ThalovantIdentity(
+            access_key="key", password="password", site_id="site",
+            default_master="wss://hub.local", default_port=443,
+        ),
+        useragent="test",
+    )
+
+
 def test_every_payload_type_the_vectors_name_is_actually_delivered():
     """Not merely mapped -- delivered.
 
-    The library's own binary handler surfaces TTS_AUDIO and FILE and logs
-    "Ignoring received untyped binary data" for the rest, so four of the six
-    types these vectors name were decoded off the wire and then dropped. A test
-    that checked the name map would have passed throughout; it has to be the
-    handler the WSS client actually calls.
+    hivemind-bus-client's own binary handler surfaced TTS_AUDIO and FILE and
+    logged "Ignoring received untyped binary data" for the rest, so four of the
+    six types these vectors name were decoded off the wire and then dropped. A
+    test that checked the name map would have passed throughout; this one
+    decodes each frame the way the transport does and delivers it.
     """
 
-    from hivemind_bus_client.message import HiveMindBinaryPayloadType as Wire
+    from thalovant._wire import decode_binary_frame
 
-    from thalovant.identity import ThalovantIdentity
-    from thalovant.transport import HiveMindWSSTransport
-
-    transport = HiveMindWSSTransport(
-        ThalovantIdentity(
-            access_key="key", password="password", site_id="site",
-            default_master="wss://hub.local", default_port=443,
-        ),
-        useragent="test",
-    )
+    transport = _native_transport()
     seen: list[str] = []
     transport.on_binary(lambda frame: seen.append(frame.kind))
-
-    class _Base:
-        noise_transport = None
-
-    handler = transport._build_wss_client_class(_Base, object)._handle_binary
-
-    class _Frame:
-        def __init__(self, wire: int) -> None:
-            self.bin_type = wire
-            self.payload = b"bytes"
-            self.metadata = {"file_name": "x"}
-
-    for wire in sorted(kind.value for kind in Wire if kind is not Wire.UNDEFINED):
-        handler(None, _Frame(wire))
-
     spec = vectors("binary-vectors.json")
-    assert seen == [spec["payload_kinds"][str(wire)]
-                    for wire in sorted(int(key) for key in spec["payload_kinds"])]
+    wires = sorted(int(key) for key in spec["payload_kinds"])
+    for wire in wires:
+        transport._deliver(decode_binary_frame(_bin_frame(wire, b"bytes", {"file_name": "x"})))
+    assert seen == [spec["payload_kinds"][str(wire)] for wire in wires]
 
 
 def test_a_payload_type_nobody_named_still_arrives():
-    from thalovant.identity import ThalovantIdentity
-    from thalovant.transport import HiveMindWSSTransport
+    from thalovant._wire import HiveMessage, decode_binary_frame
 
-    transport = HiveMindWSSTransport(
-        ThalovantIdentity(
-            access_key="key", password="password", site_id="site",
-            default_master="wss://hub.local", default_port=443,
-        ),
-        useragent="test",
-    )
+    transport = _native_transport()
     seen: list[str] = []
     transport.on_binary(lambda frame: seen.append(frame.kind))
-
-    class _Base:
-        noise_transport = None
-
     spec = vectors("binary-vectors.json")
-    handler = transport._build_wss_client_class(_Base, object)._handle_binary
-    for wire in sorted(int(key) for key in spec["unnamed_kind_names"]):
-        class _Frame:
-            bin_type = wire
-            payload = b"bytes"
-            metadata: dict[str, Any] = {}
-
-        handler(None, _Frame())
-    # Only 0-15 can travel -- the wire field is four bits -- and anything
-    # unassigned reaches us as 0, because hivemind-bus-client flattens it there.
-    # The naming has to hold for every number all the same: it is the last thing
-    # between a payload type nobody has named yet and a frame that disappears.
+    for key in sorted(spec["unnamed_kind_names"], key=int):
+        wire = int(key)
+        if wire <= 15:
+            # A number the four-bit field can carry travels in a real frame.
+            transport._deliver(decode_binary_frame(_bin_frame(wire, b"bytes", {})))
+        else:
+            transport._deliver(HiveMessage("bin", b"bytes", bin_type=wire))
+    # Only 0-15 can travel -- the wire field is four bits. The naming has to
+    # hold for every number all the same: it is the last thing between a
+    # payload type nobody has named yet and a frame that disappears.
     assert seen == [spec["unnamed_kind_names"][key]
                     for key in sorted(spec["unnamed_kind_names"], key=int)]

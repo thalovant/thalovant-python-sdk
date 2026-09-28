@@ -164,7 +164,7 @@ def test_with_two_asks_in_flight_an_uncorrelated_denial_fails_neither():
         try:
             sdk.ask(label, timeout=0.6)
             outcomes[label] = None
-        except BaseException as error:  # noqa: BLE001 -- the type is the assertion
+        except BaseException as error:  # the type is the assertion
             outcomes[label] = error
 
     first = threading.Thread(target=ask, args=("first",))

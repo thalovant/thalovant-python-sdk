@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thalovant"
-version = "0.8.7"
+version = "0.9.0"
 description = "Python SDK and CLI for direct Thalovant hub data-plane clients and agents"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Thalovant" }]
 maintainers = [{ name = "Thalovant" }]
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "LICENSE-langcodes"]
 keywords = ["thalovant", "sdk", "agent", "voice", "assistant", "iot"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,34 +31,36 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    # 1.1.9a1 fixes HiveMind #251: one BUS delivery, after the protocol
-    # removes forged origin claims and normalizes routing/session context.
-    # Earlier v3-capable releases emit a second, unprocessed copy first.
-    "hivemind-bus-client>=1.1.9a1",
-    # The language matcher the rest of OVOS uses (`fr` finds `fr-FR`), with
-    # langcodes so bare and regional tags measure the way they do in a skill.
-    "ovos-spec-tools[langcodes]>=1.10.5a1",
-    # the primitive hivemind_bus_client.noise imports. Without it
-    # NOISE_SUPPORTED is False and HiveMindSlaveProtocol._should_use_noise
-    # silently selects the legacy handshake the hub no longer offers.
-    "poorman-handshake>=2.0.0a3",
-    "paho-mqtt>=2.1.0",
-    "PyYAML>=6.0.2",
-    # Security floors: Requests GHSA-gc5v-m9x4-r6x2 and cryptography
-    # GHSA-g6cj-pr64-35w5. Do not allow an existing vulnerable install to satisfy
-    # the SDK's requirements just because the latest resolver output is safe.
-    "requests>=2.33.0",
-    "cryptography>=50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # The data plane (HiveMind v3 over a WebSocket or HTTPS polling) and the
+    # control-plane API both run on aiohttp. 3.11 is the first release with
+    # ClientWSTimeout, which the WebSocket close timeout is set through.
+    "aiohttp>=3.11",
+    # Noise (X25519, ChaCha20-Poly1305, AES-GCM, BLAKE2s, SHA-256) and the
+    # argon2id that derives each hub's pre-shared key.
+    #
+    # The floor is 48.0.1, not 50.0.0, and that is deliberate. 50.0.0 fixes
+    # GHSA-g6cj-pr64-35w5, which is in PKCS#7 EnvelopedData decryption; nothing
+    # in this SDK calls PKCS#7 at all. Noise uses X25519, ChaCha20-Poly1305,
+    # AES-GCM and the hashes, and the pre-shared key is argon2id, all of which
+    # 48.0.1 provides (argon2id since 44.0). A floor above what the SDK needs
+    # only stops it installing next to software that pins lower: Home
+    # Assistant 2026.9 pins cryptography==48.0.1, and a 50.0.0 floor made the
+    # SDK uninstallable there. An application that uses PKCS#7 itself should
+    # require the fixed version in its own dependencies. CI runs the whole
+    # suite at this floor on Python 3.10.
+    # One difference is worth knowing: before 50.0.0, argon2id holds the GIL
+    # for the whole derivation (measured: about 0.12 s), so the first
+    # connection to a hub pauses an asyncio loop that long even though the
+    # SDK derives on the executor. The key is cached afterwards, so this
+    # happens once per identity and hub. 50.0.0 and later release the GIL.
+    "cryptography>=48.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     # Intel Macs: cryptography stopped publishing x86_64 macOS wheels after
-    # 48.0.1, and building it needs a Rust toolchain no desktop has. The one
-    # path GHSA-g6cj-pr64-35w5 reaches, PKCS#7 EnvelopedData decryption, is
-    # called by nothing in this SDK or the hub-client tree beneath it (Noise
-    # uses X25519 and ChaCha20-Poly1305 only). Without this line the SDK, and
-    # every satellite on it, cannot be installed on an Intel Mac at all.
-    # The upper bound is the half that does the work: 48.0.1 ships
-    # macosx_10_9_universal2, 49.0.0 and everything after it ship
-    # macosx_11_0_arm64 alone, so an open range resolves to a version with no
-    # wheel for this machine and falls back to the sdist it cannot build.
+    # 48.0.1, and building it needs a Rust toolchain no desktop has. The upper
+    # bound is what matters here: 48.0.1 ships macosx_10_9_universal2, 49.0.0
+    # and everything after it ship macosx_11_0_arm64 alone, so an open range
+    # resolves to a version with no wheel for this machine and falls back to
+    # the sdist it cannot build. Without this line the SDK, and every
+    # satellite on it, cannot be installed on an Intel Mac at all.
     "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
@@ -72,14 +74,38 @@ Issues = "https://github.com/thalovant/thalovant-python-sdk/issues"
 thalovant = "thalovant.cli:main"
 
 [project.optional-dependencies]
-# Test tooling only. twine lives in `publish` because it requires
-# rich>=14.3.3 while ovos-utils (via hivemind-bus-client) pins rich~=13.7:
-# installing both alongside the package is unresolvable, and the test
-# environment has no use for the publishing tools.
+# HiveMind over an MQTT broker. The WebSocket and HTTPS transports need
+# nothing beyond the core.
+mqtt = [
+    "paho-mqtt>=2.1.0",
+]
+# The config file is read by a small built-in reader for what a config holds;
+# with PyYAML installed it is read by PyYAML instead, anchors and all.
+yaml = [
+    "PyYAML>=6.0.2",
+]
+# Test tooling, and the reference libraries the tests compare the SDK's own
+# implementations against: the Noise handshake and the HiveMind envelope
+# (hivemind-bus-client, noiseprotocol), language matching (ovos-spec-tools
+# with langcodes) and YAML (PyYAML). twine lives in `publish` because it
+# requires rich>=14.3.3 while ovos-utils (via hivemind-bus-client) pins
+# rich~=13.7.
 dev = [
     "build>=1.2",
     "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "mypy>=1.13",
+    "ruff>=0.8",
+    "types-PyYAML",
     "thalovant-languages>=0.3.0",
+    "paho-mqtt>=2.1.0",
+    "PyYAML>=6.0.2",
+    "requests>=2.33.0",
+    "certifi",
+    "noiseprotocol>=0.3.1",
+    "hivemind-bus-client>=1.1.9a1",
+    "poorman-handshake>=2.0.0a3",
+    "ovos-spec-tools[langcodes]>=1.10.5a1",
 ]
 # Every word the intent listing turns a rule on -- what makes a phrase a
 # question, what a slot reads as -- lives in its own package, one file per
@@ -108,9 +134,38 @@ docs = [
 packages = ["src/thalovant"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "contracts", "scripts", "LICENSE", "README.md", "mkdocs.yml", "pyproject.toml"]
+include = ["src", "tests", "docs", "contracts", "scripts", "LICENSE", "LICENSE-langcodes", "README.md", "mkdocs.yml", "pyproject.toml"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Correctness first: pyflakes, the pycodestyle errors, bugbear, the asyncio
+# checks, and every broad except named and explained.
+select = ["E4", "E7", "E9", "F", "W", "B", "ASYNC", "BLE", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test doubles are written compactly, fixtures are imported by name and
+# re-declared as parameters, and some tests catch everything on purpose.
+"tests/**" = ["E701", "E702", "F811", "BLE001", "B017", "E402"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/thalovant"]
+
+[[tool.mypy.overrides]]
+# Optional, untyped: the listing extra's language data, paho for MQTT, and
+# ovos-utils only where an application still has it.
+module = ["thalovant_languages", "thalovant_languages.*", "paho", "paho.*", "ovos_utils", "ovos_utils.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["src"]
+# A warning is a failure: an unclosed session or loop, an unawaited coroutine,
+# a deprecated asyncio call. The suite is clean on 3.10 through 3.14.
+filterwarnings = ["error"]
