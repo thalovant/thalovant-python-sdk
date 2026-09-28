@@ -207,7 +207,15 @@ def test_listen_overflow_is_explicit_and_retires_subscription(limit):
         transport.flood()
         with pytest.raises(ThalovantRuntimeError, match='overflow'):
             list(stream)
-        assert not any(transport.bus_handlers.values())
+        # Flood delivers its first event from inside on_mycroft, so the
+        # consumer can overflow while the registering thread has not yet
+        # marked the registration landed; that thread then takes the handler
+        # back off itself. Retired, then, but not necessarily by the time the
+        # error reaches the consumer.
+        deadline = time.monotonic() + 5
+        while any(transport.bus_handlers.values()):
+            assert time.monotonic() < deadline, transport.bus_handlers
+            time.sleep(0.005)
     finally:
         sdk.close()
 
