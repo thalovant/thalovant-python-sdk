@@ -196,3 +196,164 @@ def test_a_plain_handler_that_raises_is_failed_to_handle() -> None:
 
     sent = asyncio.run(answer_home_request(_Replies(), _request("r1"), broken))
     assert isinstance(sent, dict) and sent["error_code"] == "failed_to_handle"
+
+
+# -- where plain handlers run ------------------------------------------------------
+
+
+def test_stuck_plain_handlers_leave_the_default_executor_to_the_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The handshake steps run on the loop's default executor; a stuck handler must hold no worker of it."""
+    import concurrent.futures
+    import threading
+
+    from thalovant import home
+
+    monkeypatch.setattr(home, "_SHARED_THREADS", home._HandlerThreads())
+    release = threading.Event()
+
+    def stuck(_request: object) -> HomeAnswer:
+        release.wait(10)  # a home controller that never answers
+        return HomeAnswer(speech="Too late.")
+
+    async def exercise() -> tuple[list[object], float]:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=2))
+        answers = [
+            await answer_home_request(_Replies(), _request(f"s{n}"), stuck, timeout=0.05, hub_timeout=1.0)
+            for n in range(6)
+        ]
+        started = time.monotonic()
+        await asyncio.wait_for(loop.run_in_executor(None, lambda: None), 1.0)  # a handshake step
+        return answers, time.monotonic() - started
+
+    try:
+        answers, took = asyncio.run(exercise())
+    finally:
+        release.set()
+    assert all(isinstance(sent, dict) and sent["error_code"] == "timeout" for sent in answers)
+    assert took < 0.5
+
+
+def test_a_request_that_finds_every_handler_thread_taken_is_answered_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    from thalovant import home
+
+    monkeypatch.setattr(home, "_SHARED_THREADS", home._HandlerThreads(limit=2))
+    release = threading.Event()
+    calls: list[str] = []
+
+    def stuck(request: object) -> HomeAnswer:
+        calls.append(getattr(request, "request_id", ""))
+        release.wait(10)
+        return HomeAnswer(speech="Too late.")
+
+    async def exercise() -> tuple[object, float]:
+        for n in range(2):
+            await answer_home_request(_Replies(), _request(f"f{n}"), stuck, timeout=0.05, hub_timeout=1.0)
+        started = time.monotonic()
+        sent = await answer_home_request(_Replies(), _request("queued"), stuck, timeout=5.0, hub_timeout=6.0)
+        return sent, time.monotonic() - started
+
+    try:
+        sent, took = asyncio.run(exercise())
+    finally:
+        release.set()
+    assert isinstance(sent, dict) and sent["error_code"] == "timeout" and sent["request_id"] == "queued"
+    assert took < 0.5  # not queued behind the stuck two
+    assert "queued" not in calls
+
+
+def test_a_thread_a_handler_gave_back_is_used_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    from thalovant import home
+
+    monkeypatch.setattr(home, "_SHARED_THREADS", home._HandlerThreads(limit=1))
+    release = threading.Event()
+
+    def slow(_request: object) -> str:
+        release.wait(10)
+        return "Late."
+
+    async def exercise() -> object:
+        await answer_home_request(_Replies(), _request("l1"), slow, timeout=0.05, hub_timeout=1.0)
+        release.set()
+        for _ in range(100):  # the late handler returns, and gives its thread back
+            await asyncio.sleep(0.01)
+            if home._SHARED_THREADS.start(lambda _r: None, home.HomeRequest("probe", "x")) is not None:
+                break
+        await asyncio.sleep(0.05)
+        return await answer_home_request(_Replies(), _request("l2"), lambda _r: "Done.", timeout=1.0, hub_timeout=2.0)
+
+    sent = asyncio.run(exercise())
+    assert isinstance(sent, dict) and sent["speech"] == "Done."
+
+
+def test_a_plain_handler_runs_on_a_daemon_thread_and_sees_the_callers_context() -> None:
+    import contextvars
+    import threading
+
+    marker: contextvars.ContextVar[str] = contextvars.ContextVar("marker", default="unset")
+    seen: list[tuple[str, bool, str]] = []
+
+    def handler(_request: object) -> str:
+        thread = threading.current_thread()
+        seen.append((thread.name, thread.daemon, marker.get()))
+        return "Done."
+
+    async def exercise() -> object:
+        marker.set("from the caller")
+        return await answer_home_request(_Replies(), _request("c1"), handler)
+
+    sent = asyncio.run(exercise())
+    assert isinstance(sent, dict) and sent["speech"] == "Done."
+    # A daemon thread: a handler stuck for good must not hold the process open at exit.
+    assert seen == [("thalovant-home", True, "from the caller")]
+
+
+def test_unsubscribing_lets_the_handler_threads_go_without_waiting() -> None:
+    import threading
+
+    from thalovant.home import answer_home_requests
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    class Client(_Replies):
+        def __init__(self) -> None:
+            super().__init__()
+            self.callback: object = None
+
+        def on(self, _name: str, callback: object) -> object:
+            self.callback = callback
+            return lambda: None
+
+    def stuck(_request: object) -> str:
+        entered.set()
+        release.wait(10)
+        return "Too late."
+
+    async def exercise() -> tuple[float, int]:
+        client = Client()
+        unsubscribe = answer_home_requests(client, stuck, timeout=5.0)
+        client.callback(_request("u1"))  # type: ignore[operator]
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if entered.is_set():
+                break
+        started = time.monotonic()
+        unsubscribe()
+        await asyncio.sleep(0)
+        took = time.monotonic() - started
+        client.callback(_request("u2"))  # type: ignore[operator]  # after closing: no thread for it
+        await asyncio.sleep(0.05)
+        return took, client.sent
+
+    try:
+        took, sent = asyncio.run(exercise())
+    finally:
+        release.set()
+    assert took < 0.1
+    # u1's answer was cancelled with the subscription; u2 found no thread and was answered at once.
+    assert [(item["request_id"], item.get("error_code")) for item in sent] == [("u2", "timeout")]

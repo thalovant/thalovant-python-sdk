@@ -1220,8 +1220,9 @@ New in 0.9.1:
 - `ThalovantIdentity.source_path`, and a Noise key folder beside the identity
   file by default
 - `ThalovantClientKeyRejectedError(key_folder, other_key_folder)`
-- A plain (non-coroutine) home handler runs on the loop's default executor,
-  bounded by the handler's time
+- A plain (non-coroutine) home handler runs on a thread of the SDK's own
+  (at most four at once, never the loop's default executor), bounded by the
+  handler's time; a request that finds all four taken is answered `timeout`
 
 ## Development
 

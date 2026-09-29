@@ -25,9 +25,11 @@ every SDK keeps (``home-link-vectors.json``):
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Union, cast
@@ -69,6 +71,12 @@ ERROR_CODES = (
     "timeout",
     "agent_unavailable",
 )
+
+#: How many plain (synchronous) handlers one link runs at once. They get
+#: threads of their own, never the loop's default executor, which the
+#: transport needs for its handshake; a request that finds them all busy is
+#: answered ``timeout`` at once rather than queued behind them.
+_HANDLER_THREADS = 4
 
 #: The Unicode White_Space property, spelled out so every SDK collapses the
 #: same characters (a regex ``\\s`` differs between languages).
@@ -213,6 +221,78 @@ async def _within(awaitable: Awaitable[HandlerResult], seconds: float) -> Handle
     raise asyncio.TimeoutError
 
 
+class _HandlerThreads:
+    """Where plain handlers run: at most *limit* threads, none of them the loop's.
+
+    ``asyncio.to_thread`` used the loop's default executor, which the
+    transport also runs its handshake steps on. A handler that ignores its
+    time keeps its thread until it returns, so enough stuck ones left a
+    reconnect waiting for a worker until its handshake timed out, and one slow
+    home controller could take the hub link down. Here stuck handlers only
+    fill these threads, and a request that finds them all taken is answered
+    ``timeout`` at once.
+
+    The threads are daemon threads, started one per call, not a
+    ``ThreadPoolExecutor``: that one's workers are joined when the interpreter
+    exits, even after ``shutdown(wait=False)``, so a handler stuck for good
+    would hold the process open -- Home Assistant's shutdown included.
+    :meth:`close` refuses new work and waits for nothing.
+    """
+
+    def __init__(self, limit: int = _HANDLER_THREADS) -> None:
+        self._slots = threading.BoundedSemaphore(limit)
+        self._closed = False
+
+    def close(self) -> None:
+        """Take no more handlers. The ones running are left to finish; what they return is dropped."""
+        self._closed = True
+
+    def start(self, call: Callable[[HomeRequest], Any], request: HomeRequest) -> asyncio.Future[Any] | None:
+        """Run ``call(request)`` on a thread, or ``None`` when every thread is taken or this is closed."""
+        if self._closed or not self._slots.acquire(blocking=False):
+            return None
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        context = contextvars.copy_context()
+
+        def work() -> None:
+            result: Any = None
+            error: BaseException | None = None
+            try:
+                result = context.run(call, request)
+            except BaseException as raised:  # noqa: BLE001 - handed to the loop, which decides
+                error = raised
+            finally:
+                self._slots.release()
+            try:
+                loop.call_soon_threadsafe(_settle, future, result, error)
+            except RuntimeError:
+                pass  # the loop has closed: nobody is waiting for this answer
+
+        try:
+            threading.Thread(target=work, name="thalovant-home", daemon=True).start()
+        except BaseException:
+            self._slots.release()
+            raise
+        return future
+
+
+def _settle(future: asyncio.Future[Any], result: Any, error: BaseException | None) -> None:
+    if future.done():
+        return  # it ran over its time and the request was answered without it
+    if isinstance(error, StopIteration):
+        error = RuntimeError("the handler raised StopIteration")  # a future cannot carry it
+    if error is not None:
+        future.set_exception(error)
+    else:
+        future.set_result(result)
+
+
+#: The threads for requests answered one at a time, with no link of their own
+#: (:func:`answer_home_request` called directly).
+_SHARED_THREADS = _HandlerThreads()
+
+
 def _ignore_late(task: asyncio.Task[Any]) -> None:
     if not task.cancelled() and task.exception() is not None:
         log.debug("a home handler that had timed out failed afterwards: %r", task.exception())
@@ -241,15 +321,28 @@ async def answer_home_request(
     finished, since half of one would break the Noise stream. Returns the
     payload when it was sent in time, ``None`` when there was no time left.
 
-    A coroutine function runs on the loop. Any other callable runs on the
-    loop's default executor (``asyncio.to_thread``), so it may block -- a
-    synchronous call into Home Assistant, say -- without stalling the loop,
-    and the handler's time bounds it as it bounds a coroutine; it must not
-    touch the loop's own objects. A plain function that ran over its time
-    keeps its executor thread until it returns, and what it returns then is
-    dropped. An awaitable it returns is awaited on the loop, within what is
-    left of the handler's time.
+    A coroutine function runs on the loop. Any other callable runs on a
+    thread of the SDK's own -- never the loop's default executor, which the
+    transport needs for its handshake -- so it may block (a synchronous call
+    into Home Assistant, say) without stalling the loop, and the handler's
+    time bounds it as it bounds a coroutine; it must not touch the loop's own
+    objects. A plain function that ran over its time keeps its thread until
+    it returns, and what it returns then is dropped. At most four run at
+    once; a request that finds them all taken is answered ``timeout`` at
+    once. An awaitable it returns is awaited on
+    the loop, within what is left of the handler's time.
     """
+    return await _answer(client, event, handler, timeout, hub_timeout, _SHARED_THREADS)
+
+
+async def _answer(
+    client: Any,
+    event: ThalovantEvent | Any,
+    handler: Handler,
+    timeout: float,
+    hub_timeout: float,
+    threads: _HandlerThreads,
+) -> dict[str, Any] | None:
     started = time.monotonic()
 
     def remaining() -> float:
@@ -266,7 +359,13 @@ async def answer_home_request(
             # other request and the reply itself, and _within could not bound
             # a call that never yields.
             call = cast(Callable[[HomeRequest], Any], handler)
-            result: Any = await _within(asyncio.to_thread(call, request), max(0.0, handler_timeout))
+            running = threads.start(call, request)
+            if running is None:
+                # Every thread is held by a handler that has not returned:
+                # waiting behind them would only answer late.
+                log.debug("home request %s: every handler thread is busy", request.request_id)
+                raise asyncio.TimeoutError
+            result: Any = await _within(running, max(0.0, handler_timeout))
             if inspect.isawaitable(result):
                 left = handler_timeout - (time.monotonic() - started)
                 result = await _within(cast(Awaitable[HandlerResult], result), max(0.0, left))
@@ -301,12 +400,16 @@ def answer_home_requests(
     """Answer every ``thalovant.home.request`` *client* receives. Returns an unsubscriber.
 
     Each request is answered on a task of its own, so a slow one does not hold
-    up the next. Unsubscribing cancels the answers still running.
+    up the next. Plain handlers run on at most four threads this
+    subscription owns (see :func:`answer_home_request`).
+    Unsubscribing cancels the answers still running and lets those threads
+    go, without waiting for a handler that is stuck.
     """
     tasks: set[asyncio.Task[Any]] = set()
+    threads = _HandlerThreads()
 
     def on_request(event: ThalovantEvent) -> None:
-        task = asyncio.ensure_future(answer_home_request(client, event, handler, timeout=timeout))
+        task = asyncio.ensure_future(_answer(client, event, handler, timeout, HOME_REQUEST_TIMEOUT, threads))
         tasks.add(task)
         task.add_done_callback(tasks.discard)
         task.add_done_callback(_log_failure)
@@ -316,6 +419,7 @@ def answer_home_requests(
     def unsubscribe() -> None:
         close = getattr(subscription, "close", subscription)
         close()
+        threads.close()
         for task in tuple(tasks):
             task.cancel()
 
