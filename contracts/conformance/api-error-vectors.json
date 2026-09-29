@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "What a control-plane error carries when the API answers a request with an error status. The API answers every refusal with a Problem+JSON body, and many carry structured fields beside their sentence -- a platform_image_required 403 names refused_images, allowed_images and allowed_repositories; a plan_limit 403 names resource, limit and used. Every SDK's API error exposes: status, the HTTP status; problem, the whole body parsed, exactly when it is a JSON object (null for a body that is empty, not JSON, or JSON that is not an object), so any structured field is reachable without a new SDK release; code, the body's code when it is a string with a non-whitespace character, else the code inside a detail that is itself an object (FastAPI's own envelope, which the API's Problem+JSON handler normally lifts), else null; and detail, read the same way from the detail member -- the whole sentence exactly as sent, never trimmed, collapsed or shortened. A message built for display may be shortened, but it never carries a value the body echoed back from the request: every string in message_excludes must be absent from the error's message and its string form. Each case's response is the status, the Content-Type and the body text the API sent; expect is what the SDK's error exposes, recorded as {status, code, detail, problem}.",
+  "description": "What a control-plane error carries when the API answers a request with an error status. The API answers every refusal with a Problem+JSON body, and many carry structured fields beside their sentence -- a platform_image_required 403 names refused_images, allowed_images and allowed_repositories; a plan_limit 403 names resource, limit and used. Every SDK's API error exposes: status, the HTTP status; problem, the whole body parsed, exactly when it is a JSON object (null for a body that is empty, not JSON, or JSON that is not an object), so any structured field is reachable without a new SDK release; code, the body's code when it is a string with a non-whitespace character, else the code inside a detail that is itself an object (FastAPI's own envelope, which the API's Problem+JSON handler normally lifts), else null; and detail, read the same way from the detail member -- the whole sentence exactly as sent, never trimmed, collapsed or shortened. A message built for display may be shortened, but it never carries a value the body echoed back from the request: every string in message_excludes must be absent from the error's message and its string form -- whatever key the echoed value sits under and whatever its shape, since a validation error's input is the request as sent, not a field a key-name filter can recognise (an SDK or tool that prints a validation error's entries prints each input as \"[omitted]\"). Each case's response is the status, the Content-Type and the body text the API sent; expect is what the SDK's error exposes, recorded as {status, code, detail, problem}.",
   "source": "thalovant-api app/middleware/errors.py setup_exception_handlers; app/services/release_policies.py refuse_custom_release_images; app/services/plans.py enforce_plan_limit",
   "cases": [
     {
@@ -287,6 +287,77 @@
         "detail": null,
         "problem": null
       }
+    },
+    {
+      "name": "an echoed input is never repeated, whatever its key or shape",
+      "response": {
+        "status": 422,
+        "content_type": "application/json",
+        "body": "{\"detail\":[{\"type\":\"string_too_long\",\"loc\":[\"body\",\"client_name\"],\"msg\":\"String should have at most 120 characters\",\"input\":\"synthetic-echoed-name-do-not-log\",\"ctx\":{\"max_length\":120}}]}"
+      },
+      "expect": {
+        "status": 422,
+        "code": null,
+        "detail": null,
+        "problem": {
+          "detail": [
+            {
+              "type": "string_too_long",
+              "loc": [
+                "body",
+                "client_name"
+              ],
+              "msg": "String should have at most 120 characters",
+              "input": "synthetic-echoed-name-do-not-log",
+              "ctx": {
+                "max_length": 120
+              }
+            }
+          ]
+        }
+      },
+      "message_excludes": [
+        "synthetic-echoed-name-do-not-log"
+      ]
+    },
+    {
+      "name": "an echoed input under an ordinary key is never repeated either",
+      "response": {
+        "status": 422,
+        "content_type": "application/problem+json",
+        "body": "{\"type\":\"about:blank\",\"title\":\"RequestValidationError\",\"status\":422,\"instance\":\"urn:problem:0b6f3c2e-5d1a-4e7b-9c8d-2a4f6e8b0c13\",\"detail\":\"Request validation failed\",\"errors\":[{\"type\":\"string_type\",\"loc\":[\"body\",\"spec\",\"siteId\"],\"msg\":\"Input should be a valid string\",\"input\":{\"siteId\":[\"synthetic-echoed-site-do-not-log\"]}}]}"
+      },
+      "expect": {
+        "status": 422,
+        "code": null,
+        "detail": "Request validation failed",
+        "problem": {
+          "type": "about:blank",
+          "title": "RequestValidationError",
+          "status": 422,
+          "instance": "urn:problem:0b6f3c2e-5d1a-4e7b-9c8d-2a4f6e8b0c13",
+          "detail": "Request validation failed",
+          "errors": [
+            {
+              "type": "string_type",
+              "loc": [
+                "body",
+                "spec",
+                "siteId"
+              ],
+              "msg": "Input should be a valid string",
+              "input": {
+                "siteId": [
+                  "synthetic-echoed-site-do-not-log"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "message_excludes": [
+        "synthetic-echoed-site-do-not-log"
+      ]
     }
   ]
 }

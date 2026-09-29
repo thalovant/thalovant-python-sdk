@@ -12,6 +12,8 @@
   transports written synchronously. A daemon thread rather than the loop's
   executor: a transport that never returns must not hold up interpreter exit
   or ``asyncio.run``'s shutdown.
+- :func:`spawn` starts a task nobody awaits -- a coroutine a handler
+  returned, a state callback -- and keeps it alive until it ends.
 """
 
 from __future__ import annotations
@@ -27,11 +29,50 @@ import weakref
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, TypeVar
 
-__all__ = ["CallbackThread", "LoopThread", "OffLoop", "in_thread", "on_loop_thread"]
+__all__ = ["CallbackThread", "LoopThread", "OffLoop", "in_thread", "on_loop_thread", "spawn"]
 
 log = logging.getLogger("thalovant.transport")
 
 T = TypeVar("T")
+
+
+#: Tasks started by :func:`spawn` and not finished yet. The event loop holds
+#: only a weak reference to a task, so one nobody else holds can be collected
+#: while it is suspended -- a handler's coroutine vanishing half-way.
+_SPAWNED: set[asyncio.Future[Any]] = set()
+
+
+def spawn(
+    awaitable: Awaitable[Any],
+    failure: str | None,
+    logger: logging.Logger | None = None,
+) -> asyncio.Future[Any]:
+    """Run *awaitable* as a task nobody awaits; keep it alive, and log how it failed.
+
+    *failure* is the message an exception is logged with, with its traceback,
+    through *logger* (the transport's by default). ``None`` retrieves the
+    exception quietly, at debug level, for work whose failure changes nothing
+    -- closing a socket that is already gone. Either way asyncio never reports
+    "Task exception was never retrieved" for it.
+    """
+    task = asyncio.ensure_future(awaitable)
+    _SPAWNED.add(task)
+    target = logger or log
+
+    def finished(done: asyncio.Future[Any]) -> None:
+        _SPAWNED.discard(done)
+        if done.cancelled():
+            return
+        error = done.exception()
+        if error is None:
+            return
+        if failure is None:
+            target.debug("background work failed: %r", error)
+        else:
+            target.error(failure, exc_info=(type(error), error, error.__traceback__))
+
+    task.add_done_callback(finished)
+    return task
 
 
 def on_loop_thread(loop: asyncio.AbstractEventLoop | None) -> bool:

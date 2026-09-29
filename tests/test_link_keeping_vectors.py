@@ -21,6 +21,7 @@ from thalovant import (
     AsyncHubSession,
     AsyncThalovantClient,
     HubSessionPolicy,
+    ThalovantClientKeyRejectedError,
     ThalovantConnectionError,
     ThalovantHubKeyChangedError,
     ThalovantHubRefusedError,
@@ -60,6 +61,7 @@ def test_close_vectors(case: dict[str, Any]) -> None:
         case["code"],
         closed_after_handshake_ms=case.get("after_ms") if case["when"] == "after_handshake" else None,
         code_late_ms=case.get("code_late_ms", 0),
+        after_authenticated_frame=case.get("after_authenticated_frame", False),
     )
     produced = {"outcome": "refused" if refused else "dropped"}
     record("link-keeping-vectors.json", case["name"], produced)
@@ -84,6 +86,8 @@ async def _connect(identity: Any, state: str) -> None:
 def _outcome(error: BaseException | None) -> str:
     if error is None:
         return "connected"
+    if isinstance(error, ThalovantClientKeyRejectedError):
+        return "client_key_rejected"
     if isinstance(error, ThalovantHubRefusedError):
         return "refused"
     if isinstance(error, ThalovantHubKeyChangedError):
@@ -93,11 +97,21 @@ def _outcome(error: BaseException | None) -> str:
 
 
 async def _attempt(identity: Any, state: str) -> BaseException | None:
+    """One connect as a kept link makes it: the handshake, then the settle window."""
+    session = AsyncHubSession.for_identity(identity, noise_state_dir=state, settle_seconds=POLICY["settle_ms"] / 1000)
     try:
-        await _connect(identity, state)
+        await asyncio.wait_for(session.connect(), 15)
     except ThalovantConnectionError as error:
         return error
+    finally:
+        await session.close()
     return None
+
+
+def _replace_client_key(state: str) -> None:
+    """Give the client a new static key, keeping the hub pins it has."""
+    (key,) = Path(state).glob("*_noise.key")
+    key.write_text(_noise.generate_private_key().hex(), encoding="ascii")
 
 
 @pytest.mark.parametrize("case", _cases("handshake"), ids=lambda case: case["name"])
@@ -111,7 +125,8 @@ def test_handshake_vectors(case: dict[str, Any], tmp_path: Path) -> None:
             state = str(tmp_path / "noise")
             identity = _identity(hub, record_)
             situation = case["situation"]
-            if situation in ("pinned", "password_changed_since_pinning", "hub_key_changed"):
+            if situation in ("pinned", "password_changed_since_pinning", "hub_key_changed",
+                             "client_key_changed", "client_key_changed_pinned_here"):
                 await _connect(identity, state)  # first contact pins both ways
             if situation == "wrong_password":
                 identity = _identity(hub, record_, "a-wrong-password")
@@ -122,6 +137,13 @@ def test_handshake_vectors(case: dict[str, Any], tmp_path: Path) -> None:
                 hub.offer_kk = case["hub_offers_kk"]
             elif situation == "upgrade_status":
                 hub.upgrade_status = case["status"]
+            elif situation == "client_key_changed":
+                state = str(tmp_path / "another-program")  # its own folder, its own key
+            elif situation == "client_key_changed_pinned_here":
+                _replace_client_key(state)
+            elif situation == "closed_after_first_frame":
+                hub.close_after_handshake = True
+                hub.close_after_handshake_speaks = True
             before = len(hub.patterns_chosen)
             outcome = _outcome(await _attempt(identity, state))
             patterns = [pattern[:2] for pattern in hub.patterns_chosen[before:]]

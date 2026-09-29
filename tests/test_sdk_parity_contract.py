@@ -173,6 +173,35 @@ def test_release_mode_refuses_a_partial_view(reference, tmp_path):
         "--release must check the whole consumer workspace"]
 
 
+def test_a_consumer_one_reference_behind_is_not_judged_on_the_new_vectors(reference, tmp_path, capsys):
+    """The reference goes first, so its consumers' recorded results are for the vectors before.
+
+    Comparing them to the new reference can only fail, which deadlocked every
+    round that changed a vector: the reference's own check refused while its
+    consumers were behind, and theirs refused until it merged. Behind is
+    reported and refused at release; the results are compared once acknowledged.
+    """
+    manifest = json.loads((reference / parity.MANIFEST).read_text())
+    published = manifest["reference_history"][0]
+    reference_results = json.loads((ROOT / "contracts/conformance-results.json").read_text())["results"]
+    vector_file = sorted(reference_results)[0]
+    stale = copy.deepcopy(reference_results)
+    stale[vector_file]["digest"] = "f" * 64
+    workspace = tmp_path / "ws"
+    for repo in parity.REPOSITORIES[1:]:
+        contracts = workspace / repo / "contracts"
+        contracts.mkdir(parents=True)
+        (contracts / "sdk-parity.json").write_text(json.dumps({
+            "schema_version": 1, "reference_digests": [published],
+            "capabilities": {"feature": {"status": "required", "reason": "Ported",
+                                         "vectors": {vector_file: f"testdata/{vector_file}"}}}}))
+        (contracts / "conformance-results.json").write_text(json.dumps({"schema_version": 1, "results": stale}))
+    assert parity.check(reference, workspace) == []
+    assert "one reference behind" in capsys.readouterr().err
+    errors = parity.check(reference, workspace, release=True)
+    assert len(errors) == 1 and "cannot release while consumers are behind" in errors[0]
+
+
 @pytest.fixture
 def consumer(tmp_path):
     """A minimal consumer whose capability is pinned to a shared vector file."""

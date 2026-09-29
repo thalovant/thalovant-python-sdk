@@ -646,8 +646,18 @@ then exchanges raw Noise ciphertext. After broker loss, reconnect the transport
 (or use the client's normal reconnect-on-send behavior).
 
 Keep the client static key and server pins between reconnects and restarts.
-The default location remains the existing HiveMind identity under the XDG
-configuration directory. To use a dedicated private directory:
+The hub pins the first key a connection presents and refuses any other, so
+every program that uses one identity has to present the same key. From 0.9.1,
+an identity read from a file (`ThalovantIdentity.from_file()`,
+`from_config()`) keeps its key in a `hivemind` folder beside that file:
+`~/.config/thalovant/identity.json` keeps it in `~/.config/thalovant/hivemind`,
+where thalovant-voice and the satellite installer keep it. The first time that
+folder is used, the key this identity had in the old shared default
+(`$XDG_CONFIG_HOME/hivemind`) is copied there, with its hub pins, if it has met
+this identity's hub; it is copied, never moved, so a device keeps the key its
+hub trusts. An identity built any other way, or read from a folder its reader
+cannot write, keeps using `$XDG_CONFIG_HOME/hivemind`. To choose the folder
+yourself:
 
 ```python
 client = ThalovantClient(
@@ -659,7 +669,13 @@ client.connect()
 ```
 
 Changing state directories creates a different client identity unless you
-migrate the existing key and pins. Authentication failure never deletes a
+migrate the existing key and pins. A hub that pinned another key for the
+connection refuses this one the moment the handshake ends, and no handshake can
+recover from that: the connect raises `ThalovantClientKeyRejectedError` (a
+`ThalovantHubRefusedError`), naming the folder this client's key is in
+(`key_folder`) and where another program reading the same identity may keep its
+own (`other_key_folder`). Re-pair, or share the key folder: point every program
+that uses the identity at the folder holding the key the hub trusts. Authentication failure never deletes a
 trusted server pin automatically. An intentional server-key replacement
 requires verifying the new identity before removing the saved pin.
 Uppercase and lowercase hexadecimal spellings of the same server key are
@@ -1193,6 +1209,20 @@ below is on `ThalovantControlPlane` too):
   `close()`
 - `answer_home_requests(client_or_session, handler, timeout=9.0)`,
   `HomeRequest`, `HomeAnswer`, `home_response()`, `plain_speech()`
+
+New in 0.9.1:
+
+- `control.begin_device_login(..., client_id=None)` signs in as a registered
+  app; Home Assistant's id is `HOME_ASSISTANT_CLIENT_ID`
+  (`"thalovant-home-assistant"`)
+- `control.describe_device_login(user_code)` returns a `DeviceLoginRequest`:
+  `scopes`, `client_name`, `client_id`, `client_verified`, `device_name`
+- `ThalovantIdentity.source_path`, and a Noise key folder beside the identity
+  file by default
+- `ThalovantClientKeyRejectedError(key_folder, other_key_folder)`
+- A plain (non-coroutine) home handler runs on a thread of the SDK's own
+  (at most four at once, never the loop's default executor), bounded by the
+  handler's time; a request that finds all four taken is answered `timeout`
 
 ## Development
 

@@ -146,3 +146,29 @@ def test_a_large_unaligned_payload_decodes_quickly():
     message = decode_binary_frame(frame)
     assert time.perf_counter() - started < 0.5
     assert message.bin_type == 6 and message.payload == audio
+
+
+def test_a_compressed_part_is_capped_when_it_inflates():
+    """A small frame of zeros must not inflate to gigabytes (CWE-409)."""
+    from thalovant import _wire
+
+    bomb = zlib.compress(b"0" * (_wire.MAX_INFLATED + 1), 9)
+    assert len(bomb) < 64 * 1024
+    meta = zlib.compress(b"{}")
+    frame = bytes((0x80 | (1 << 1) | 1, len(meta))) + meta + bomb
+    with pytest.raises(ValueError, match="size limit"):
+        _wire.decode_binary_frame(frame)
+
+
+def test_a_compressed_part_at_the_cap_still_inflates(monkeypatch):
+    from thalovant import _wire
+
+    monkeypatch.setattr(_wire, "MAX_INFLATED", 71)
+    body = json.dumps({"type": "speak", "data": {"u": "x" * 20}, "context": {}}).encode()
+    assert len(body) == 71  # exactly at the cap
+    meta = zlib.compress(b"{}")
+    frame = bytes((0x80 | (1 << 1) | 1, len(meta))) + meta + zlib.compress(body)
+    assert _wire.decode_binary_frame(frame).payload.msg_type == "speak"
+    truncated = bytes((0x80 | (1 << 1) | 1, len(meta))) + meta + zlib.compress(body)[:-4]
+    with pytest.raises(ValueError, match="truncated"):
+        _wire.decode_binary_frame(truncated)

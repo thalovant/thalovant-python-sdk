@@ -19,21 +19,24 @@ import contextlib
 import copy
 import json
 import logging
+import os
 import re
 import sys
 import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from typing import TYPE_CHECKING
 
 from . import _aiohttp
-from ._loop import OffLoop
+from ._loop import OffLoop, spawn
 from ._wire import BusMessage, HiveMessage, binary_kind_name
 from .errors import (
+    ThalovantClientKeyRejectedError,
     ThalovantConnectionError,
     ThalovantHubKeyChangedError,
     ThalovantHubRefusedError,
@@ -74,8 +77,12 @@ HIVE_DISPATCHED = frozenset(
 #: politely. Anything else -- 1001, 1011, 1013, a socket that ended with no
 #: close frame at all (1006) -- is the hub's trouble or the network's, not a
 #: verdict on the credentials. Only a close before the link is established
-#: counts: during the handshake, or within REFUSAL_SETTLE_MS after it.
-#: ``link-keeping-vectors.json`` holds every SDK to this.
+#: counts: during the handshake, or within REFUSAL_SETTLE_MS after it, and
+#: then only while the hub has sent nothing that authenticates. A frame that
+#: decrypts under the new session's keys shows the hub accepted this client's
+#: key -- a hub refuses a key before it sends anything -- so a close after one
+#: is a drop, as it is after the window. ``link-keeping-vectors.json`` holds
+#: every SDK to this.
 REFUSAL_CLOSE_CODES = frozenset({1000, 1005, 1008})
 #: How long after the handshake a close is still the hub's answer to it. A
 #: hub that does not know a client's static key says so only by closing
@@ -92,6 +99,7 @@ def close_refuses(
     *,
     closed_after_handshake_ms: int | None = None,
     code_late_ms: int = 0,
+    after_authenticated_frame: bool = False,
 ) -> bool:
     """Whether a close is the hub refusing the credentials rather than a drop.
 
@@ -100,10 +108,72 @@ def close_refuses(
     the end of the handshake, or ``None`` for a close during it: its own time
     decides, not when the transport reported it. *code_late_ms* is how long
     after the close the transport learnt the code.
+    *after_authenticated_frame* is whether the hub had sent a frame that
+    decrypted under the session's keys before it closed: then it had accepted
+    the credentials, and the close is a drop.
     """
+    if after_authenticated_frame:
+        return False
     if code is None or code not in REFUSAL_CLOSE_CODES or code_late_ms > CLOSE_CODE_GRACE_MS:
         return False
     return closed_after_handshake_ms is None or closed_after_handshake_ms <= REFUSAL_SETTLE_MS
+
+
+def refusal_after_handshake(transport: Any) -> ThalovantHubRefusedError:
+    """What to raise when *transport*'s hub closed a link it had just authenticated.
+
+    A hub that closes the moment an XX handshake ends, before it sends
+    anything, has refused this client's own static key: hivemind-core pins
+    the first key a connection presents and aborts on any other ("client
+    Noise static key contradicts pinned key"). XX cannot recover from that,
+    so it is :class:`ThalovantClientKeyRejectedError`, naming the folder
+    this client's key is in and where another program reading the same
+    identity would keep its own. After KK -- which the hub could only
+    complete with the key it pinned -- the same close is an ordinary refusal.
+    """
+    if not getattr(transport, "closed_key_rejected", False):
+        return ThalovantHubRefusedError(
+            "The hub closed the link right after the handshake: it does not accept these credentials, or not yet."
+        )
+    used, other = key_folders(transport)
+    elsewhere = (
+        f" Another program that reads the same identity may keep its key in {other}, and the hub may have pinned that one."
+        if other else ""
+    )
+    return ThalovantClientKeyRejectedError(
+        "The hub refused this client's Noise key: it pinned a different key for this connection when it first "
+        f"connected. This client's key is in {used}.{elsewhere} A new handshake cannot fix this. Re-pair, or share "
+        "the key folder: point every program that uses this identity at the folder holding the key the hub trusts "
+        "(noise_state_dir; hub.noise_state_dir in thalovant-voice).",
+        key_folder=used,
+        other_key_folder=other,
+    )
+
+
+def _key_rejected_again(error: ThalovantClientKeyRejectedError) -> ThalovantClientKeyRejectedError:
+    """The same verdict as a new error, for a connect to raise from the original."""
+    return ThalovantClientKeyRejectedError(
+        str(error), key_folder=error.key_folder, other_key_folder=error.other_key_folder
+    )
+
+
+def key_folders(transport: Any) -> tuple[str | None, str | None]:
+    """The folder *transport*'s key is in, and the other likely one for the same identity."""
+    from ._noise_runtime import identity_state_dir, legacy_state_dir
+
+    protocol = getattr(transport, "_protocol", None)
+    store = getattr(protocol, "store", None)
+    path = getattr(getattr(store, "IDENTITY_FILE", None), "path", None)
+    if not isinstance(path, str):
+        return None, None
+    used = Path(path).parent
+    candidates = [identity_state_dir(getattr(transport, "identity", None)), legacy_state_dir()]
+    for candidate in candidates:
+        if candidate is not None and os.path.abspath(candidate) != os.path.abspath(used):
+            return str(used), str(candidate)
+    return str(used), None
+
+
 #: A Noise transport message is at most 64 KiB; a WebSocket frame bigger than
 #: this is not one.
 _MAX_FRAME = 256 * 1024
@@ -212,6 +282,9 @@ class AsyncHiveMindTransport:
         #: a client's static key says so only by closing right after the
         #: handshake, so a caller that just connected can tell it from a drop.
         self.closed_refused = False
+        #: Whether that refusal came right after an XX handshake completed:
+        #: the hub refusing this client's own key (see refusal_after_handshake).
+        self.closed_key_rejected = False
 
     # -- identity of the connection -------------------------------------------
 
@@ -341,7 +414,7 @@ class AsyncHiveMindTransport:
         try:
             result = handler(value)
             if asyncio.iscoroutine(result):
-                asyncio.ensure_future(result)
+                spawn(result, "A subscriber raised; continuing.")
         except Exception:
             log.exception("A subscriber raised; continuing.")
 
@@ -449,7 +522,7 @@ class AsyncHiveMindTransport:
         from ._noise_runtime import NoiseClientProtocol, noise_identity
 
         return NoiseClientProtocol(
-            store=noise_identity(self.noise_state_dir),
+            store=noise_identity(self.noise_state_dir, identity=self.identity),
             pin_id=self._pin_id(),
             hello={},
             password=self.identity.password,
@@ -563,6 +636,7 @@ class AsyncHiveMindTransport:
             self._protocol.hello = _hello(self.session_id, self.identity.site_id)
             self._protocol.reset()
             self.closed_refused = False
+            self.closed_key_rejected = False
             await self._handshake(carrier, generation)
             self._check(generation)
             self._connecting = False
@@ -576,6 +650,14 @@ class AsyncHiveMindTransport:
             if isinstance(exc, (asyncio.CancelledError, ThalovantTimeoutError)):
                 raise
             raise self._connect_error(exc) from exc
+
+    def _note_refusal(self, refused: bool) -> None:
+        """Record how the live session ended: refused, and whether its own key was."""
+        from . import _noise
+
+        self.closed_refused = refused
+        protocol = self._protocol
+        self.closed_key_rejected = bool(refused and protocol is not None and protocol.pattern == _noise.PATTERN_XX)
 
     def _check(self, generation: int) -> None:
         if generation != self._generation or not self._connecting:
@@ -627,7 +709,14 @@ class AsyncHiveMindTransport:
                 self._check(generation)
                 for message in step.messages:
                     self._deliver(message)
-        except ThalovantHubRefusedError:
+        except ThalovantHubRefusedError as refusal:
+            if protocol.ready and not isinstance(refusal, ThalovantClientKeyRejectedError):
+                # Refused while the last frames of a handshake this client had
+                # completed were going out -- an HTTPS hub answers the
+                # encrypted HELLO with 401 once it has aborted on the key XX
+                # just showed it. The same verdict as a close right after.
+                self._note_refusal(True)
+                raise refusal_after_handshake(self) from None
             # Any refusal in the middle of the exchange -- a WebSocket closed
             # with a refusal code, an HTTP request answered 401 or 403 -- is a
             # verdict on a KK first message too: the next attempt uses XX.
@@ -638,12 +727,16 @@ class AsyncHiveMindTransport:
         protocol = self._protocol
         assert protocol is not None
         error: BaseException | None = None
+        # Whether the hub has sent anything that decrypted under this
+        # session's keys: once it has, it accepted the credentials, and no
+        # close after that is a refusal.
+        authenticated = False
         try:
             while generation == self._generation:
                 try:
                     raw = await carrier.receive(None, handshake=False)
                 except _Closed as closed:
-                    self.closed_refused = closed.refused
+                    self._note_refusal(closed.refused and not authenticated)
                     error = ThalovantConnectionError(
                         f"HiveMind {self.carrier_name} connection closed ({closed.code})."
                     )
@@ -651,12 +744,16 @@ class AsyncHiveMindTransport:
                 if raw is None:
                     continue
                 step = protocol.receive(raw)
+                authenticated = True
                 for message in step.messages:
                     self._deliver(message)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the read loop ends on anything, and reports it
             error = exc
+            # An HTTPS poll answered 401 or 403: the hub's listener refusing
+            # the session, as a WebSocket close with a refusal code does.
+            self._note_refusal(isinstance(exc, ThalovantHubRefusedError) and not authenticated)
         finally:
             if generation == self._generation and self._transport_connected:
                 self._transport_connected = False
@@ -819,7 +916,7 @@ class AsyncHiveMindTransport:
             self._transport_connected = False
             self._fail_connection(error)
             self.stopped.set()
-            asyncio.ensure_future(carrier.close_socket()).add_done_callback(_consume)
+            spawn(carrier.close_socket(), None)
 
     def _bus_frame(self, event_type: str, data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1048,6 +1145,8 @@ class AsyncHiveMindWSSTransport(AsyncHiveMindTransport):
         return _WSSCarrier(self)
 
     def _connect_error(self, error: BaseException) -> BaseException:
+        if isinstance(error, ThalovantClientKeyRejectedError):
+            return _key_rejected_again(error)
         if isinstance(error, ThalovantHubRefusedError):
             return ThalovantHubRefusedError("HiveMind WSS connect failed: the hub refused the credentials.")
         if isinstance(error, ThalovantHubKeyChangedError):
@@ -1312,6 +1411,8 @@ class AsyncHiveMindHTTPTransport(AsyncHiveMindTransport):
             raise
 
     def _connect_error(self, error: BaseException) -> BaseException:
+        if isinstance(error, ThalovantClientKeyRejectedError):
+            return _key_rejected_again(error)
         if isinstance(error, ThalovantHubRefusedError):
             return ThalovantHubRefusedError(
                 "Could not establish the HiveMind HTTP Noise session: the hub refused the credentials."

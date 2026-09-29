@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "The Home Assistant link on the data plane. A hub skill sends thalovant.home.request {request_id, utterance, lang, conversation_id?}; the SDK answers each one at most once with thalovant.home.response {request_id, speech, response_type, error_code?, continue_conversation, conversation_id?}, sent as a reply (OVOS-MSG-1 §5.2): the request's context, deep-copied, with destination set to the request's source and source to the request's destination (its first entry when a list), read from the context as the hub sent it; a context with a destination and no source gets a reply with no destination at all. response_type is action_done, query_answer or error; error_code, only with error, is one of no_intent_match, no_valid_targets, failed_to_handle, unknown, timeout, agent_unavailable. A handler that raises is failed_to_handle, one that does not answer within timeout_ms (the case's own, else 9000) is timeout, one that answers with an unknown response_type or error_code is unknown -- each with speech \"\" unless the handler had some, since the hub speaks its own sentence for the code in the device's language. A request without a request_id is answered with request_id \"\". conversation_id is echoed when the handler gives none. Everything happens within the hub's bound, reply_timeout_ms (a case's hub_timeout_ms overrides it), counted from the request's arrival: the handler gets timeout_ms or what is left of the bound, whichever is less, and the reply's sending gets what the handler left; a reply that cannot be sent within the bound is withdrawn and never sent late ('deadline' cases: send_ms is how long the transport takes to send it, replied whether it went out). speech is plain text, made in this order ('speech' cases): markup is removed -- a tag is '<' or '</' immediately followed by an ASCII letter, then anything up to the next '>' outside a quoted attribute value; a comment is '<!--' to '-->'; a processing instruction '<?' to '?>'; any other '<' is text, so '5 < 6' stays -- then character references are decoded once, left to right: numeric ones (&#decimal; and &#xhex;, except 0, surrogates and anything above U+10FFFF, which stay as written), the five XML entities (&amp; &lt; &gt; &quot; &apos;) and &nbsp;, and no others; then every run of characters with the Unicode White_Space property becomes one space, and the ends are trimmed. 'reply_context' cases check the routing alone. Every duration is whole milliseconds.",
+ "description": "The Home Assistant link on the data plane. A hub skill sends thalovant.home.request {request_id, utterance, lang, conversation_id?}; the SDK answers each one at most once with thalovant.home.response {request_id, speech, response_type, error_code?, continue_conversation, conversation_id?}, sent as a reply (OVOS-MSG-1 §5.2): the request's context, deep-copied, with destination set to the request's source and source to the request's destination (its first entry when a list), read from the context as the hub sent it; a context with a destination and no source gets a reply with no destination at all. response_type is action_done, query_answer or error; error_code, only with error, is one of no_intent_match, no_valid_targets, failed_to_handle, unknown, timeout, agent_unavailable. A handler that raises is failed_to_handle, one that does not answer within timeout_ms (the case's own, else 9000) is timeout, one that answers with an unknown response_type or error_code is unknown -- each with speech \"\" unless the handler had some, since the hub speaks its own sentence for the code in the device's language. A request without a request_id is answered with request_id \"\". conversation_id is echoed when the handler gives none. Everything happens within the hub's bound, reply_timeout_ms (a case's hub_timeout_ms overrides it), counted from the request's arrival: the handler gets timeout_ms or what is left of the bound, whichever is less, and the reply's sending gets what the handler left; a reply that cannot be sent within the bound is withdrawn and never sent late ('deadline' cases: send_ms is how long the transport takes to send it, replied whether it went out). A reply withdrawn while it waits behind another frame -- 'queued' cases: over a real link, another frame holds the transport's send path for busy_ms from the request's arrival -- is never sent late, and withdrawing it leaves the link exactly as it was: no close, no reconnect, no error against the link (link_kept: the same link then carries another message). Only a frame already being written is finished. speech is plain text, made in this order ('speech' cases): markup is removed -- a tag is '<' or '</' immediately followed by an ASCII letter, then anything up to the next '>' outside a quoted attribute value; a comment is '<!--' to '-->'; a processing instruction '<?' to '?>'; any other '<' is text, so '5 < 6' stays -- then character references are decoded once, left to right: numeric ones (&#decimal; and &#xhex;, except 0, surrogates and anything above U+10FFFF, which stay as written), the five XML entities (&amp; &lt; &gt; &quot; &apos;) and &nbsp;, and no others; then every run of characters with the Unicode White_Space property becomes one space, and the ends are trimmed of White_Space and nothing else: U+001C..U+001F (which Python's str.strip() and Kotlin's trim() also remove), U+200B and U+180E are not White_Space and stay; U+0085 is. 'reply_context' cases check the routing alone. Every duration is whole milliseconds.",
  "source": "Home Assistant contract v1 (Wire messages); OVOS-MSG-1 §5.2; ovos-bus-client Message.reply",
  "request_type": "thalovant.home.request",
  "response_type": "thalovant.home.response",
@@ -417,6 +417,68 @@
    "kind": "speech",
    "text": " a\t\n b　c d e  ",
    "expect": "a b c d e"
+  },
+  {
+   "name": "information separators are not white space, so they stay, at the ends too",
+   "kind": "speech",
+   "text": "\u001c a  b \u001f",
+   "expect": "\u001c a b \u001f"
+  },
+  {
+   "name": "only information separators: nothing to trim",
+   "kind": "speech",
+   "text": "\u001c\u001d\u001e\u001f",
+   "expect": "\u001c\u001d\u001e\u001f"
+  },
+  {
+   "name": "NEL is white space; a zero-width space and U+180E are not",
+   "kind": "speech",
+   "text": "a​b　 ᠎ c",
+   "expect": "a​b ᠎ c"
+  },
+  {
+   "name": "a reply still queued behind another frame at the bound is withdrawn, and the link is kept",
+   "kind": "queued",
+   "hub_timeout_ms": 200,
+   "busy_ms": 600,
+   "request": {
+    "request_id": "q1",
+    "utterance": "turn off the lights",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "Turned off the lights.",
+    "response_type": "action_done"
+   },
+   "expect": {
+    "replied": false,
+    "link_kept": true
+   }
+  },
+  {
+   "name": "a reply queued behind a frame that is written in time goes out",
+   "kind": "queued",
+   "hub_timeout_ms": 2000,
+   "busy_ms": 100,
+   "request": {
+    "request_id": "q2",
+    "utterance": "turn off the lights",
+    "lang": "en-US"
+   },
+   "handler": {
+    "speech": "Turned off the lights.",
+    "response_type": "action_done"
+   },
+   "expect": {
+    "replied": true,
+    "link_kept": true,
+    "response": {
+     "request_id": "q2",
+     "speech": "Turned off the lights.",
+     "response_type": "action_done",
+     "continue_conversation": false
+    }
+   }
   }
  ]
 }

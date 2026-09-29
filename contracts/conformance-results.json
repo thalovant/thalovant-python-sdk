@@ -14,9 +14,11 @@
         "a refused custom image keeps its code, its whole sentence and every list": "c8c0ee8ef09d41244e3df343825f4a2a40b60723a46806df5955ba9eff08ac73",
         "a sentence is kept exactly as sent: its line break, its spacing and its accents": "b2a14988c63acf24d5c7d9919e4a61eaf4764b20ac8510c71235c2b7f3663371",
         "a validation failure keeps its errors, and the message never repeats what was sent": "7ca7788739fb0a722fdbd480b4b59cdf6025108ef7cd4a373af8fcfe8e6aad09",
+        "an echoed input is never repeated, whatever its key or shape": "74d8c5b6f0a1c24432263f27e4c3190135e7994ba605a56bee0e1dfd4ba004e0",
+        "an echoed input under an ordinary key is never repeated either": "cacdbd9ae81ec555698dcd7829acd826fe18b5a5740baa03def427410416b97f",
         "an empty body has no problem": "0228b34361be5e56ea04e11ced54ea93919129b95d8ad85a9be0ba09f6a67f88"
       },
-      "digest": "0a7d093430093467db8c54cd746687b694c916fea798404633bd756e19aaa809"
+      "digest": "dc1a39c1b8a5be6d6213fcf099568126127868f77f8eddb20184422ea701071a"
     },
     "binary-vectors.json": {
       "cases": {
@@ -83,25 +85,33 @@
     },
     "device-login-vectors.json": {
       "cases": {
+        "a code nobody can approve any more": "37a26dedda13f864c0af21d080ed70bb9c1184c6aa91c7c03538f7a1a3ad64c5",
+        "a device that named no app is not verified": "3764de87a2ccfd3b5d656dae3af9075a52c824cb92db23519424b3b07b45d223",
         "a grant without the complete URL still starts": "bcf54e9daee0cf76f71900b36e7f26cfe3c2aba7125920f6ba76c109eb51b787",
         "a person who said no": "88ee570f52a525076ee2eaaf7aac720f700a2163d50c070940993a946f4ccf19",
+        "a registered app names itself with client_id": "b40957b3416e5a0e4c9f8e504003c1a0e39a611cc96baeca5859a587ff6805b7",
         "a token already revoked cannot authenticate its own revoke, and that is revoked too": "d75c96a38d84f0667274a1f099f8be2179523066395e05871db595e2e31bf4c7",
+        "a token answer that is not a JSON object is an error with no status": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
         "a token response without a token is an error": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
         "a verification URL carrying credentials is refused": "4571bbb6de34dc3170244e3278fa65424544e1d970eab12dab66f1484d847a5f",
+        "an app the API does not know is refused": "a7539cd0f727be5dfebf39262ed2742f214f327bbeee265851fe79b3dad4a821",
         "an empty scope list is left out, so the API's default applies": "b40957b3416e5a0e4c9f8e504003c1a0e39a611cc96baeca5859a587ff6805b7",
         "an expired code": "66f91fdc337e18cd7be77e652b5375dceca6f68e8d8637c2e6b6ff1dbc97caa5",
         "any other failure keeps what the API said": "122a29b6bdd870a048b44a0f844d69bab2a9b18c086f1b310a87dd9859d8bc4e",
         "approved, with the token's scopes and id": "c4962c2ce8e60038cdde334e436ef83898c21b80ce2bf8906fd88011d373c7db",
         "begin asks for the scopes and names the client": "b40957b3416e5a0e4c9f8e504003c1a0e39a611cc96baeca5859a587ff6805b7",
+        "no client_id is left out of the request": "b40957b3416e5a0e4c9f8e504003c1a0e39a611cc96baeca5859a587ff6805b7",
         "pending while nobody has approved": "c7edcd3b878b536127bf74f3c074f3ed1ffbbd62e81b82c07ea3dccb79e8d589",
         "slow_down adds five seconds, and they stay added": "ac965a8b0a252683c9431a65111f17bebec267abd6aa59d7e0e651def2bc2c55",
+        "the approver reads a registered app as verified": "f21b06b9d8f9204374ad6c55bb79f3ec4ea5f1ffeaf099fb5712f84c6336fd6f",
         "the token signed in with revokes itself": "d75c96a38d84f0667274a1f099f8be2179523066395e05871db595e2e31bf4c7"
       },
-      "digest": "489348f8493d492e3673d45f6f5e3f102b8a0c9dd94297e8d00b0d226bc685a9"
+      "digest": "1c3adddc930ed31ee6f47996e915fd14e6eef12fda9d862fe69b832eae17c60a"
     },
     "home-link-vectors.json": {
       "cases": {
         "Assist's own error speech goes through": "14cc161857d4323df4831dc4d29c336dd04fdc8e7e28e2abdb45a4f5d8c966fd",
+        "NEL is white space; a zero-width space and U+180E are not": "f9dc633db6f4eb56a1bf4a7fa3fc71088e23b516dd40d1ea3f4fae468e83e4a9",
         "SSML tags go, their text stays": "368079aec1bc4cbb48cd76805518362cc6d4ab7c699c4a3612d35e78e7953c6d",
         "a destination and no source: the reply has no destination": "c2aa0be638aa04eea95ba2988d07622b12108d4794175a9fb58acb8b9c8f5356",
         "a destination that is one peer": "9350f21b7d0d86b4b2ce8993c50e3f7c1bd34829de61795acaa20297ff476da4",
@@ -113,7 +123,9 @@
         "a less-than sign right before a letter opens a tag": "f2f4c3471a636f68143bf665995bd133853f3aea4fb58535a91a97c1ae7ac617",
         "a question answered, the conversation kept": "b639ee9d1a02d4c95625ce4e83b702063fc2cc9cffada68d18911b098ad66352",
         "a reference without its semicolon is text": "21ac38938ccdaf19154f7627a97cf23851b622c77dc31dcabe70f1b7367d42b8",
+        "a reply queued behind a frame that is written in time goes out": "85dfbbd0f3da966a7007566fd1626893e8fd5a41669057dd039a45b92c0b1b7a",
         "a reply sent inside the hub's bound goes out": "1eda5e46417232d8f6d14cc40d04a4d23d2c73773644e3f22e7384ce0fd7b348",
+        "a reply still queued behind another frame at the bound is withdrawn, and the link is kept": "0fe007f3213f28b796d0cb4dbe14623f3d5e756f631f88e52eacf27b4012ab70",
         "a reply that could only arrive after the hub gave up is not sent": "7f25642260a60ae34d57570777a21a883fc24959fe7aea970b2949378282af01",
         "a request without an id": "d74a4534bb53ac910955c82fb41c39340924ba8e29f03c407aecb2b0f038a339",
         "an action done": "4e48c6c0472fb57ccd93a4f68539bcf334e2f8eb3ef824e5ea1a75f6fa0273cd",
@@ -123,34 +135,57 @@
         "comments and processing instructions go": "26ddfaa64268cfee84e47d699914c4754da1f3057b3c4da10f09f8bf883f96b3",
         "decoded once, after the markup is gone": "14e1b53103553f49eaddc66177c81805c6a280426b92f2a3163425c1f7bc8193",
         "every Unicode white space collapses, and the ends are trimmed": "23b7b2b054b23808b9f11a16868b730d8af810d35d2cad6e46562424785b55c5",
+        "information separators are not white space, so they stay, at the ends too": "34c9bbb8a1c0b31d5f391dfce152d6156ef112e88bf7666f8b27f8a9a33d87fc",
         "markup is not speech": "87b18efb5bf97f2e3d49cfb07c56301c6306a006263fa53412d289e42e0f5e8d",
         "nbsp is white space": "ab77501de6314c290af389d570b3128d872bdc0bd050c1bfca41587d947a4668",
         "no routing at all stays none": "c426a896c3237ee1e68cdcdfdfd22ac832eae64ec0ac291827a3b05d6784c320",
         "numeric references, decimal and hex": "54ffad8711cbe7781eb0c908c30b8bc086e3f80b798617ee63884d1d957dcf98",
+        "only information separators: nothing to trim": "99adc7fcc4286edc2861b23eb720ade0e55f03e56e4c5d6c71e9a0eab0320cfe",
         "other named references are left as written": "14d73cd9c4f236d423144b1c55fe094c315d51cac464735ef610d55cb3e2f528",
         "references to no character are left as written": "5f7707178b8a6920a72a3a97f754eb38f178c5b832c445cd686f94d49ffc5531",
         "the five XML entities": "3e07dcbba147904d2e48501b8f61e53058994913d9ece2464ea50d279c049a2e",
         "the route turns round": "f8d9c463a5203918af7b56b6b60d5c3f358998ef0bd215464cd1ffd2f9c249a0"
       },
-      "digest": "523ab03e1d73a47a2f7ad3d53bd7c5b405789a0cf24f0890af12de9758a1ae3f"
+      "digest": "18bbd92b7bb4b6cad621f744308c868a2c8745f38984cadf9ec29a0cbf3a243f"
+    },
+    "link-carrier-vectors.json": {
+      "cases": {
+        "over HTTPS, a client key the hub did not pin: XX ends and the next request is answered 401": "0f0eb8318787ced322523b619c1c638e438c600859432a5202381bd315d019a3",
+        "over HTTPS, a hub key changed since pinning: KK answered 401, XX at once, and XX meets the pin": "21c29986c2011431369927f9c70fa8c03e1dc144a143b9e098cdae2ee027f05a",
+        "over HTTPS, a hub key changed, from a hub that offers only XX": "fa697082d11267368128d1385907add11887fc2fee229fd464a9ce7039ff5cf4",
+        "over HTTPS, a password changed since pinning: KK answered 401, XX at once, and XX refuses": "e281dd4eb39f55f4ac69414a8a47699ac6c506b3ac05d6ab78bdd612156d1513",
+        "over HTTPS, a pinned hub with the right password connects over KK": "24e093189041ee7ed9394c13fa5367feebcb48de0fcb2129c563e5b769edb55e",
+        "over HTTPS, a wrong password on first contact is a refusal": "3d5961f6e8a4b534887a1a4d514a63c5ff9e32f37796bee9b222c5f57c1c8563",
+        "over MQTT, a KK answer that does not authenticate is followed by XX in the same connect": "b362deb86a7c41e070847318200c1ddf2091db2a5603cc37d51608bf51d6d84d",
+        "over MQTT, a hub key changed, from a hub that offers only XX": "fa697082d11267368128d1385907add11887fc2fee229fd464a9ce7039ff5cf4",
+        "over MQTT, a pinned hub with the right password connects over KK": "24e093189041ee7ed9394c13fa5367feebcb48de0fcb2129c563e5b769edb55e",
+        "over MQTT, a wrong password on first contact is a refusal": "3d5961f6e8a4b534887a1a4d514a63c5ff9e32f37796bee9b222c5f57c1c8563"
+      },
+      "digest": "d6941fd5729fd5e8e716bf0351de51786ec2d5068f807806da42852ad7bcb257"
     },
     "link-keeping-vectors.json": {
       "cases": {
         "1000 during the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
         "1001 during the handshake is a hub going away": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
         "1006 is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "1008 at once after the hub's first frame is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
         "1008 during the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
         "1011 during the handshake is the hub's trouble": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
         "1013 during the handshake is the hub's trouble": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
         "a changed hub key stops at once": "3e63ba6d715c61a43cc769ecec6fa71ff75c74128eaca4191fded9183299eb13",
+        "a client key changed under a pinned hub: KK fails, XX ends, the hub closes": "b85c84f0bc148438081b2c81272785dee6a7f60d2f535578c991ab78274fd574",
+        "a client key the hub did not pin: XX ends and the hub closes": "0f0eb8318787ced322523b619c1c638e438c600859432a5202381bd315d019a3",
         "a code learnt late still counts within the grace": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
         "a code learnt too late is no code": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
         "a failure in between restarts the refusal clock": "a03027d03acdcaa21e15c93528d4c456b86879d18c738f063e3e1fd8b7dca79a",
         "a hub key changed since pinning: KK fails, XX at once, and XX meets the pin": "21c29986c2011431369927f9c70fa8c03e1dc144a143b9e098cdae2ee027f05a",
         "a hub key changed, from a hub that offers only XX": "fa697082d11267368128d1385907add11887fc2fee229fd464a9ce7039ff5cf4",
+        "a hub that spoke before closing did not refuse the key": "1a741c9e54ad14cac19e849dc3716476c5486a465685430ddc54fa7dd6068915",
         "a link that came up restarts the refusal clock": "13ac091c5ec311d795d5a8a222e8159064be4d46d359395d174c8ab5e2cbcdf1",
         "a password changed since pinning: KK fails, XX at once, and XX refuses": "e281dd4eb39f55f4ac69414a8a47699ac6c506b3ac05d6ab78bdd612156d1513",
         "a pinned hub with the right password connects over KK": "24e093189041ee7ed9394c13fa5367feebcb48de0fcb2129c563e5b769edb55e",
+        "a refusal code after the hub has spoken is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
+        "a refused client key stops at once": "674c865e6a0b3b6785cb5092d111d3257e980db7feb52ea3af97c5f6f482731e",
         "a socket that ended without a close frame is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
         "a wrong password on first contact is a refusal": "3d5961f6e8a4b534887a1a4d514a63c5ff9e32f37796bee9b222c5f57c1c8563",
         "after the settle window a refusal code is a drop": "f4561a56c653f954444184efd002b7d1f689117d8b99bea3a2ddd5970322e0e5",
@@ -158,6 +193,7 @@
         "an upgrade refused with 403": "b5019cea917a6639c097302cd27f8176255949439ee0a700456e71ec0cf4bf54",
         "an upgrade the hub could not serve": "7e31f2d04c114a4618a6d8d4d1b484e4d49a378e39eaf489e3042fd33787bd14",
         "coming up resets the ladder, and a drop dials again at once": "fa30d0873601ff8e490db9c056eca1453125c43c8ba0ada59d7c43545fdcd4f7",
+        "no frame from the hub yet: the same close is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
         "no status during the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
         "no status right after the handshake is a refusal": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def",
         "refusals are retried through the grace, then given up": "d32e20d7c638f904ab6a36b0881a0db3807ed8049c042e0c3b4a4a19fda8fb1c",
@@ -166,7 +202,7 @@
         "the ladder doubles to its ceiling": "ed05e19c02597a8209bb4bbece8d76a459cab4632f7047b46a4eee82d12e3471",
         "the settle window's last moment still counts": "dad9044d4c206437ff827003f9c445cbe1d348c4c66ad21128316845f0469def"
       },
-      "digest": "1a0e7986bdb9288c329161d6c909856618245e7310d0bb7c935d2fd005c33e0a"
+      "digest": "b61dd603397659e87314af067938044e710762da5341109b148e8dbdedb0db74"
     }
   },
   "schema_version": 1

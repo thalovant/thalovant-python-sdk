@@ -16,8 +16,13 @@ then exchanges raw Noise ciphertext. After broker loss, reconnect the transport
 (or use the client's normal reconnect-on-send behavior).
 
 Keep the client static key and server pins between reconnects and restarts.
-The default location remains the existing HiveMind identity under the XDG
-configuration directory. To use a dedicated private directory:
+From 0.9.1, an identity read from a file keeps them in a `hivemind` folder
+beside that file (`~/.config/thalovant/identity.json` in
+`~/.config/thalovant/hivemind`), taking a copy of the key it had in the old
+shared default, `$XDG_CONFIG_HOME/hivemind`, the first time; any other identity
+keeps that shared default. A hub that pinned another key for the connection
+refuses this one with `ThalovantClientKeyRejectedError`, which names both
+folders. To use a dedicated private directory:
 
 ```python
 client = ThalovantClient(

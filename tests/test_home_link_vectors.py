@@ -135,16 +135,28 @@ def _excluded(error: BaseException, spec: dict[str, Any]) -> None:
 async def _device_case(case: dict[str, Any], plane_cls: type) -> tuple[list[dict[str, Any]], ScriptedApi]:
     call = case["call"]
     async with ScriptedApi(case["exchanges"]) as api:
-        plane = plane_cls(api.url)
+        # Only the approver's read is signed in; a device signing in has no token yet.
+        plane = plane_cls(api.url, access_token="synthetic-token") if call["op"] == "describe" else plane_cls(api.url)
         run = _runner(plane)
         produced: list[dict[str, Any]] = []
         try:
-            if call["op"] == "begin":
+            if call["op"] == "describe":
                 try:
-                    grant = await run(plane.begin_device_login, scopes=call.get("scopes"), client_name=call.get("client_name"))
+                    request = await run(plane.describe_device_login, call["user_code"])
+                except ThalovantAPIError as error:
+                    produced.append(_device_error(error))
+                else:
+                    produced.append({"outcome": "described", "scopes": list(request.scopes),
+                                     "client_name": request.client_name, "client_id": request.client_id,
+                                     "client_verified": request.client_verified,
+                                     "device_name": request.device_name})
+            elif call["op"] == "begin":
+                try:
+                    grant = await run(plane.begin_device_login, scopes=call.get("scopes"),
+                                      client_name=call.get("client_name"), client_id=call.get("client_id"))
                 except ThalovantAPIError as error:
                     _excluded(error, DEVICE)
-                    produced.append({"outcome": "error", "status": error.status_code})
+                    produced.append(_device_error(error))
                 else:
                     produced.append({"outcome": "started", "user_code": grant.user_code,
                                      "verification_uri": grant.verification_uri,
@@ -181,14 +193,19 @@ async def _poll_once(run: Any, plane: Any, authorization: DeviceAuthorization) -
         return {"outcome": "denied", "status": error.status_code}
     except ThalovantAPIError as error:
         _excluded(error, DEVICE)
-        produced = {"outcome": "error", "status": error.status_code}
-        if error.status_code is not None:
-            produced.update(code=error.code, detail=error.detail)
-        return produced
+        return _device_error(error)
     assert plane.access_token == token.access_token and plane.token_id == token.token_id
     return {"outcome": "approved", "token_type": token.token_type, "scopes": list(token.scopes),
             "expires_at": token.expires_at.isoformat().replace("+00:00", "Z") if token.expires_at else None,
             "token_id": token.token_id}
+
+
+def _device_error(error: ThalovantAPIError) -> dict[str, Any]:
+    """A failure, with the api-errors fields when the API answered one."""
+    produced: dict[str, Any] = {"outcome": "error", "status": error.status_code}
+    if error.status_code is not None:
+        produced.update(code=error.code, detail=error.detail)
+    return produced
 
 
 def _runner(plane: Any) -> Any:
@@ -426,6 +443,8 @@ def test_home_link_vectors(case: dict[str, Any]) -> None:
         produced: Any = reply_context(case["context"])
     elif case["kind"] == "speech":
         produced = plain_speech(case["text"])
+    elif case["kind"] == "queued":
+        produced = asyncio.run(_queued_case(case))
     elif case["kind"] == "deadline":
         replies = SlowReplies(case["send_ms"])
         event = ThalovantEvent(name=HOME_REQUEST, data=case["request"], context={"source": "skill"}, raw=None)
@@ -457,6 +476,59 @@ def test_home_link_vectors(case: dict[str, Any]) -> None:
     assert produced == case["expect"]
 
 
+async def _queued_case(case: dict[str, Any]) -> dict[str, Any]:
+    """A reply that waits behind another frame, over a real link to an in-process hub."""
+    import tempfile
+
+    from fake_hub import FakeHub, speak_back
+    from thalovant import AsyncThalovantClient
+
+    hub = FakeHub()
+    hub.responder = speak_back
+    await hub.start()
+    record_ = hub.register()
+    with tempfile.TemporaryDirectory() as state:
+        client = AsyncThalovantClient(hub.identity(record_), noise_state_dir=state, reply_settle_seconds=0.05,
+                                      auto_reconnect=False)
+        try:
+            await client.connect(timeout=10)
+            session = await asyncio.wait_for(hub.new_session.get(), 5)
+            transport = client._link.transport
+            if transport._send_lock is None:
+                transport._send_lock = asyncio.Lock()
+            lock = transport._send_lock
+            await lock.acquire()  # another frame is being written ...
+
+            async def written() -> None:
+                await asyncio.sleep(case["busy_ms"] / 1000)
+                lock.release()  # ... for busy_ms
+
+            busy = asyncio.ensure_future(written())
+            event = ThalovantEvent(name=HOME_REQUEST, data=case["request"],
+                                   context={"source": "skill", "destination": "ha"}, raw=None)
+            sent = await answer_home_request(client, event, _handler(case["handler"]),
+                                             hub_timeout=case["hub_timeout_ms"] / 1000)
+            await busy
+            await asyncio.sleep(0.2)  # time enough for a withdrawn reply to go out late, if it would
+            responses = []
+            while not session.received.empty():
+                payload = session.received.get_nowait()["payload"]
+                if payload.get("type") == HOME_RESPONSE:
+                    responses.append(payload["data"])
+            assert responses == ([sent] if sent is not None else [])  # never sent late, never twice
+            reply = await client.ask("still there", timeout=5)
+            produced: dict[str, Any] = {
+                "replied": sent is not None,
+                "link_kept": reply.text == "You said still there" and hub.attempts == 1,
+            }
+            if sent is not None:
+                produced["response"] = sent
+            return produced
+        finally:
+            await client.close()
+            await hub.stop()
+
+
 def test_the_contract_lists_match_the_sdk() -> None:
     from thalovant import home
 
@@ -468,6 +540,9 @@ def test_the_contract_lists_match_the_sdk() -> None:
     from thalovant import HOME_ASSISTANT_SCOPES
 
     assert list(HOME_ASSISTANT_SCOPES) == DEVICE["home_assistant_scopes"]
+    from thalovant import HOME_ASSISTANT_CLIENT_ID
+
+    assert HOME_ASSISTANT_CLIENT_ID == DEVICE["home_assistant_client_id"]
 
 
 def test_a_handler_that_ignores_cancellation_does_not_hold_the_answer_back() -> None:

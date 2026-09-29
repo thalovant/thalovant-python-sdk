@@ -301,6 +301,10 @@ def validate_reference(reference):
 
 
 def validate_consumer(reference_manifest, root, repo, planned):
+    """Check one consumer's acceptance; True when it acknowledges the current reference.
+
+    False means it is one published reference behind, which *planned* reports.
+    """
     acceptance = read(root / MANIFEST)
     expected = digest(reference_manifest["reference"])
     if acceptance.get("schema_version") != 1:
@@ -321,7 +325,7 @@ def validate_consumer(reference_manifest, root, repo, planned):
                              f"ever published; re-review against the current one")
         planned.append(f"{repo}: one reference behind; re-review and record "
                        f"{expected[:12]}")
-        return
+        return False
     capabilities = reference_manifest["capabilities"]
     entries = acceptance.get("capabilities", {})
     unknown = sorted(set(entries) - set(capabilities))
@@ -412,6 +416,7 @@ def validate_consumer(reference_manifest, root, repo, planned):
                     f"{repo}/{name}: no test names {named}; the capability's "
                     f"behaviour is defined by those vectors and has to be run "
                     f"against them, not merely declared")
+    return True
 
 
 def conformance_results(root):
@@ -518,8 +523,14 @@ def check(reference, workspace=None, consumer=None, release=False):
             if repo == "thalovant-python-sdk":
                 continue
             try:
-                validate_consumer(manifest, workspace / repo, repo, planned)
-                compare_conformance(repo, reference_results, workspace / repo, planned)
+                # A consumer one reference behind recorded its results for the
+                # vectors it acknowledged, not these, so comparing them can only
+                # fail -- the whole time the reference goes first, which is the
+                # only order the digests allow. Being behind is already
+                # reported, and refused at release; its results are compared
+                # once it acknowledges this reference.
+                if validate_consumer(manifest, workspace / repo, repo, planned):
+                    compare_conformance(repo, reference_results, workspace / repo, planned)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 errors.append(f"{repo}: {error}")
     for gap in sorted(planned):

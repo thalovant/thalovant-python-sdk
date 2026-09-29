@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -125,10 +125,17 @@ class ThalovantIdentity:
     # secret-keyed entries; keep it out of repr and redact it in the default
     # serializer (see as_dict).
     metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    #: The file this identity was read from, when it was read from one
+    #: (:meth:`from_file`, :meth:`from_config`). A client keeps this
+    #: identity's Noise key in a ``hivemind`` folder beside it unless told
+    #: otherwise, so every program that reads the same file presents the
+    #: same key to the hub. Not identity material: never serialized, and
+    #: two identities read from different files are still equal.
+    source_path: str | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ThalovantIdentity":
-        """Load identity material from a JSON file."""
+        """Load identity material from a JSON file; ``source_path`` is the file."""
 
         identity_path = Path(path).expanduser()
         _assert_secure_identity_file(identity_path)
@@ -145,7 +152,7 @@ class ThalovantIdentity:
 
         if not isinstance(raw, Mapping):
             raise ThalovantIdentityError("Identity file must contain a JSON object.")
-        return cls.from_mapping(raw)
+        return replace(cls.from_mapping(raw), source_path=str(identity_path.absolute()))
 
     @classmethod
     def from_config(
@@ -154,7 +161,7 @@ class ThalovantIdentity:
         *,
         profile: str | None = None,
     ) -> "ThalovantIdentity":
-        """Load identity material from a protected YAML config file."""
+        """Load identity material from a protected YAML config file; ``source_path`` is the file."""
 
         config_path = Path(path).expanduser() if path is not None else default_config_path()
         _assert_secure_config_file(config_path)
@@ -173,7 +180,10 @@ class ThalovantIdentity:
             ) from exc
         if not isinstance(raw, Mapping):
             raise ThalovantIdentityError("Thalovant config file must contain a YAML object.")
-        return cls.from_mapping(_identity_config_mapping(raw, profile=profile))
+        return replace(
+            cls.from_mapping(_identity_config_mapping(raw, profile=profile)),
+            source_path=str(config_path.absolute()),
+        )
 
     @classmethod
     def from_env(cls, prefix: str = "THALOVANT_") -> "ThalovantIdentity":

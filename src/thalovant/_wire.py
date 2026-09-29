@@ -270,8 +270,26 @@ class _BitReader:
             pass
 
 
+#: The most a compressed part of a binary frame may inflate to. A reassembled
+#: Noise message is itself capped at 32 MiB (``MAX_REASSEMBLY``); without a
+#: cap here, a small frame of zeros from a hub could make the client allocate
+#: gigabytes.
+MAX_INFLATED = 32 * 1024 * 1024
+
+
+def _inflate(payload: bytes) -> bytes:
+    inflater = zlib.decompressobj()
+    data = inflater.decompress(payload, MAX_INFLATED)
+    if inflater.unconsumed_tail:
+        raise ValueError("HiveMind binary frame inflates past the size limit")
+    if not inflater.eof:
+        # zlib.decompress refused a truncated stream; keep refusing it.
+        raise ValueError("HiveMind binary frame holds a truncated compressed stream")
+    return data
+
+
 def _text(payload: bytes, compressed: bool) -> str:
-    return (zlib.decompress(payload) if compressed else payload).decode("utf-8")
+    return (_inflate(payload) if compressed else payload).decode("utf-8")
 
 
 def decode_binary_frame(frame: bytes) -> HiveMessage:

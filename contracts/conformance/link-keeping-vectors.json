@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "description": "Keeping a long-lived hub link up: how a close is read, how a failed handshake is classified, and what a supervisor such as AsyncHubSession.run() does after each outcome. The policy block holds every constant; every duration is whole milliseconds. 'close' cases: a close is the hub refusing the credentials ('refused') when its RFC 6455 code is one of refusal_close_codes (1005 includes a close frame with no status at all) and it happened during the handshake (when 'handshake') or within settle_ms after it (when 'after_handshake', after_ms after it). A transport may learn the code late (code_late_ms after the close) and it still counts within close_code_grace_ms; the close's own time, not when it was learnt, decides the window. Anything else -- another code, a socket that ended with no close frame (code null, which RFC 6455 reports as 1006), a close after the window, a code learnt too late -- is 'dropped'. 'handshake' cases run one connect in a situation and list the patterns the hub saw, in order. A Noise handshake message that does not authenticate under the key the password derives (a wrong password) is 'refused'. A KK attempt that fails -- its answer does not authenticate, or the hub closes during it with a refusal code, which is what a hub does when it cannot read a KK first message -- is followed at once, inside the same connect, by one XX attempt, and the XX attempt's outcome is the connect's: only XX tells a changed password from a changed hub key. A hub whose static key is not the one pinned for it is 'key_changed': a connection error, not a refusal, and the pin is never replaced. A WebSocket upgrade answered 401 or 403 is 'refused'; any other failed upgrade is 'failed'. 'supervise' cases: events are the outcome of each attempt, at_ms after the first, and expect is the decision after each: 'up' holds, and resets the ladder and the refusal clock; 'dropped' (an established link went down) retries at once, wait_ms 0; 'failed' waits the ladder's step -- retry_ms, doubling to retry_ceiling_ms -- and stops counting refusals; 'refused' waits the ladder's step the same way until refusals have lasted refusal_grace_ms since the first of them (inclusive), then gives up with reason 'refused'; 'key_changed' gives up at once with reason 'key_changed'. While a link is up it is probed every probe_ms, and every probe_down_ms while none is held. Every attempt is logged at debug level only.",
+ "description": "Keeping a long-lived hub link up: how a close is read, how a failed handshake is classified, and what a supervisor such as AsyncHubSession.run() does after each outcome. The policy block holds every constant; every duration is whole milliseconds. 'close' cases: a close is the hub refusing the credentials ('refused') when its RFC 6455 code is one of refusal_close_codes (1005 includes a close frame with no status at all) and it happened during the handshake (when 'handshake') or within settle_ms after it (when 'after_handshake', after_ms after it) before the hub sent anything that authenticates: a close after a frame that decrypted under the new session's keys (after_authenticated_frame; absent is false) -- any transport frame, JSON or binary, the hub's own encrypted HELLO included -- is 'dropped', because a hub refuses a client's key before it sends anything, and a hub that has spoken accepted it. A transport may learn the code late (code_late_ms after the close) and it still counts within close_code_grace_ms; the close's own time, not when it was learnt, decides the window. Anything else -- another code, a socket that ended with no close frame (code null, which RFC 6455 reports as 1006), a close after the window, a code learnt too late -- is 'dropped'. 'handshake' cases run one connect in a situation and list the patterns the hub saw, in order. A Noise handshake message that does not authenticate under the key the password derives (a wrong password) is 'refused'. A KK attempt that fails -- its answer does not authenticate, or the hub closes during it with a refusal code, which is what a hub does when it cannot read a KK first message -- is followed at once, inside the same connect, by one XX attempt, and the XX attempt's outcome is the connect's: only XX tells a changed password from a changed hub key. A hub whose static key is not the one pinned for it is 'key_changed': a connection error, not a refusal, and the pin is never replaced. A hub that closes with a refusal code the moment an XX handshake ends, before it sends anything, has refused the client's own static key -- hivemind-core pins the first key a connection presents and aborts on any other -- and that is 'client_key_rejected': a refusal no handshake can recover from, whose error names the folder the client's key is in and where another program reading the same identity may keep its own ('re-pair, or share the key folder'); the same close after KK, which the hub can only complete with the key it pinned, is plain 'refused'. 'closed_after_first_frame': the hub completes XX, sends one encrypted frame, then closes with no status within the settle window; the connect fails as a drop, never a refusal. A WebSocket upgrade answered 401 or 403 is 'refused'; any other failed upgrade is 'failed'. 'supervise' cases: events are the outcome of each attempt, at_ms after the first, and expect is the decision after each: 'up' holds, and resets the ladder and the refusal clock; 'dropped' (an established link went down) retries at once, wait_ms 0; 'failed' waits the ladder's step -- retry_ms, doubling to retry_ceiling_ms -- and stops counting refusals; 'refused' waits the ladder's step the same way until refusals have lasted refusal_grace_ms since the first of them (inclusive), then gives up with reason 'refused'; 'key_changed' gives up at once with reason 'key_changed', and 'client_key_rejected' at once with reason 'client_key_rejected'. While a link is up it is probed every probe_ms, and every probe_down_ms while none is held. Every attempt is logged at debug level only.",
  "source": "hivemind-core 5.x (hivemind_core/protocol.py: the unauthenticated close, the Noise abort); RFC 6455 §7.1.5, §7.4.1; the Home Assistant contract v1 (keeping the link)",
  "policy": {
   "retry_ms": 10000,
@@ -152,6 +152,39 @@
    }
   },
   {
+   "name": "a refusal code after the hub has spoken is a drop",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 100,
+   "code": 1005,
+   "after_authenticated_frame": true,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "1008 at once after the hub's first frame is a drop",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 0,
+   "code": 1008,
+   "after_authenticated_frame": true,
+   "expect": {
+    "outcome": "dropped"
+   }
+  },
+  {
+   "name": "no frame from the hub yet: the same close is a refusal",
+   "kind": "close",
+   "when": "after_handshake",
+   "after_ms": 100,
+   "code": 1005,
+   "after_authenticated_frame": false,
+   "expect": {
+    "outcome": "refused"
+   }
+  },
+  {
    "name": "a pinned hub with the right password connects over KK",
    "kind": "handshake",
    "situation": "pinned",
@@ -238,6 +271,40 @@
    "expect": {
     "outcome": "failed",
     "patterns": []
+   }
+  },
+  {
+   "name": "a client key the hub did not pin: XX ends and the hub closes",
+   "kind": "handshake",
+   "situation": "client_key_changed",
+   "expect": {
+    "outcome": "client_key_rejected",
+    "patterns": [
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "a client key changed under a pinned hub: KK fails, XX ends, the hub closes",
+   "kind": "handshake",
+   "situation": "client_key_changed_pinned_here",
+   "expect": {
+    "outcome": "client_key_rejected",
+    "patterns": [
+     "KK",
+     "XX"
+    ]
+   }
+  },
+  {
+   "name": "a hub that spoke before closing did not refuse the key",
+   "kind": "handshake",
+   "situation": "closed_after_first_frame",
+   "expect": {
+    "outcome": "failed",
+    "patterns": [
+     "XX"
+    ]
    }
   },
   {
@@ -531,6 +598,30 @@
     {
      "action": "give_up",
      "reason": "key_changed"
+    }
+   ]
+  },
+  {
+   "name": "a refused client key stops at once",
+   "kind": "supervise",
+   "events": [
+    {
+     "at_ms": 0,
+     "outcome": "refused"
+    },
+    {
+     "at_ms": 10000,
+     "outcome": "client_key_rejected"
+    }
+   ],
+   "expect": [
+    {
+     "action": "retry",
+     "wait_ms": 10000
+    },
+    {
+     "action": "give_up",
+     "reason": "client_key_rejected"
     }
    ]
   }

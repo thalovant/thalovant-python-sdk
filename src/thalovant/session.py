@@ -31,7 +31,9 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterator
 from urllib.parse import urlsplit
 
+from ._loop import spawn
 from .errors import (
+    ThalovantClientKeyRejectedError,
     ThalovantConnectionError,
     ThalovantHubKeyChangedError,
     ThalovantHubRefusedError,
@@ -91,8 +93,8 @@ class LinkDecision:
     """What to do after one outcome of keeping a link up.
 
     ``action`` is ``"hold"`` (the link is up), ``"retry"`` after
-    ``wait_seconds``, or ``"give_up"`` for ``reason`` -- ``"refused"`` or
-    ``"key_changed"``.
+    ``wait_seconds``, or ``"give_up"`` for ``reason`` -- ``"refused"``,
+    ``"key_changed"`` or ``"client_key_rejected"``.
     """
 
     action: str
@@ -117,9 +119,13 @@ class LinkSupervisor:
       the first of them; then give up.
     - ``"key_changed"``: the hub's Noise key is not the pinned one. Retrying
       cannot change that, so give up at once.
+    - ``"client_key_rejected"``: the hub pinned another key for this client
+      and closed the link as an XX handshake ended. No handshake can change
+      that either (:class:`ThalovantClientKeyRejectedError`), so give up at
+      once.
     """
 
-    OUTCOMES = ("up", "dropped", "failed", "refused", "key_changed")
+    OUTCOMES = ("up", "dropped", "failed", "refused", "key_changed", "client_key_rejected")
 
     def __init__(self, policy: HubSessionPolicy | None = None) -> None:
         self.policy = policy or HubSessionPolicy()
@@ -134,8 +140,8 @@ class LinkSupervisor:
             return LinkDecision("hold")
         if outcome == "dropped":
             return LinkDecision("retry", 0.0)
-        if outcome == "key_changed":
-            return LinkDecision("give_up", reason="key_changed")
+        if outcome in ("key_changed", "client_key_rejected"):
+            return LinkDecision("give_up", reason=outcome)
         if outcome == "refused":
             if self._refused_since is None:
                 self._refused_since = now
@@ -438,9 +444,13 @@ class AsyncHubSession:
     :class:`~thalovant.errors.ThalovantHubRefusedError`. A hub whose Noise key
     is not the pinned one ends :meth:`run` at once with
     :class:`~thalovant.errors.ThalovantHubKeyChangedError`: retrying cannot
-    change it. :class:`LinkSupervisor` holds these rules. A close with a
-    refusal code within ``settle_seconds`` (0.75) of the handshake is a
-    refusal: a hub that does not know the client's key says so only that way.
+    change it. So does a hub that refuses this client's own key -- it pinned
+    another one for the connection -- with
+    :class:`~thalovant.errors.ThalovantClientKeyRejectedError`.
+    :class:`LinkSupervisor` holds these rules. A close with a refusal code
+    within ``settle_seconds`` (0.75) of the handshake, before the hub has sent
+    anything that authenticates, is a refusal: a hub that does not know the
+    client's key says so only that way.
     Every attempt, drop and recovery is logged at DEBUG on
     ``thalovant.session``; what deserves more is for the application to say.
     """
@@ -533,7 +543,7 @@ class AsyncHubSession:
             try:
                 result = callback(up)
                 if asyncio.iscoroutine(result):
-                    asyncio.ensure_future(result)
+                    spawn(result, "a state callback raised", log)
             except Exception:
                 log.exception("a state callback raised")
 
@@ -608,9 +618,9 @@ class AsyncHubSession:
         except asyncio.TimeoutError:
             return
         if _refused(client):
-            raise ThalovantHubRefusedError(
-                "The hub closed the link right after the handshake: it does not accept these credentials, or not yet."
-            )
+            from ._hive import refusal_after_handshake
+
+            raise refusal_after_handshake(getattr(getattr(client, "_link", None), "transport", None))
         raise ThalovantConnectionError("The hub closed the link right after the handshake.")
 
     async def run(self) -> None:
@@ -641,6 +651,10 @@ class AsyncHubSession:
             except ThalovantHubKeyChangedError as changed:
                 log.debug("hub link: the hub's key changed (%s)", changed)
                 self._supervisor.after("key_changed", self._clock())
+                raise
+            except ThalovantClientKeyRejectedError as rejected:
+                log.debug("hub link: the hub refused this client's key (%s)", rejected)
+                self._supervisor.after("client_key_rejected", self._clock())
                 raise
             except ThalovantHubRefusedError as refusal:
                 log.debug("hub link: refused (%s)", refusal)
