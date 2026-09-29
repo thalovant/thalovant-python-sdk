@@ -336,16 +336,17 @@ def adopt_legacy_key(target: Path, identity: Any, legacy: Path | None = None) ->
     ``~/.config/hivemind`` whatever file its identity came from. The hub pins
     the first key a connection presents, so a device that silently got a new
     key in a new folder would be locked out. When *target* holds no Noise
-    state yet and the old folder holds a key that has already met this
-    identity's hub (a pin filed under the hub's host), that key and the hub
-    pins are **copied** -- never moved: another program may still read the
-    old folder. Returns whether it copied.
+    key yet and the old folder holds a key that has already met this
+    identity's hub (a pin filed under the hub's host), the hub pins and then
+    that key are **copied** -- never moved: another program may still read
+    the old folder. Only a key already in *target* stops it, so a copy cut
+    short is made again the next time. Returns whether it copied.
     """
     legacy = legacy_state_dir() if legacy is None else legacy
     with contextlib.suppress(OSError):
         if target.resolve() == legacy.resolve():
             return False
-    if (target / "_identity.json").exists() or any(target.glob("*_noise.key")):
+    if any(target.glob("*_noise.key")):
         return False
     source_file = legacy / "_identity.json"
     if not source_file.is_file() or source_file.is_symlink() or legacy.is_symlink():
@@ -375,9 +376,17 @@ def adopt_legacy_key(target: Path, identity: Any, legacy: Path | None = None) ->
     identity_file = target / "_identity.json"
     with _store_lock, _file_lock(identity_file):
         # Another process may have adopted (or started afresh) meanwhile.
-        if identity_file.exists() or any(target.glob("*_noise.key")):
+        if any(target.glob("*_noise.key")):
             return False
         name = source.name
+        # The pins first and the key last: a copy interrupted between the two
+        # leaves no key, so the next use copies again, and never the old key
+        # without the pin that checks its hub. Pins already here win.
+        data = NoiseIdentityStore(identity_file)._read_current()
+        kept = _validated_noise_pins(data.get("pinned_noise_keys", {}))
+        # The key and the hub pins, and nothing else the old file may hold.
+        data.update(name=name, pinned_noise_keys={**_validated_noise_pins(pins), **kept})
+        _write_private_json(identity_file, data)
         copied_key = target / f"{name}_noise.key"
         fd, temporary = tempfile.mkstemp(prefix=".noise-key-", dir=target)
         try:
@@ -391,9 +400,6 @@ def adopt_legacy_key(target: Path, identity: Any, legacy: Path | None = None) ->
                 os.link(temporary, copied_key)
         finally:
             os.unlink(temporary)
-        # The key and the hub pins, and nothing else the old file may hold.
-        data = {"name": name, "pinned_noise_keys": _validated_noise_pins(pins)}
-        _write_private_json(identity_file, data)
     log.info(
         "Copied this identity's Noise key from %s to %s, where it is kept from now on; %s is left as it was.",
         legacy, target, legacy,

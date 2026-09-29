@@ -211,3 +211,60 @@ def test_a_close_after_a_kk_handshake_is_an_ordinary_refusal(tmp_path: Path) -> 
 
     error = _hive.refusal_after_handshake(Transport())
     assert type(error) is ThalovantHubRefusedError
+
+
+def test_a_copy_cut_short_never_leaves_the_old_key_without_its_pins(
+    homes: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pins go first and the key last, so a failed pin write copies no key at all."""
+    identity = ThalovantIdentity.from_file(_identity_file(homes["config"]))
+    pins = {"wss://hub.example.com:443": "ab" * 32}
+    key = _legacy_key(homes["legacy"], pins)
+    real_write = _noise_runtime._write_private_json
+
+    def failing_write(path: Path, payload: dict) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_noise_runtime, "_write_private_json", failing_write)
+    with pytest.raises(OSError):
+        _noise_runtime.adopt_legacy_key(homes["beside"], identity)
+    assert not list(homes["beside"].glob("*_noise.key"))
+    # The next use copies again, key and pins together.
+    monkeypatch.setattr(_noise_runtime, "_write_private_json", real_write)
+    store = _noise_runtime.noise_identity(identity=identity)
+    assert Path(_noise_runtime.prepare_noise_key(store)).read_text() == key
+    assert store.pinned_noise_keys == pins
+
+
+def test_a_copy_cut_short_after_the_pins_copies_again(
+    homes: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = ThalovantIdentity.from_file(_identity_file(homes["config"]))
+    pins = {"wss://hub.example.com:443": "ab" * 32}
+    key = _legacy_key(homes["legacy"], pins)
+    real_link = os.link
+
+    def failing_link(source: str, target: str) -> None:
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(os, "link", failing_link)
+    with pytest.raises(OSError):
+        _noise_runtime.adopt_legacy_key(homes["beside"], identity)
+    assert not list(homes["beside"].glob("*_noise.key"))
+    monkeypatch.setattr(os, "link", real_link)
+    store = _noise_runtime.noise_identity(identity=identity)
+    assert Path(_noise_runtime.prepare_noise_key(store)).read_text() == key
+    assert store.pinned_noise_keys == pins
+
+
+def test_pins_left_without_a_key_still_take_the_old_key(homes: dict[str, Path]) -> None:
+    """What an interrupted copy leaves (pins, no key) is not a reason to start afresh."""
+    identity = ThalovantIdentity.from_file(_identity_file(homes["config"]))
+    pins = {"wss://hub.example.com:443": "ab" * 32}
+    key = _legacy_key(homes["legacy"], pins)
+    learned = {"wss://other.example.com:443": "ef" * 32}
+    homes["beside"].mkdir(parents=True)
+    (homes["beside"] / "_identity.json").write_text(json.dumps({"name": "kitchen", "pinned_noise_keys": learned}))
+    store = _noise_runtime.noise_identity(identity=identity)
+    assert Path(_noise_runtime.prepare_noise_key(store)).read_text() == key
+    assert store.pinned_noise_keys == {**pins, **learned}
