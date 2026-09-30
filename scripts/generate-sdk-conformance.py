@@ -15,31 +15,66 @@ import unicodedata
 
 from thalovant import Intent, Inventory, InventoryCache, Skill, listing
 from thalovant.events import ThalovantEvent
-from thalovant.models import ThalovantReply
+from thalovant.models import THALOVANT_CLAIMED_META_KEY, ThalovantReply
 
 
 def reply_claim_vectors():
+    # (name, handled, failed, contexts, metas). metas parallels contexts,
+    # entry-for-entry; a None entry means that event carries no ``meta`` at
+    # all (the pre-0.9.2 shape every existing case still exercises).
+    K = THALOVANT_CLAIMED_META_KEY
     cases=[
-     ('legacy',True,False,[{}]),('empty',True,False,[]),('unhandled',False,False,[{}]),('failed',True,True,[{'pipeline_id':'intent'}]),
-     ('intent',True,False,[{'pipeline_id':'ovos-padatious-pipeline-plugin','skill_id':'weather'}]),
-     ('fallback',True,False,[{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'}]),
-     ('fallback-then-converse',True,False,[{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'first'},{'pipeline_id':'ovos-converse-pipeline-plugin','skill_id':'second'}]),
-     ('ordered-duplicates',True,False,[{'pipeline_id':'z-stage','skill_id':'z-skill'},{'pipeline_id':'a-stage','skill_id':'a-skill'},{'pipeline_id':'z-stage','skill_id':'z-skill'}]),
-     ('empty-stamps',True,False,[{'pipeline_id':'','skill_id':''},{'pipeline_id':None,'skill_id':None}]),
-     ('malformed-stamps',True,False,[{'pipeline_id':True,'skill_id':123},{'pipeline_id':['fallback'],'skill_id':{'id':'x'}}]),
-     ('malformed-plus-fallback',True,False,[{'pipeline_id':123},{'pipeline_id':'fallback','skill_id':'real'}]),
-     ('case-sensitive-stage',True,False,[{'pipeline_id':'FALLBACK','skill_id':'Skill'},{'pipeline_id':'fallback','skill_id':'skill'}]),
-     ('substring',True,False,[{'pipeline_id':'prefix-fallback-suffix'}]),
-     ('whitespace-preserved',True,False,[{'pipeline_id':' stage ','skill_id':' skill '}]),
-     ('unicode',True,False,[{'pipeline_id':'段階','skill_id':'技能'},{'pipeline_id':'段階','skill_id':'技能'}]),
-     ('failed-without-stamps',True,True,[{}]),
+     ('legacy',True,False,[{}],None),('empty',True,False,[],None),('unhandled',False,False,[{}],None),('failed',True,True,[{'pipeline_id':'intent'}],None),
+     ('intent',True,False,[{'pipeline_id':'ovos-padatious-pipeline-plugin','skill_id':'weather'}],None),
+     ('fallback',True,False,[{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'}],None),
+     ('fallback-then-converse',True,False,[{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'first'},{'pipeline_id':'ovos-converse-pipeline-plugin','skill_id':'second'}],None),
+     ('ordered-duplicates',True,False,[{'pipeline_id':'z-stage','skill_id':'z-skill'},{'pipeline_id':'a-stage','skill_id':'a-skill'},{'pipeline_id':'z-stage','skill_id':'z-skill'}],None),
+     ('empty-stamps',True,False,[{'pipeline_id':'','skill_id':''},{'pipeline_id':None,'skill_id':None}],None),
+     ('malformed-stamps',True,False,[{'pipeline_id':True,'skill_id':123},{'pipeline_id':['fallback'],'skill_id':{'id':'x'}}],None),
+     ('malformed-plus-fallback',True,False,[{'pipeline_id':123},{'pipeline_id':'fallback','skill_id':'real'}],None),
+     ('case-sensitive-stage',True,False,[{'pipeline_id':'FALLBACK','skill_id':'Skill'},{'pipeline_id':'fallback','skill_id':'skill'}],None),
+     ('substring',True,False,[{'pipeline_id':'prefix-fallback-suffix'}],None),
+     ('whitespace-preserved',True,False,[{'pipeline_id':' stage ','skill_id':' skill '}],None),
+     ('unicode',True,False,[{'pipeline_id':'段階','skill_id':'技能'},{'pipeline_id':'段階','skill_id':'技能'}],None),
+     ('failed-without-stamps',True,True,[{}],None),
+     # 0.9.2: a skill may positively assert genuine understanding from a
+     # fallback tier -- thalovant-skill-home's real case, and the fleet's own
+     # generic catch-all (thalovant-skill-custos-fallback) that must stay
+     # unclaimed because it never asserts.
+     ('fallback-claim-asserted',True,False,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'thalovant-skill-home.thalovant'}],
+      [{K:True}]),
+     ('fallback-generic-catch-all-unasserted',True,False,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'thalovant-skill-custos-fallback.thalovant'}],
+      [None]),
+     ('fallback-claim-false-is-inert',True,False,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'}],
+      [{K:False}]),
+     ('fallback-claim-non-bool-is-inert',True,False,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'}],
+      [{K:'true'}]),
+     ('fallback-claim-on-second-event-still-counts',True,False,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'},
+       {'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'fallback.skill'}],
+      [None,{K:True}]),
+     ('assertion-cannot-rescue-a-failed-reply',True,True,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'thalovant-skill-home.thalovant'}],
+      [{K:True}]),
+     ('assertion-on-an-intent-reply-is-a-no-op',True,False,
+      [{'pipeline_id':'ovos-padatious-pipeline-plugin','skill_id':'weather'}],
+      [{K:True}]),
     ]
     rows=[]
-    for name,handled,failed,contexts in cases:
-     events=tuple(ThalovantEvent('speak',{'utterance':'reply'},context,None) for context in contexts)
+    for name,handled,failed,contexts,metas in cases:
+     metas = metas or [None]*len(contexts)
+     events=tuple(
+        ThalovantEvent('speak', {'utterance':'reply', 'meta':meta} if meta is not None else {'utterance':'reply'}, context, None)
+        for context,meta in zip(contexts,metas,strict=True)
+     )
      reply=ThalovantReply(text='reply',handled=handled,events=events,failure_event=ThalovantEvent('failure',{}, {},None) if failed else None)
-     rows.append({'name':name,'handled':handled,'failed':failed,'contexts':contexts,'expected':{'pipeline_ids':list(reply.pipeline_ids),'skill_ids':list(reply.skill_ids),'claimed':reply.claimed}})
-    return {"schema_version": 1, "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication.", "cases": rows}
+     rows.append({'name':name,'handled':handled,'failed':failed,'contexts':contexts,'metas':metas,
+                  'expected':{'pipeline_ids':list(reply.pipeline_ids),'skill_ids':list(reply.skill_ids),'claimed':reply.claimed}})
+    return {"schema_version": 1, "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication. A skill may positively assert a claim via the thalovant_claimed meta key on its own speak event (0.9.2); only a literal True asserts it, and it cannot rescue a failed reply.", "cases": rows}
 
 
 def vectors():
@@ -178,8 +213,12 @@ def check_inventory(data):
 
 def check_reply_claims(claims):
     for row in claims["cases"]:
-        reply = ThalovantReply(text="reply", handled=row["handled"],
-            events=tuple(ThalovantEvent("speak", {}, context, None) for context in row["contexts"]),
+        metas = row.get("metas") or [None] * len(row["contexts"])
+        events = tuple(
+            ThalovantEvent("speak", {"meta": meta} if meta is not None else {}, context, None)
+            for context, meta in zip(row["contexts"], metas, strict=True)
+        )
+        reply = ThalovantReply(text="reply", handled=row["handled"], events=events,
             failure_event=ThalovantEvent("failure", {}, {}, None) if row["failed"] else None)
         assert list(reply.pipeline_ids) == row["expected"]["pipeline_ids"], row["name"]
         assert list(reply.skill_ids) == row["expected"]["skill_ids"], row["name"]
