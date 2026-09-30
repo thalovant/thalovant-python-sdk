@@ -113,6 +113,7 @@ from .intents import (
     speakable,
 )
 from .models import (
+    THALOVANT_CLAIMED_META_KEY,
     ThalovantConnectionInfo,
     ThalovantDoctorCheck,
     ThalovantDoctorReport,
@@ -151,6 +152,7 @@ __all__ = [
     "HOME_RESPONSE",
     "HomeAnswer",
     "HomeRequest",
+    "THALOVANT_CLAIMED_META_KEY",
     "ThalovantAdmissionFailedError",
     "ThalovantAPIUnreachableError",
     "ThalovantAdmissionTimeoutError",

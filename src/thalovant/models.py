@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from .events import EVENT_AUDIO_QUEUE, MEDIA_EVENTS, ThalovantEvent
+from .events import (
+    EVENT_AUDIO_QUEUE,
+    EVENT_OVOS_UTTERANCE_SPEAK,
+    EVENT_SPEAK,
+    MEDIA_EVENTS,
+    ThalovantEvent,
+)
 from .rich import ThalovantDisplayItem, strip_ssml
 
 ThalovantConnectionPhase = Literal[
@@ -79,6 +85,15 @@ class ThalovantHealth:
 #: The substring every OVOS fallback pipeline stage carries in its id.
 FALLBACK_PIPELINE_MARK = "fallback"
 
+#: ``meta`` key a skill may set ``True`` on its own ``speak`` event (via
+#: ``speak_to``/``emit_speech`` in thalovant-skillkit, or any equivalent
+#: ``data["meta"]``) to positively assert that this specific reply represents
+#: genuine understanding, even though the pipeline tier that carried it -- a
+#: fallback tier -- cannot itself tell a deliberate, specific claim apart from
+#: the fleet's own last-resort "nothing matched" reply. Opt-in and additive:
+#: a skill that never sets it is judged exactly as before.
+THALOVANT_CLAIMED_META_KEY = "thalovant_claimed"
+
 
 def _ordered_unique(values: Iterable[object]) -> tuple[str, ...]:
     """Non-empty *values* in first-seen order, once each."""
@@ -141,13 +156,45 @@ class ThalovantReply:
         five-second spoken reply and another open microphone, four times.
         True on a hub that stamps no pipeline ids, so the check can never
         silence a client against an older hub.
+
+        A skill may positively assert this on its own ``speak`` -- see
+        ``THALOVANT_CLAIMED_META_KEY`` -- when the pipeline tier that carried
+        its answer cannot itself distinguish a specific, deliberate claim
+        from the fleet's own last-resort "nothing matched" reply; OVOS's own
+        fallback priority bands do not separate the two. That signal is read
+        only from the skill's own speak event (``EVENT_SPEAK`` or
+        ``EVENT_OVOS_UTTERANCE_SPEAK``), never from another correlated event
+        this reply happens to carry -- ``ovos.utterance.handled`` included --
+        so nothing but the skill's own call can assert it. It is checked
+        first, before the pipeline-tier heuristic above, and only ever turns
+        a would-be ``False`` into ``True`` -- it cannot claim a reply that
+        failed (``ok`` is ``False``).
         """
         if not self.ok:
             return False
+        if self._has_asserted_claim():
+            return True
         stages = self.pipeline_ids
         if not stages:
             return True
         return any(FALLBACK_PIPELINE_MARK not in stage for stage in stages)
+
+    def _has_asserted_claim(self) -> bool:
+        """Whether a skill's own ``speak`` carries a positive assertion.
+
+        Scoped to speak events only (``EVENT_SPEAK``/``EVENT_OVOS_UTTERANCE_SPEAK``
+        -- not the wider ``MEDIA_EVENTS``, which also holds a skill sound clip
+        with no meaning as a claim, and not any other correlated event this
+        reply collected, such as ``ovos.utterance.handled``): the contract is
+        that a skill asserts this on its own ``speak_to``/``emit_speech``
+        call, not on anything else the hub happened to stamp alongside it.
+        """
+        return any(
+            event.name in (EVENT_SPEAK, EVENT_OVOS_UTTERANCE_SPEAK)
+            and isinstance(event.data.get("meta"), dict)
+            and event.data["meta"].get(THALOVANT_CLAIMED_META_KEY) is True
+            for event in self.events
+        )
 
     @property
     def lang(self) -> str | None:

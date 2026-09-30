@@ -345,7 +345,7 @@
       ]
     },
     "home-link": {
-      "description": "The Home Assistant link on the data plane: every thalovant.home.request is answered at most once with a thalovant.home.response, sent as an OVOS-MSG-1 §5.2 reply built from the context as the hub sent it (deep copy, destination the old source, source the old destination's first entry; no source means no destination); response_type and error_code come from the contract's lists, and a handler that raises, is too slow or answers outside them is failed_to_handle, timeout or unknown with empty speech. Everything happens within the hub's 10 s: the handler gets its timeout or what is left, the reply what the handler left, and a reply that would arrive late is never sent. speech is plain text made by one portable rule: real tags, comments and processing instructions removed (a '<' not opening one is text), then numeric references, the five XML entities and &nbsp; decoded once and nothing else, then Unicode White_Space runs collapsed. Keeping the link up (link-keeping-vectors): a close with 1000, 1005 or 1008 during the handshake or within 750 ms after it, before the hub has sent anything that authenticates, is a refusal, its code allowed to surface up to 250 ms late; a Noise message that does not authenticate is a refusal, a failed KK attempt is followed at once by XX, and a hub key that is not the pinned one is a key-changed connection error, never a refusal; a hub that closes as an XX handshake ends has refused the client's own key (client_key_rejected, naming the key folders: re-pair, or share the key folder); the supervisor retries failures and refusals on a 10 s ladder doubling to 120 s, dials again at once after a drop, gives up on refusals that last 600 s, and stops at once on a changed hub key or a refused client key. A reply withdrawn while it waits behind another frame is never sent late and leaves the link as it was. Speech trims White_Space only.",
+      "description": "The Home Assistant link on the data plane: every thalovant.home.request is answered at most once with a thalovant.home.response, sent as an OVOS-MSG-1 \u00a75.2 reply built from the context as the hub sent it (deep copy, destination the old source, source the old destination's first entry; no source means no destination); response_type and error_code come from the contract's lists, and a handler that raises, is too slow or answers outside them is failed_to_handle, timeout or unknown with empty speech. Everything happens within the hub's 10 s: the handler gets its timeout or what is left, the reply what the handler left, and a reply that would arrive late is never sent. speech is plain text made by one portable rule: real tags, comments and processing instructions removed (a '<' not opening one is text), then numeric references, the five XML entities and &nbsp; decoded once and nothing else, then Unicode White_Space runs collapsed. Keeping the link up (link-keeping-vectors): a close with 1000, 1005 or 1008 during the handshake or within 750 ms after it, before the hub has sent anything that authenticates, is a refusal, its code allowed to surface up to 250 ms late; a Noise message that does not authenticate is a refusal, a failed KK attempt is followed at once by XX, and a hub key that is not the pinned one is a key-changed connection error, never a refusal; a hub that closes as an XX handshake ends has refused the client's own key (client_key_rejected, naming the key folders: re-pair, or share the key folder); the supervisor retries failures and refusals on a 10 s ladder doubling to 120 s, dials again at once after a drop, gives up on refusals that last 600 s, and stops at once on a changed hub key or a refused client key. A reply withdrawn while it waits behind another frame is never sent late and leaves the link as it was. Speech trims White_Space only.",
       "files": [
         "src/thalovant/home.py",
         "src/thalovant/client.py",
@@ -768,7 +768,7 @@
       "mesh-vectors.json": "16d3cedcc11163cb0e747395eecf11d90ac4440109f4a8f928ffd9d62766af9d",
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
       "refusal-vectors.json": "8388f62c4618613d0e262ba3f5367e4a83215b70a5834c7e7ec0516934fc57e0",
-      "reply-claim-vectors.json": "43a5861fdd06dc83c232894b12d8273cfc002f845157acaaa2bd6508c73d7c88"
+      "reply-claim-vectors.json": "9394a4d4579cd655d71fd9983397ecedcdcf0a5b577141111827d1458b33050f"
     },
     "dependencies": {
       "dependencies": [
@@ -790,7 +790,7 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "96e1df4c92085a100b2752d0417b052623ad9ceae58aa77e7bd888faabf976ef",
+      "src/thalovant/__init__.py": "a4f731fdddd01fdb93ab11e6e5a5aeebb86968ef7cd0802739ba175105f5169a",
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
       "src/thalovant/_hive.py": "717d48525fbd6210ff701f23a2fa0a495954e5e4c396fb4e6811b7f7120270e6",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
@@ -814,7 +814,7 @@
       "src/thalovant/intents.py": "ac3ca26ed92f6db54f783c4ff5320cf39d2f266d1dce2d93a9b87f55c7db9900",
       "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
       "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
-      "src/thalovant/models.py": "21bad3fc9ddf0c6735e1b986978a1d14668b2b4a4115326915f5ead433b68a4f",
+      "src/thalovant/models.py": "029daed0271aa321ceb8e3d5f94541c0f43152eaeaf32146f68f053248ae660c",
       "src/thalovant/native_auth.py": "86f04a39d04aedc580101d72fc4100b65da168d920d05f1b08de2dea91bf8aa8",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
       "src/thalovant/rich.py": "7b4046ead3abca687e7cd353e653ced2e60b66f6d0b8b776367e8172fe218beb",
@@ -861,7 +861,9 @@
     "f1593522f0af94b56d35ea92909d8bd71d1ae5fc7f6596b6212a0cc4c01c0329",
     "3cdc3e21b6f5505794d2d0988ea92febe3c4acce228429e84e87e93da07c4bab",
     "2460eb90bd56b1b182be3db365ba29bfef712d4ea2748061652ba0f28dcf6f50",
-    "3b0acf7c8b2f03bec95d9e9bba4f82e88c79ad3d98590988852e6c06deb48af0"
+    "3b0acf7c8b2f03bec95d9e9bba4f82e88c79ad3d98590988852e6c06deb48af0",
+    "50d65c1596a99e5db78c38c0898ca01bfbb105da305e9804f394f08756af7f50",
+    "841f3bbeec23f04c5decae75c9cfd6ea6a397992c7e4d7cd4195dc9dd919cd1a"
   ],
   "schema_version": 1
 }
