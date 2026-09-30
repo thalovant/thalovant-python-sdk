@@ -219,3 +219,28 @@ def test_only_a_literal_true_asserts_the_claim():
             ),
         )
         assert reply.claimed is False, f"meta={bad_meta!r} must not assert a claim"
+
+
+def test_only_the_skills_own_speak_event_can_assert_the_claim():
+    """A correlated non-speak event -- ovos.utterance.handled, say -- carrying
+    the same meta shape must not assert a claim on the skill's behalf. Only
+    the skill's own speak_to()/emit_speech() call, on a speak-type event, can
+    set this: nothing else the hub happens to stamp alongside it counts."""
+    reply = ThalovantReply(
+        text="Je ne peux pas répondre à cela.",
+        handled=True,
+        events=(
+            _event(
+                "speak",
+                "ovos-fallback-pipeline-plugin",
+                "thalovant-skill-custos-fallback.thalovant",
+            ),
+            _event(
+                "ovos.utterance.handled",
+                "ovos-fallback-pipeline-plugin",
+                "thalovant-skill-custos-fallback.thalovant",
+                meta={THALOVANT_CLAIMED_META_KEY: True},
+            ),
+        ),
+    )
+    assert reply.claimed is False

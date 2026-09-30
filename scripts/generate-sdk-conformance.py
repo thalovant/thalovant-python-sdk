@@ -19,9 +19,12 @@ from thalovant.models import THALOVANT_CLAIMED_META_KEY, ThalovantReply
 
 
 def reply_claim_vectors():
-    # (name, handled, failed, contexts, metas). metas parallels contexts,
-    # entry-for-entry; a None entry means that event carries no ``meta`` at
-    # all (the pre-0.9.2 shape every existing case still exercises).
+    # (name, handled, failed, contexts, metas, names=None). metas parallels
+    # contexts, entry-for-entry; a None entry means that event carries no
+    # ``meta`` at all (the pre-0.9.2 shape every existing case still
+    # exercises). names parallels contexts too; omitted (None) means every
+    # event in that case is named "speak" (every case's shape before the
+    # non-speak-event regression case below).
     K = THALOVANT_CLAIMED_META_KEY
     cases=[
      ('legacy',True,False,[{}],None),('empty',True,False,[],None),('unhandled',False,False,[{}],None),('failed',True,True,[{'pipeline_id':'intent'}],None),
@@ -63,18 +66,30 @@ def reply_claim_vectors():
      ('assertion-on-an-intent-reply-is-a-no-op',True,False,
       [{'pipeline_id':'ovos-padatious-pipeline-plugin','skill_id':'weather'}],
       [{K:True}]),
+     # Caught in review, before 0.9.2 shipped (CodeRabbit, embedded-C #32
+     # and Node #90; noted in Kotlin #48's summary too): every port -- and
+     # this reference -- scanned ALL collected events for the assertion, not
+     # only the skill's own speak. A correlated ovos.utterance.handled
+     # carrying the same meta shape must not assert a claim on the skill's
+     # behalf.
+     ('assertion-on-a-non-speak-event-is-ignored',True,False,
+      [{'pipeline_id':'ovos-fallback-pipeline-plugin','skill_id':'thalovant-skill-custos-fallback.thalovant'}],
+      [{K:True}],
+      ['ovos.utterance.handled']),
     ]
     rows=[]
-    for name,handled,failed,contexts,metas in cases:
+    for case in cases:
+     name,handled,failed,contexts,metas,*rest = case
      metas = metas or [None]*len(contexts)
+     names = (rest[0] if rest else None) or ['speak']*len(contexts)
      events=tuple(
-        ThalovantEvent('speak', {'utterance':'reply', 'meta':meta} if meta is not None else {'utterance':'reply'}, context, None)
-        for context,meta in zip(contexts,metas,strict=True)
+        ThalovantEvent(event_name, {'utterance':'reply', 'meta':meta} if meta is not None else {'utterance':'reply'}, context, None)
+        for context,meta,event_name in zip(contexts,metas,names,strict=True)
      )
      reply=ThalovantReply(text='reply',handled=handled,events=events,failure_event=ThalovantEvent('failure',{}, {},None) if failed else None)
-     rows.append({'name':name,'handled':handled,'failed':failed,'contexts':contexts,'metas':metas,
+     rows.append({'name':name,'handled':handled,'failed':failed,'contexts':contexts,'metas':metas,'names':names,
                   'expected':{'pipeline_ids':list(reply.pipeline_ids),'skill_ids':list(reply.skill_ids),'claimed':reply.claimed}})
-    return {"schema_version": 1, "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication. A skill may positively assert a claim via the thalovant_claimed meta key on its own speak event (0.9.2); only a literal True asserts it, and it cannot rescue a failed reply.", "cases": rows}
+    return {"schema_version": 1, "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication. A skill may positively assert a claim via the thalovant_claimed meta key on its own speak event (EVENT_SPEAK/EVENT_OVOS_UTTERANCE_SPEAK only, never another correlated event) (0.9.2); only a literal True asserts it, and it cannot rescue a failed reply.", "cases": rows}
 
 
 def vectors():
@@ -214,9 +229,10 @@ def check_inventory(data):
 def check_reply_claims(claims):
     for row in claims["cases"]:
         metas = row.get("metas") or [None] * len(row["contexts"])
+        names = row.get("names") or ["speak"] * len(row["contexts"])
         events = tuple(
-            ThalovantEvent("speak", {"meta": meta} if meta is not None else {}, context, None)
-            for context, meta in zip(row["contexts"], metas, strict=True)
+            ThalovantEvent(event_name, {"meta": meta} if meta is not None else {}, context, None)
+            for context, meta, event_name in zip(row["contexts"], metas, names, strict=True)
         )
         reply = ThalovantReply(text="reply", handled=row["handled"], events=events,
             failure_event=ThalovantEvent("failure", {}, {}, None) if row["failed"] else None)

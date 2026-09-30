@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication. A skill may positively assert a claim via the thalovant_claimed meta key on its own speak event (0.9.2); only a literal True asserts it, and it cannot rescue a failed reply.",
+  "contract": "String IDs, first-seen unique order; case-sensitive fallback substring; legacy success remains claimed; advisory, not authentication. A skill may positively assert a claim via the thalovant_claimed meta key on its own speak event (EVENT_SPEAK/EVENT_OVOS_UTTERANCE_SPEAK only, never another correlated event) (0.9.2); only a literal True asserts it, and it cannot rescue a failed reply.",
   "cases": [
     {
       "name": "legacy",
@@ -11,6 +11,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [],
@@ -24,6 +27,7 @@
       "failed": false,
       "contexts": [],
       "metas": [],
+      "names": [],
       "expected": {
         "pipeline_ids": [],
         "skill_ids": [],
@@ -39,6 +43,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [],
@@ -57,6 +64,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -78,6 +88,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -101,6 +114,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -129,6 +145,10 @@
       "metas": [
         null,
         null
+      ],
+      "names": [
+        "speak",
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -165,6 +185,11 @@
         null,
         null
       ],
+      "names": [
+        "speak",
+        "speak",
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "z-stage",
@@ -195,6 +220,10 @@
         null,
         null
       ],
+      "names": [
+        "speak",
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [],
         "skill_ids": [],
@@ -223,6 +252,10 @@
         null,
         null
       ],
+      "names": [
+        "speak",
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [],
         "skill_ids": [],
@@ -245,6 +278,10 @@
       "metas": [
         null,
         null
+      ],
+      "names": [
+        "speak",
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -274,6 +311,10 @@
         null,
         null
       ],
+      "names": [
+        "speak",
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "FALLBACK",
@@ -298,6 +339,9 @@
       "metas": [
         null
       ],
+      "names": [
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "prefix-fallback-suffix"
@@ -318,6 +362,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -347,6 +394,10 @@
         null,
         null
       ],
+      "names": [
+        "speak",
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "\u6bb5\u968e"
@@ -366,6 +417,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [],
@@ -387,6 +441,9 @@
         {
           "thalovant_claimed": true
         }
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -410,6 +467,9 @@
       ],
       "metas": [
         null
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -436,6 +496,9 @@
           "thalovant_claimed": false
         }
       ],
+      "names": [
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "ovos-fallback-pipeline-plugin"
@@ -460,6 +523,9 @@
         {
           "thalovant_claimed": "true"
         }
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -491,6 +557,10 @@
           "thalovant_claimed": true
         }
       ],
+      "names": [
+        "speak",
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "ovos-fallback-pipeline-plugin"
@@ -515,6 +585,9 @@
         {
           "thalovant_claimed": true
         }
+      ],
+      "names": [
+        "speak"
       ],
       "expected": {
         "pipeline_ids": [
@@ -541,6 +614,9 @@
           "thalovant_claimed": true
         }
       ],
+      "names": [
+        "speak"
+      ],
       "expected": {
         "pipeline_ids": [
           "ovos-padatious-pipeline-plugin"
@@ -549,6 +625,34 @@
           "weather"
         ],
         "claimed": true
+      }
+    },
+    {
+      "name": "assertion-on-a-non-speak-event-is-ignored",
+      "handled": true,
+      "failed": false,
+      "contexts": [
+        {
+          "pipeline_id": "ovos-fallback-pipeline-plugin",
+          "skill_id": "thalovant-skill-custos-fallback.thalovant"
+        }
+      ],
+      "metas": [
+        {
+          "thalovant_claimed": true
+        }
+      ],
+      "names": [
+        "ovos.utterance.handled"
+      ],
+      "expected": {
+        "pipeline_ids": [
+          "ovos-fallback-pipeline-plugin"
+        ],
+        "skill_ids": [
+          "thalovant-skill-custos-fallback.thalovant"
+        ],
+        "claimed": false
       }
     }
   ]

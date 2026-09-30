@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from .events import EVENT_AUDIO_QUEUE, MEDIA_EVENTS, ThalovantEvent
+from .events import (
+    EVENT_AUDIO_QUEUE,
+    EVENT_OVOS_UTTERANCE_SPEAK,
+    EVENT_SPEAK,
+    MEDIA_EVENTS,
+    ThalovantEvent,
+)
 from .rich import ThalovantDisplayItem, strip_ssml
 
 ThalovantConnectionPhase = Literal[
@@ -155,10 +161,14 @@ class ThalovantReply:
         ``THALOVANT_CLAIMED_META_KEY`` -- when the pipeline tier that carried
         its answer cannot itself distinguish a specific, deliberate claim
         from the fleet's own last-resort "nothing matched" reply; OVOS's own
-        fallback priority bands do not separate the two. That signal is
-        checked first, before the pipeline-tier heuristic above, and only
-        ever turns a would-be ``False`` into ``True`` -- it cannot claim a
-        reply that failed (``ok`` is ``False``).
+        fallback priority bands do not separate the two. That signal is read
+        only from the skill's own speak event (``EVENT_SPEAK`` or
+        ``EVENT_OVOS_UTTERANCE_SPEAK``), never from another correlated event
+        this reply happens to carry -- ``ovos.utterance.handled`` included --
+        so nothing but the skill's own call can assert it. It is checked
+        first, before the pipeline-tier heuristic above, and only ever turns
+        a would-be ``False`` into ``True`` -- it cannot claim a reply that
+        failed (``ok`` is ``False``).
         """
         if not self.ok:
             return False
@@ -170,9 +180,18 @@ class ThalovantReply:
         return any(FALLBACK_PIPELINE_MARK not in stage for stage in stages)
 
     def _has_asserted_claim(self) -> bool:
-        """Whether any event carries a positive ``THALOVANT_CLAIMED_META_KEY`` assertion."""
+        """Whether a skill's own ``speak`` carries a positive assertion.
+
+        Scoped to speak events only (``EVENT_SPEAK``/``EVENT_OVOS_UTTERANCE_SPEAK``
+        -- not the wider ``MEDIA_EVENTS``, which also holds a skill sound clip
+        with no meaning as a claim, and not any other correlated event this
+        reply collected, such as ``ovos.utterance.handled``): the contract is
+        that a skill asserts this on its own ``speak_to``/``emit_speech``
+        call, not on anything else the hub happened to stamp alongside it.
+        """
         return any(
-            isinstance(event.data.get("meta"), dict)
+            event.name in (EVENT_SPEAK, EVENT_OVOS_UTTERANCE_SPEAK)
+            and isinstance(event.data.get("meta"), dict)
             and event.data["meta"].get(THALOVANT_CLAIMED_META_KEY) is True
             for event in self.events
         )
