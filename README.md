@@ -63,6 +63,11 @@ with ThalovantClient(result.identity, protocol="wss") as client:
     print(reply.text)
 ```
 
+Keep `result` secret: `result.identity` and the raw `result.client` API resource
+carry the client credentials. `result.as_dict()` redacts every secret and is
+safe to log; `result.as_dict(include_secrets=True)` returns the real
+credentials, so use it only to save the identity and never log it.
+
 ## Documentation
 
 | Topic | Link |
@@ -92,7 +97,7 @@ pytest
 
 ## Security
 
-See [SECURITY.md](https://github.com/thalovant/.github/blob/main/SECURITY.md).
+See [SECURITY.md](SECURITY.md).
 
 ## Licence
 
