@@ -29,6 +29,5 @@ jobs:
           RELEASE_RELEVANT_PATHS: |
             src
             pyproject.toml
-            README.md
             LICENSE
         run: python .github/scripts/release_guard.py

@@ -53,7 +53,7 @@ jobs:
           import subprocess
           import tomllib
 
-          relevant_paths = ("src", "pyproject.toml", "README.md", "LICENSE")
+          relevant_paths = ("src", "pyproject.toml", "LICENSE")
 
           def git(*args: str, check: bool = True) -> str:
               result = subprocess.run(
