@@ -1,5 +1,7 @@
 # Thalovant Python SDK
 
+[![PyPI](https://img.shields.io/pypi/v/thalovant)](https://pypi.org/project/thalovant/) [![CI](https://github.com/thalovant/thalovant-python-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/thalovant/thalovant-python-sdk/actions/workflows/ci.yml) [![Licence](https://img.shields.io/github/license/thalovant/thalovant-python-sdk)](LICENSE) [![Docs](https://img.shields.io/badge/docs-docs.thalovant.com-5c6bc0)](https://docs.thalovant.com/developers/sdks/python/)
+
 Python SDK for connecting apps, services, kiosks, and agents to Thalovant hubs.
 
 The control API is used to discover hubs and provision a client identity. After
