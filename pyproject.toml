@@ -53,7 +53,7 @@ dependencies = [
     # connection to a hub pauses an asyncio loop that long even though the
     # SDK derives on the executor. The key is cached afterwards, so this
     # happens once per identity and hub. 50.0.0 and later release the GIL.
-    "cryptography>=48.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "cryptography>=48.0.1,<51.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     # Intel Macs: cryptography stopped publishing x86_64 macOS wheels after
     # 48.0.1, and building it needs a Rust toolchain no desktop has. The upper
     # bound is what matters here: 48.0.1 ships macosx_10_9_universal2, 49.0.0
