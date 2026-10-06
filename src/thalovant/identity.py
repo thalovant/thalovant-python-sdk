@@ -267,11 +267,24 @@ class ThalovantIdentity:
         )
 
     def endpoint_for(self, protocol: HubProtocol) -> str | None:
-        """Return a public data-plane endpoint for a protocol when known."""
+        """Return a public data-plane endpoint for a protocol when known.
+
+        An identity with no explicit WSS endpoint whose ``default_master`` is
+        itself a ``wss://`` or ``ws://`` URL uses it for WSS. The API's identify
+        payload, which a setup-link claim writes to the identity file verbatim,
+        carries only ``default_master``; reading no WSS endpoint from it put
+        every such satellite on HTTPS polling. The Node, Kotlin, .NET and Swift
+        SDKs already read it this way.
+        """
 
         if protocol == "https":
             return self.endpoint_base()
-        return self.data_plane_endpoints.endpoint_for(protocol)
+        endpoint = self.data_plane_endpoints.endpoint_for(protocol)
+        if endpoint:
+            return endpoint
+        if protocol == "wss" and self.default_master.lower().startswith(("wss://", "ws://")):
+            return self.default_master
+        return None
 
     def enabled_protocols(self) -> tuple[HubProtocol, ...]:
         """Return enabled hub protocols in preferred client order."""

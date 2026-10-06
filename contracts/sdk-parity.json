@@ -810,7 +810,7 @@
       "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
       "src/thalovant/home.py": "934f2618a39f35bd7d95b0ff8544b543e7089f8103aa89a5943c01735ccbefe6",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
-      "src/thalovant/identity.py": "3bcbe07ef1c58932d03d338374570c702ad976db44a673833f39cdd52eb729b9",
+      "src/thalovant/identity.py": "8e8b34d794f14dca7ef42573642eb6ca37cba87f43a3b8027f9c1ab3525c52a0",
       "src/thalovant/intents.py": "ac3ca26ed92f6db54f783c4ff5320cf39d2f266d1dce2d93a9b87f55c7db9900",
       "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
       "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
@@ -863,7 +863,8 @@
     "2460eb90bd56b1b182be3db365ba29bfef712d4ea2748061652ba0f28dcf6f50",
     "3b0acf7c8b2f03bec95d9e9bba4f82e88c79ad3d98590988852e6c06deb48af0",
     "50d65c1596a99e5db78c38c0898ca01bfbb105da305e9804f394f08756af7f50",
-    "841f3bbeec23f04c5decae75c9cfd6ea6a397992c7e4d7cd4195dc9dd919cd1a"
+    "841f3bbeec23f04c5decae75c9cfd6ea6a397992c7e4d7cd4195dc9dd919cd1a",
+    "3f37b7453397f577a1db5cf2db7f709ffa4b09194869e07970d0881239b7a218"
   ],
   "schema_version": 1
 }
