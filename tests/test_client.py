@@ -495,6 +495,40 @@ def test_client_falls_back_to_https_when_wss_endpoint_is_missing():
     assert isinstance(client._transport, HiveMindHTTPTransport)
 
 
+def test_client_uses_wss_for_an_identity_from_a_setup_link():
+    # The identify payload names a wss:// master and no endpoints. Reading no
+    # WSS endpoint from it put a desktop satellite on HTTPS polling, about ten
+    # requests a second, while the hub served WebSocket all along.
+    setup_link = ThalovantIdentity.from_mapping(
+        {
+            "access_key": "key",
+            "password": "password",
+            "site_id": "site",
+            "default_master": "wss://daily-desk.thalovant.io",
+            "default_port": 443,
+        }
+    )
+
+    client = ThalovantClient(setup_link)
+
+    assert isinstance(client._transport, HiveMindWSSTransport)
+
+
+def test_client_keeps_https_when_the_hub_disables_wss():
+    no_wss = ThalovantIdentity(
+        access_key="key",
+        password="password",
+        site_id="site",
+        default_master="wss://hub.local",
+        default_port=443,
+        protocols=HubProtocolSettings(wss=False, http=True),
+    )
+
+    client = ThalovantClient(no_wss)
+
+    assert isinstance(client._transport, HiveMindHTTPTransport)
+
+
 def test_mqtt_topics_strip_surrounding_slashes_from_prefix():
     identity = ThalovantIdentity(
         access_key="key",

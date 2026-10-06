@@ -432,3 +432,53 @@ def test_rejects_missing_required_field():
                 "default_master": "http://hub.local",
             }
         )
+
+
+# What the API's identify payload carries, and what a setup-link claim writes to
+# identity.json unchanged: the master URL, and no data-plane endpoints.
+SETUP_LINK_IDENTITY = {
+    "access_key": "client-access-key",
+    "password": "client-password",
+    "site_id": "stronghold",
+    "default_master": "wss://daily-desk.thalovant.io",
+    "default_port": 443,
+}
+
+
+def test_a_wss_master_is_the_wss_endpoint_when_none_is_given():
+    identity = ThalovantIdentity.from_mapping(SETUP_LINK_IDENTITY)
+
+    assert identity.endpoint_for("wss") == "wss://daily-desk.thalovant.io"
+    assert identity.endpoint_for("https") == "https://daily-desk.thalovant.io:443"
+
+
+def test_a_ws_master_is_read_whatever_its_case():
+    identity = ThalovantIdentity.from_mapping(
+        {**SETUP_LINK_IDENTITY, "default_master": "WS://hub.local"}
+    )
+
+    assert identity.endpoint_for("wss") == "WS://hub.local"
+
+
+def test_an_explicit_wss_endpoint_still_wins_over_the_master():
+    identity = ThalovantIdentity.from_mapping(
+        {
+            **SETUP_LINK_IDENTITY,
+            "data_plane_endpoints": {"wss": "wss://socket.example.com/hivemind/public"},
+        }
+    )
+
+    assert identity.endpoint_for("wss") == "wss://socket.example.com/hivemind/public"
+
+
+@pytest.mark.parametrize("master", ["https://daily-desk.thalovant.io", "http://hub.local"])
+def test_an_http_master_gives_no_wss_endpoint(master):
+    identity = ThalovantIdentity.from_mapping({**SETUP_LINK_IDENTITY, "default_master": master})
+
+    assert identity.endpoint_for("wss") is None
+
+
+def test_the_master_is_not_an_mqtt_endpoint():
+    identity = ThalovantIdentity.from_mapping(SETUP_LINK_IDENTITY)
+
+    assert identity.endpoint_for("mqtt") is None
