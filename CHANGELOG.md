@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The `dev` extra caps `bitstring` below 5. bitstring 5.0.0, released 2026-10-11, removed `BitStream`, which every hivemind-bus-client release imports while asking only for `bitstring>=4.1.1`, so a fresh `pip install -e ".[dev]"` could not import the reference client and the suite failed to collect. The installed SDK never depended on either package and is unaffected.
 - An identity whose `default_master` is a `wss://` or `ws://` URL, and which names no WSS endpoint of its own, connects over WSS. `ThalovantIdentity.endpoint_for("wss")` returned nothing for it, so the client fell back to HTTPS polling. That is every identity a setup link writes: the API's identify payload carries `default_master` and no `data_plane_endpoints`, and the satellite installer writes it to `identity.json` as it is. A desktop satellite paired that way sent its hub about ten poll requests a second around the clock while the hub served WebSocket, and was counted as gone 120 s after it last spoke. An explicit WSS endpoint still wins, an `https://` master still gives none, and a hub that disables WSS still gets HTTPS. The Node, Kotlin, .NET and Swift SDKs already read the master this way; Go and Rust do not yet. The parity reference moves (see `contracts/sdk-parity.json`).
 
 ## 0.9.2 — unreleased
