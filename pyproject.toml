@@ -104,6 +104,11 @@ dev = [
     "certifi",
     "noiseprotocol>=0.3.1",
     "hivemind-bus-client>=1.1.9a1",
+    # bitstring 5.0.0 (2026-10-11) removed BitStream, which hivemind-bus-client
+    # imports at module load while requiring only bitstring>=4.1.1, so a fresh
+    # dev install could not import it and the test suite failed to collect.
+    # Lift once a hivemind-bus-client release supports bitstring 5.
+    "bitstring>=4.1.1,<5",
     "poorman-handshake>=2.0.0a3",
     "ovos-spec-tools[langcodes]>=1.10.5a1",
 ]
