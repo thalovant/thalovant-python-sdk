@@ -66,9 +66,17 @@ EVENT_PADATIOUS_MANIFEST_GET = "intent.service.padatious.manifest.get"
 EVENT_PADATIOUS_MANIFEST = "intent.service.padatious.manifest"
 # Which skills answer whatever nothing else matched. They register no intents
 # and no sentences, so they are invisible to the intent manifest by
-# construction (ovos-core #951).
+# construction. ovos-core #951 added this query and #988 took it out again the
+# same day; no runtime answers it. Kept so callers that import the names do not
+# break; the inventory asks EVENT_SKILLS_LIST instead.
 EVENT_FALLBACK_LIST = "ovos.skills.fallback.list"
 EVENT_FALLBACK_LIST_RESPONSE = "ovos.skills.fallback.list.response"
+# Every skill the runtime loaded and what it declared it can do (OVOS-INTENT-4
+# section 10.3): ``{"ok", "skills": [{skill_id, session_id, capabilities,
+# intents}]}``. A skill whose capabilities include ``fallback`` is offered
+# whatever nothing else matched.
+EVENT_SKILLS_LIST = "ovos.skills.list"
+EVENT_SKILLS_LIST_RESPONSE = "ovos.skills.list.response"
 EVENT_QUERY_TIMEOUT = "hive.query.timeout"
 # An embedded skill sound. A skill that would play a clip on the hub's own
 # speaker sends it here for a remote client instead, hex-encoded, so the

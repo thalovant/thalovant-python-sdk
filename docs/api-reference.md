@@ -68,6 +68,22 @@ runtime that does not implement it, and the caller cannot tell that from a
 refusal. With `fallback=False`, silence raises `ThalovantTimeoutError`, as
 does a hub whose engines say nothing either.
 
+A language the hub never loaded is listed in one the hub did. With
+`nearest=True` (the default), a language whose listing has no sentences is
+asked again in its usual form (`en-CA` -> `en-US`). If that still has none,
+`ovos.intent.list` is asked once with no `lang`. That listing names every
+language the hub loaded, and the inventory takes the closest one: the same
+language in another region first, then the hub's own language, then the one
+with the most sentences. `listed_in` records the tag each requested language
+was listed under, so a caller can say "these are in English". The hub still
+answers a person speaking a language it did not load, in its own language.
+
+`fallbacks` names the skills that take whatever nothing else matched. It is
+read from `ovos.skills.list` (skills whose capabilities include `fallback`,
+in the hub's default session), which the connection must be allowed to
+publish. `fallbacks_known=False` means the hub could not say. Fallbacks carry
+no priority (`priority=None`), because no runtime serves one.
+
 ## Control Plane
 
 ### `ThalovantControlPlane`
