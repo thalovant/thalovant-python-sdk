@@ -899,6 +899,12 @@ def list_fallbacks(
     return _blocking(client, _list_fallbacks(_core(client), timeout=timeout))
 
 
+def _can_carry_sentences(rows: Iterable[IntentRegistration]) -> bool:
+    """Whether a listing has an enabled template row: the only kind with sentences."""
+
+    return any(row.enabled and row.method == "template" for row in rows)
+
+
 async def _inventory(
     client: "AsyncThalovantClient",
     languages: Iterable[str],
@@ -922,7 +928,7 @@ async def _inventory(
         for lang in asked:
             rows = await _list_intents(client, lang, timeout=timeout, include_definitions=describe)
             tag = lang
-            if not rows and nearest:
+            if nearest and not _can_carry_sentences(rows):
                 # Listing and asking do not agree about languages. The hub
                 # matches an utterance to the closest language it knows, so a
                 # phone set to en-CA is understood by skills registered under
@@ -930,15 +936,35 @@ async def _inventory(
                 # lists nothing for en-CA. It is the hub's behaviour, so it
                 # belongs here.
                 #
-                # Once only, and only on an empty listing: a hub that
-                # answered is never asked twice, and a language with no usual
-                # form other than itself has nothing to retry with.
+                # Not only on an empty listing: on a listing with no template
+                # row, which can never carry a sentence. The Pop Culture hub
+                # (2026-10-11) listed five keyword intents of one skill under
+                # en-CA -- that skill registers keyword vocabulary in 63
+                # regional tags -- and 141 intents with sentences under
+                # en-US; five names is not an answer a person can use.
+                #
+                # Once only: a listing with a template row is never asked
+                # twice, a language with no usual form other than itself has
+                # nothing to retry with, and the usual form's listing is
+                # taken only when it can carry sentences (or the first was
+                # empty), so keyword names are never traded for other names.
                 usual = usual_form(lang)
                 if usual is not None:
-                    rows = await _list_intents(
-                        client, usual, timeout=timeout, include_definitions=describe
-                    )
-                    if rows:
+                    try:
+                        retried = await _list_intents(
+                            client, usual, timeout=timeout, include_definitions=describe
+                        )
+                    except (ThalovantTimeoutError, ThalovantRuntimeError):
+                        # A retry never makes the answer worse than the first
+                        # listing. Names the hub already gave stand when the
+                        # usual form times out, is refused or answers
+                        # `ok: false`; only an empty first listing lets the
+                        # failure through, exactly as before.
+                        if not rows:
+                            raise
+                        retried = []
+                    if _can_carry_sentences(retried) or (retried and not rows):
+                        rows = retried
                         tag = usual
             listed[tag] = rows
             answered[lang] = tag
