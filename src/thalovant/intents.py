@@ -19,6 +19,20 @@ Two queries, correlated by ``context.request_id`` like every other request:
   ``ovos.intent.describe.response`` ``{"ok", "definitions": [{method,
   definition}]}`` or ``{"ok": false, "error"}``.
 
+The listing without ``lang`` answers every language the hub loaded, which is
+how a client learns them: a hub speaks the languages in its ``lang`` and
+``secondary_langs`` and lists nothing under any other tag, while it still
+answers a person asking in one (in its own language). ``inventory()`` then
+lists in the hub's language closest to the one asked and says so in
+``listed_in``.
+
+A third query names the skills nothing in the manifest can show:
+
+- ``ovos.skills.list`` ``{}`` -> ``ovos.skills.list.response`` ``{"ok",
+  "skills": [{skill_id, session_id, capabilities, intents}]}`` (section
+  10.3). A skill declaring the ``fallback`` capability is offered whatever
+  nothing else matched, and registers no sentence to show for it.
+
 A hub whose connection may not publish a type answers ``hive.policy.denied``
 naming it; that becomes :class:`ThalovantPolicyDeniedError` at once rather
 than a timeout. The engines' own manifests (``intent.service.adapt.manifest.get``
@@ -31,7 +45,6 @@ from __future__ import annotations
 import re
 
 import asyncio
-import math
 import time
 from dataclasses import dataclass, field, replace
 from typing import Callable, TYPE_CHECKING, Any, Coroutine, Iterable, Mapping, TypeVar, cast
@@ -49,8 +62,6 @@ from .errors import (
 from .events import (
     EVENT_ADAPT_MANIFEST,
     EVENT_ADAPT_MANIFEST_GET,
-    EVENT_FALLBACK_LIST,
-    EVENT_FALLBACK_LIST_RESPONSE,
     EVENT_INTENT_DESCRIBE,
     EVENT_INTENT_DESCRIBE_RESPONSE,
     EVENT_INTENT_LIST,
@@ -58,6 +69,8 @@ from .events import (
     EVENT_PADATIOUS_MANIFEST,
     EVENT_PADATIOUS_MANIFEST_GET,
     EVENT_POLICY_DENIED,
+    EVENT_SKILLS_LIST,
+    EVENT_SKILLS_LIST_RESPONSE,
     ThalovantEvent,
     _new_request_id,
 )
@@ -362,14 +375,22 @@ class HubSkillIntents:
 class HubFallback:
     """A skill that answers whatever nothing else matched.
 
-    It has no intents and no sentences to publish -- that is what being a
-    fallback means -- so a caller can learn that it exists and in what order it
-    will be tried, and nothing more. That is still the difference between "no
-    skill handles this" and "something will try".
+    It has no sentences to publish for that -- being offered everything is
+    what a fallback is -- so a caller can learn that it exists and nothing
+    more. That is still the difference between "no skill handles this" and
+    "something will try".
+
+    ``priority`` is ``None``: no runtime serves it. The hub's own list of
+    skills (``ovos.skills.list``) says which skills declared the fallback
+    capability and not in what order they are tried, and the query that would
+    have carried the order (``ovos.skills.fallback.list``, ovos-core #951) was
+    reverted the same day it landed. A number here would be invented, so there
+    is none; the list is in skill id order and says nothing about who goes
+    first.
     """
 
     skill_id: str
-    priority: int
+    priority: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {"skill_id": self.skill_id, "priority": self.priority}
@@ -393,20 +414,25 @@ class HubIntentInventory:
 
     ``fallbacks_known`` is the distinction that stops the same mistake being
     made about fallbacks themselves: ``False`` means the hub was not able to
-    say (an older ovos-core without `ovos.skills.fallback.list`, or a
-    connection not allowed to publish it), and an empty ``fallbacks`` then
-    means *unknown*, not *none*.
+    say (a runtime without ``ovos.skills.list``, or a connection not allowed
+    to publish it), and an empty ``fallbacks`` then means *unknown*, not
+    *none*.
     """
 
     languages: tuple[str, ...]
     skills: tuple[HubSkillIntents, ...]
     source: str = SOURCE_MANIFEST
     #: The tag the hub actually listed each requested language under, in the
-    #: same order as ``languages``. Equal to ``languages`` unless a listing
-    #: came back empty and the usual form of that language answered instead,
-    #: which is the only way these two differ. Callers that render sentences
-    #: must read them from the tag that answered; empty when nothing was
-    #: asked by manifest at all.
+    #: same order as ``languages``. Equal to ``languages`` unless the listing
+    #: in that language had no sentences and another answered instead: the
+    #: language's usual form (``en-CA`` -> ``en-US``), or else one of the
+    #: languages the hub loaded -- the same language in another region first,
+    #: then the hub's own -- because a hub lists nothing under a language it
+    #: did not load and still answers a person speaking it. A caller showing
+    #: these sentences should say which language they are in when this
+    #: differs from what was asked in a way the person would notice. Callers
+    #: that render sentences must read them from the tag that answered; empty
+    #: when nothing was asked by manifest at all.
     listed_in: tuple[str, ...] = ()
     denied: tuple[str, ...] = ()
     fallbacks: tuple[HubFallback, ...] = ()
@@ -448,6 +474,7 @@ class HubIntentInventory:
             "skills": [skill.as_dict() for skill in self.skills],
             "fallbacks": [fallback.as_dict() for fallback in self.fallbacks],
             "fallbacks_known": self.fallbacks_known,
+            "listed_in": list(self.listed_in),
         }
 
 
@@ -840,9 +867,38 @@ def _inventory_from_names(names: dict[str, list[str]], languages: tuple[str, ...
     return HubIntentInventory(languages=languages, skills=skills, source=SOURCE_ENGINES, denied=(denied,))
 
 
-#: How long to wait for `ovos.skills.fallback.list` before calling the answer
+#: How long to wait for `ovos.skills.list` before calling the answer
 #: unknowable. Bounded separately from the caller's timeout: see _with_fallbacks.
 FALLBACK_PROBE_TIMEOUT = 1.5
+
+#: The capability a skill announces when it takes what nothing else matched.
+FALLBACK_CAPABILITY = "fallback"
+
+
+def _fallbacks_from_skills(rows: Any) -> tuple[HubFallback, ...]:
+    """The fallback skills in an ``ovos.skills.list`` answer, in skill id order.
+
+    Only the hub's own skills: a row in another session ("default" is where
+    the runtime loads every installed skill) is somebody else's, and a row
+    with no session is taken as the hub's, which is what the runtime means by
+    leaving it out.
+    """
+    found: set[str] = set()
+    for row in rows if isinstance(rows, list) else ():
+        if not isinstance(row, Mapping):
+            continue
+        skill_id = row.get("skill_id")
+        if not isinstance(skill_id, str) or not skill_id.strip():
+            continue
+        session = row.get("session_id")
+        if session not in (None, "", "default"):
+            continue
+        capabilities = row.get("capabilities")
+        if not isinstance(capabilities, (list, tuple)):
+            continue
+        if FALLBACK_CAPABILITY in capabilities:
+            found.add(skill_id.strip())
+    return tuple(HubFallback(skill_id=skill_id) for skill_id in sorted(found))
 
 
 async def _list_fallbacks(
@@ -850,37 +906,15 @@ async def _list_fallbacks(
 ) -> tuple[HubFallback, ...] | None:
     try:
         event = await _request_reply(
-            client, EVENT_FALLBACK_LIST, EVENT_FALLBACK_LIST_RESPONSE, {},
+            client, EVENT_SKILLS_LIST, EVENT_SKILLS_LIST_RESPONSE, {},
             lang=None, timeout=timeout,
         )
     except (ThalovantPolicyDeniedError, ThalovantTimeoutError):
         return None
-    rows = event.data.get("fallbacks")
+    rows = event.data.get("skills")
     if event.data.get("ok") is False or not isinstance(rows, list):
         return None
-    found = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        skill_id = row.get("skill_id")
-        if not isinstance(skill_id, str) or not skill_id:
-            continue
-        priority = row.get("priority")
-        if isinstance(priority, int):
-            # An int is always finite, and math.isfinite() would raise
-            # OverflowError converting a big one to a float.
-            rank = int(priority)
-        elif isinstance(priority, float):
-            if not math.isfinite(priority):
-                # NaN and infinity are floats, and int() raises ValueError
-                # and OverflowError on them. One malformed row must not
-                # abort discovery for every other.
-                continue
-            rank = int(priority)
-        else:
-            rank = 0
-        found.append(HubFallback(skill_id=skill_id, priority=rank))
-    return tuple(sorted(found, key=lambda f: (f.priority, f.skill_id)))
+    return _fallbacks_from_skills(rows)
 
 
 def list_fallbacks(
@@ -888,12 +922,17 @@ def list_fallbacks(
 ) -> tuple[HubFallback, ...] | None:
     """Which skills answer whatever nothing else matched, or None if unknowable.
 
+    Read from ``ovos.skills.list``: every skill the hub loaded, with the
+    capabilities it declared; a fallback is one declaring ``fallback``. It
+    used to ask ``ovos.skills.fallback.list``, which ovos-core added in #951
+    and removed in #988 the same day, so no hub ever answered it.
+
     ``None`` and ``()`` are deliberately different answers. ``()`` means the
-    hub said it has no fallbacks; ``None`` means it could not say -- an
-    ovos-core without `ovos.skills.fallback.list` (added in #951), a connection
-    not allowed to publish it, or a hub that did not reply. Collapsing those
-    into "none" is the mistake this whole feature exists to correct, so it is
-    not made here either.
+    hub said it has no fallbacks; ``None`` means it could not say -- a
+    runtime without ``ovos.skills.list``, a connection not allowed to publish
+    it, or a hub that did not reply. Collapsing those into "none" is the
+    mistake this whole feature exists to correct, so it is not made here
+    either. No priority comes back: see :class:`HubFallback`.
     """
 
     return _blocking(client, _list_fallbacks(_core(client), timeout=timeout))
@@ -903,6 +942,93 @@ def _can_carry_sentences(rows: Iterable[IntentRegistration]) -> bool:
     """Whether a listing has an enabled template row: the only kind with sentences."""
 
     return any(row.enabled and row.method == "template" for row in rows)
+
+
+def _sentence_rows(rows: Iterable[IntentRegistration]) -> int:
+    return sum(1 for row in rows if row.enabled and row.method == "template")
+
+
+@dataclass(frozen=True)
+class _HubLanguages:
+    """The hub's whole manifest, by the language each row was registered in.
+
+    ``by_lang`` keeps the hub's own spelling and the order it listed them in.
+    ``session_lang`` is the language the hub stamped on its reply's session:
+    a request that names no language is answered in a session the hub opened
+    in its default language, which is the nearest thing to "the hub's own
+    language" the bus offers. It is a hint, not a promise -- a hub may keep a
+    session's language from an earlier exchange -- so it only ever breaks a
+    choice between languages the hub actually listed.
+    """
+
+    by_lang: dict[str, list[IntentRegistration]]
+    session_lang: str | None = None
+
+
+async def _list_hub_languages(
+    client: "AsyncThalovantClient", *, timeout: float, include_definitions: bool,
+) -> _HubLanguages | None:
+    """``ovos.intent.list`` with no ``lang``: every language the hub loaded.
+
+    ``None`` when the hub refused, failed or did not answer: this is only ever
+    asked to improve an answer, and an answer it cannot improve stands.
+    """
+    data: dict[str, Any] = {}
+    if include_definitions:
+        data["include_definitions"] = True
+    try:
+        event = await _request_reply(
+            client, EVENT_INTENT_LIST, EVENT_INTENT_LIST_RESPONSE, data, lang=None, timeout=timeout,
+        )
+    except (ThalovantTimeoutError, ThalovantPolicyDeniedError, ThalovantRuntimeError):
+        return None
+    if event.data.get("ok") is False:
+        return None
+    raw = event.data.get("intents")
+    by_lang: dict[str, list[IntentRegistration]] = {}
+    for row in raw if isinstance(raw, list) else ():
+        entry = IntentRegistration.from_mapping(row) if isinstance(row, dict) else None
+        if entry is None or not entry.lang.strip():
+            continue
+        key = next((seen for seen in by_lang if same_language(seen, entry.lang)), entry.lang)
+        by_lang.setdefault(key, []).append(entry)
+    session = event.context.get("session") if isinstance(event.context, dict) else None
+    session_lang = session.get("lang") if isinstance(session, dict) else None
+    return _HubLanguages(
+        by_lang=by_lang,
+        session_lang=session_lang if isinstance(session_lang, str) and session_lang.strip() else None,
+    )
+
+
+def nearest_hub_language(
+    asked: str, listed: Mapping[str, Iterable[IntentRegistration]], hub_lang: str | None = None,
+) -> str | None:
+    """Which of the hub's languages to list in, for a person who asked in ``asked``.
+
+    Only a language with a sentence to show is a candidate. The same language
+    first, by the matcher the rest of OVOS uses (``de-AT`` takes ``de-DE``);
+    then the hub's own language, ``hub_lang``, when the hub listed it; then
+    the language with the most sentences, the first listed on a tie. ``None``
+    when no language the hub listed carries a sentence.
+
+    The hub does not say which language is its own. A person asking in a
+    language the hub never loaded is answered all the same -- in the hub's
+    language, by its fallback or persona -- so the sentences worth showing
+    them are the ones in that language, and the order above is the closest
+    this can get to it without inventing a fact.
+    """
+    counts = {tag: _sentence_rows(rows) for tag, rows in listed.items()}
+    candidates = [tag for tag, count in counts.items() if count > 0]
+    if not candidates:
+        return None
+    match = closest_lang(asked, candidates)
+    if match is not None:
+        return match
+    if hub_lang:
+        own = closest_lang(hub_lang, candidates)
+        if own is not None:
+            return own
+    return max(candidates, key=lambda tag: counts[tag])
 
 
 async def _inventory(
@@ -924,6 +1050,7 @@ async def _inventory(
 
     listed: dict[str, list[IntentRegistration]] = {}
     answered: dict[str, str] = {}
+    hub_languages: list[_HubLanguages | None] = []
     try:
         for lang in asked:
             rows = await _list_intents(client, lang, timeout=timeout, include_definitions=describe)
@@ -966,6 +1093,34 @@ async def _inventory(
                     if _can_carry_sentences(retried) or (retried and not rows):
                         rows = retried
                         tag = usual
+            if nearest and not _can_carry_sentences(rows):
+                # Still nothing a person can say: the hub did not load this
+                # language. A hub loads its `lang` and `secondary_langs`
+                # (en-US and fr-FR on most public hubs) and lists nothing
+                # under any other tag, so a phone set to Spanish, Japanese or
+                # German was shown an empty list -- by a hub that answered
+                # every one of those people, in its own language. Measured on
+                # all 13 public hubs on 2026-10-11.
+                #
+                # The listing without a language names every language the hub
+                # loaded; list in the closest of them and say so in
+                # `listed_in`. Asked once per inventory, only here, and taken
+                # only when it has sentences, so it never replaces names with
+                # fewer names. A hub that cannot answer it leaves the result
+                # exactly as it was.
+                if not hub_languages:
+                    hub_languages.append(await _list_hub_languages(
+                        client, timeout=timeout, include_definitions=describe,
+                    ))
+                hub = hub_languages[0]
+                if hub is not None:
+                    chosen = nearest_hub_language(lang, hub.by_lang, hub.session_lang)
+                    if chosen is not None:
+                        rows = hub.by_lang[chosen]
+                        tag = chosen
+            # One key per language: en-us asked and en-US chosen for another
+            # tag are the same listing, and two keys would split its phrases.
+            tag = next((seen for seen in listed if same_language(seen, tag)), tag)
             listed[tag] = rows
             answered[lang] = tag
     except ThalovantPolicyDeniedError as denied:
@@ -1075,12 +1230,13 @@ async def _with_fallbacks(
 ) -> HubIntentInventory:
     """Attach what answers outside the manifest, or record that it is unknown."""
 
-    # An ovos-core without `ovos.skills.fallback.list` never replies, and this
-    # runs on every inventory() call. Waiting the caller's full timeout to
-    # learn "unknowable" would add that much to every listing against an older
-    # hub. A hub that has the handler answers from memory, so a short window is
-    # enough for a real answer while an unsupporting one costs a fraction of
-    # the budget. It is never longer than the caller asked for.
+    # A runtime without `ovos.skills.list` never replies, and this runs on
+    # every inventory() call. Waiting the caller's full timeout to learn
+    # "unknowable" would add that much to every listing against such a hub. A
+    # hub that has the handler answers from memory, and a connection not
+    # allowed to ask is refused at once, so a short window is enough for a
+    # real answer while an unsupporting hub costs a fraction of the budget. It
+    # is never longer than the caller asked for.
     fallbacks = await _list_fallbacks(client, timeout=min(timeout, FALLBACK_PROBE_TIMEOUT))
     return replace(
         found,
@@ -1104,6 +1260,7 @@ __all__ = [
     "inventory",
     "list_fallbacks",
     "list_intents",
+    "nearest_hub_language",
     "request_reply",
     "same_language",
 ]

@@ -807,11 +807,11 @@
       "src/thalovant/control.py": "03dcd3dea3ce07e361a9341cf8f5d3e5a663a8d70ccdac0c6783e919fdb2e30f",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "b98762ef918b0c27b0743b9b2251e9ee25df4873e639bdc3962d21c5c25c4969",
-      "src/thalovant/events.py": "c681517ff621d1c3646b9e4996c814d9adaeafdb6ad8d0004a4ce2e7d9770480",
+      "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
       "src/thalovant/home.py": "934f2618a39f35bd7d95b0ff8544b543e7089f8103aa89a5943c01735ccbefe6",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "8e8b34d794f14dca7ef42573642eb6ca37cba87f43a3b8027f9c1ab3525c52a0",
-      "src/thalovant/intents.py": "2d138f532e267170970323b72981aade4838337845735bd93c07eed802b9786b",
+      "src/thalovant/intents.py": "c1635476545bb0e6f9ad251bcfbe8097aa486627403a32d90fcfe29c6280d54d",
       "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
       "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
       "src/thalovant/models.py": "029daed0271aa321ceb8e3d5f94541c0f43152eaeaf32146f68f053248ae660c",
@@ -865,7 +865,8 @@
     "50d65c1596a99e5db78c38c0898ca01bfbb105da305e9804f394f08756af7f50",
     "841f3bbeec23f04c5decae75c9cfd6ea6a397992c7e4d7cd4195dc9dd919cd1a",
     "3f37b7453397f577a1db5cf2db7f709ffa4b09194869e07970d0881239b7a218",
-    "600b10e7e159f6ca9c1d59d7f2a4103c2e1c66a0894b587e0224e4d9c0e66bd1"
+    "600b10e7e159f6ca9c1d59d7f2a4103c2e1c66a0894b587e0224e4d9c0e66bd1",
+    "5b973a65ab583082069afaa67e2baf7257cbc4950a89460c9912851821258d16"
   ],
   "schema_version": 1
 }

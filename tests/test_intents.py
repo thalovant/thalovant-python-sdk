@@ -78,7 +78,12 @@ class FakeHubTransport:
         keywords: dict[str, list[tuple[str, str]]] | None = None,
         list_silent_in: tuple[str, ...] = (),
         list_fails_in: tuple[str, ...] = (),
+        skills: list[dict[str, Any]] | None = None,
+        hub_lang: str | None = None,
     ) -> None:
+        # The hub's default language, stamped on the session of a reply to a
+        # request that named none -- what a live hub does.
+        self.hub_lang = hub_lang
         # Languages whose `ovos.intent.list` gets no answer, or `ok: false`.
         self.list_silent_in = list_silent_in
         self.list_fails_in = list_fails_in
@@ -91,10 +96,21 @@ class FakeHubTransport:
         self.definitions_in_list = definitions_in_list
         self.echo_request_id = echo_request_id
         self.repeats = repeats
-        # None means the hub cannot answer ovos.skills.fallback.list at all,
-        # which is every ovos-core before #951 -- and the default here, so the
-        # rest of the suite exercises the unknown path rather than a fiction.
+        # What `ovos.skills.list` answers. `fallbacks` is the short way to say
+        # it: each name becomes a loaded skill declaring the fallback
+        # capability (the priority is ignored -- no runtime serves one). None
+        # for both means the hub cannot answer at all, the default here, so
+        # the rest of the suite exercises the unknown path rather than a
+        # fiction. `ovos.skills.fallback.list` is never answered: ovos-core
+        # added it in #951 and took it out again in #988.
         self.fallbacks = fallbacks
+        if skills is None and fallbacks is not None:
+            skills = [
+                {"skill_id": skill_id, "session_id": "default",
+                 "capabilities": ["fallback", "converse"], "intents": 0}
+                for skill_id, _priority in fallbacks
+            ]
+        self.skills = skills
         # Intents the hub reports but has switched off. They keep their
         # phrases in the manifest and cannot answer with them.
         self.disabled = disabled or set()
@@ -162,16 +178,40 @@ class FakeHubTransport:
         if event_type in self.silent:
             return
         lang = str(data.get("lang") or "")
-        if event_type == "ovos.skills.fallback.list":
-            if self.fallbacks is None:
-                return  # an ovos-core without #951 simply never answers
-            self._deliver(
-                "ovos.skills.fallback.list.response",
-                {"ok": True, "fallbacks": [
-                    {"skill_id": skill_id, "priority": priority}
-                    for skill_id, priority in self.fallbacks]},
-                context,
-            )
+        if event_type == "ovos.skills.list":
+            if self.skills is None:
+                return  # a runtime without the handler simply never answers
+            self._deliver("ovos.skills.list.response", {"ok": True, "skills": self.skills}, context)
+            return
+        if event_type == "ovos.intent.list" and "lang" not in data:
+            # Every language the hub loaded, in the hub's spelling. "" in
+            # list_silent_in / list_fails_in is this listing.
+            if "" in self.list_silent_in:
+                return
+            if "" in self.list_fails_in:
+                self._deliver("ovos.intent.list.response", {"ok": False, "error": "listing failed"}, context)
+                return
+            rows = []
+            for tag, per_language in (self.registrations or {}).items():
+                base, _, region = tag.partition("-")
+                spelled = f"{base}-{region.upper()}" if region else base
+                for (skill_id, intent_name), samples in per_language.items():
+                    row = {
+                        "skill_id": skill_id, "intent_name": intent_name, "lang": spelled,
+                        "method": "template",
+                        "enabled": (skill_id, intent_name) not in self.disabled,
+                        "session_id": "default",
+                    }
+                    if data.get("include_definitions"):
+                        row["definition"] = {
+                            "skill_id": skill_id, "intent_name": intent_name,
+                            "lang": spelled, "samples": samples,
+                        }
+                    rows.append(row)
+            reply_context = dict(context)
+            if self.hub_lang:
+                reply_context["session"] = {"session_id": "s", "lang": self.hub_lang}
+            self._deliver("ovos.intent.list.response", {"ok": True, "intents": rows}, reply_context)
             return
         if event_type == "ovos.intent.list" and lang in self.list_silent_in:
             return
@@ -318,14 +358,27 @@ def test_a_failed_retry_keeps_the_names_the_first_listing_gave(failure: str) -> 
 
     hub = FakeHubTransport(
         keywords={"en-CA": SCOUT_KEYWORDS},
-        list_silent_in=("en-us",) if failure == "silent" else (),
-        list_fails_in=("en-us",) if failure == "refused" else (),
+        list_silent_in=("en-us", "") if failure == "silent" else (),
+        list_fails_in=("en-us", "") if failure == "refused" else (),
     )
     inventory = client(hub).intents(["en-CA"], timeout=0.2)
 
     assert inventory.source == SOURCE_MANIFEST
     assert inventory.listed_in == ("en-CA",)
     assert [intent.name for intent in inventory.intents] == ["SourceScoutRealPromptIntent", "SourceScoutTopicIntent"]
+
+
+@pytest.mark.parametrize("failure", ["silent", "refused"])
+def test_the_hubs_own_listing_answers_when_the_usual_form_fails(failure: str) -> None:
+    hub = FakeHubTransport(
+        keywords={"en-CA": SCOUT_KEYWORDS},
+        list_silent_in=("en-us",) if failure == "silent" else (),
+        list_fails_in=("en-us",) if failure == "refused" else (),
+    )
+    inventory = client(hub).intents(["en-CA"], timeout=0.2)
+
+    assert inventory.listed_in == ("en-US",)
+    assert inventory.has_phrases
 
 
 def test_a_failed_retry_after_an_empty_listing_still_fails_as_before() -> None:
@@ -396,8 +449,10 @@ def test_a_language_with_no_usual_form_is_not_retried() -> None:
     inventory = client(hub).intents(["en-us"])
 
     listings = [data for name, data, _ in hub.emitted if name == "ovos.intent.list"]
-    assert len(listings) == 1, f"nothing to retry with: {listings}"
-    assert inventory.skills == ()
+    in_a_language = [data["lang"] for data in listings if "lang" in data]
+    assert in_a_language == ["en-us"], f"nothing to retry with: {listings}"
+    # What it does ask is the hub's whole manifest, which names French.
+    assert inventory.listed_in == ("fr-FR",)
 
 
 def test_examples_prefer_whole_sentences_and_respect_the_limit() -> None:
@@ -812,8 +867,11 @@ def test_the_inventory_says_which_skills_answer_outside_the_manifest() -> None:
 
     assert inventory.fallbacks_known is True
     assert [(f.skill_id, f.priority) for f in inventory.fallbacks] == [
-        ("skill-a", 10), ("skill-b", 50),
-    ], "ordered the way the pipeline will try them"
+        ("skill-a", None), ("skill-b", None),
+    ], "skill id order, and no priority: the hub does not serve one"
+    assert "ovos.skills.fallback.list" not in [name for name, _, _ in hub.emitted], (
+        "no runtime answers it, and asking cost every listing a second and a half"
+    )
 
 
 def test_a_hub_with_no_fallbacks_says_so_rather_than_staying_silent() -> None:
@@ -836,7 +894,7 @@ def test_a_hub_that_cannot_be_asked_is_unknown_and_not_none() -> None:
 
 
 def test_a_refused_query_is_unknown_too() -> None:
-    hub = FakeHubTransport(refuse=("ovos.skills.fallback.list",),
+    hub = FakeHubTransport(refuse=("ovos.skills.list",),
                            fallbacks=[("skill-a", 10)])
     inventory = client(hub).intents(["en-us"])
     assert inventory.fallbacks_known is False, "denied is not the same as empty"
@@ -879,7 +937,7 @@ def test_fallbacks_survive_a_manifest_the_hub_refused() -> None:
 def test_the_inventory_serialises_what_it_knows_about_fallbacks() -> None:
     hub = FakeHubTransport(fallbacks=[("skill-a", 10)])
     payload = client(hub).intents(["en-us"]).as_dict()
-    assert payload["fallbacks"] == [{"skill_id": "skill-a", "priority": 10}]
+    assert payload["fallbacks"] == [{"skill_id": "skill-a", "priority": None}]
     assert payload["fallbacks_known"] is True
 
 
@@ -927,32 +985,36 @@ def test_an_empty_language_still_falls_back_to_the_default() -> None:
     assert inventory.languages == ("en-us",)
 
 
-def test_a_non_finite_fallback_priority_does_not_abort_discovery() -> None:
-    """``int(nan)`` raises ValueError and ``int(inf)`` OverflowError.
+def test_only_the_hubs_own_fallback_skills_are_listed() -> None:
+    """``ovos.skills.list`` names every skill the runtime loaded.
 
-    One malformed row used to take the whole inventory down with it.
+    A skill without the fallback capability answers through its intents and
+    is in the manifest already; one loaded in somebody else's session is not
+    this hub's; a malformed row is skipped rather than taking the rest down.
     """
 
-    hub = FakeHubTransport(fallbacks=[
-        ("thalovant-skill-source-scout.thalovant", 10),
-        ("broken-nan.thalovant", float("nan")),
-        ("broken-inf.thalovant", float("inf")),
-        # Not malformed, just large. math.isfinite() raises OverflowError
-        # converting this to a float, so guarding with it alone reintroduced
-        # the crash it was added to remove.
-        ("huge-but-finite.thalovant", 10 ** 400),
+    hub = FakeHubTransport(skills=[
+        {"skill_id": "thalovant-skill-memory.thalovant", "session_id": "default",
+         "capabilities": ["fallback", "converse"], "intents": 0},
+        {"skill_id": "thalovant-skill-weather.thalovant", "session_id": "default",
+         "capabilities": [], "intents": 16},
+        {"skill_id": "someone-elses.fallback", "session_id": "another-session",
+         "capabilities": ["fallback"], "intents": 0},
+        {"skill_id": "custos-fallback.thalovant", "capabilities": ["fallback"]},
+        {"skill_id": "", "session_id": "default", "capabilities": ["fallback"]},
+        {"skill_id": "no-capabilities.thalovant", "session_id": "default", "capabilities": None},
+        "not a row",
     ])
     inventory = client(hub).intents(["en-us"])
 
     assert inventory.fallbacks_known
     assert [row.skill_id for row in inventory.fallbacks] == [
-        "thalovant-skill-source-scout.thalovant",
-        "huge-but-finite.thalovant",
+        "custos-fallback.thalovant", "thalovant-skill-memory.thalovant",
     ]
 
 
 def test_unsupported_fallback_discovery_does_not_cost_the_whole_timeout() -> None:
-    """An ovos-core without #951 never answers, and this runs every call.
+    """A runtime without ``ovos.skills.list`` never answers, and this runs every call.
 
     The probe is bounded separately, so learning "unknowable" costs a
     fraction of the caller's budget instead of all of it.
@@ -1000,8 +1062,8 @@ def test_describe_never_substitutes_a_foreign_request_id_for_its_matching_defini
 def test_explicitly_failed_fallback_discovery_is_unknown_even_with_empty_list():
     class Failed(FakeHubTransport):
         def emit_event(self, event_type, data, context):
-            if event_type == "ovos.skills.fallback.list":
-                self._deliver("ovos.skills.fallback.list.response", {"ok": False, "fallbacks": []}, context)
+            if event_type == "ovos.skills.list":
+                self._deliver("ovos.skills.list.response", {"ok": False, "skills": []}, context)
                 return
             super().emit_event(event_type, data, context)
 
@@ -1055,7 +1117,7 @@ def test_optional_fallback_probe_bounds_send_and_holds_lifecycle_until_retired()
             self.connected = True
 
         def emit_event(self, event_type, data, context):
-            if event_type == "ovos.skills.fallback.list" and not self.gate.is_set():
+            if event_type == "ovos.skills.list" and not self.gate.is_set():
                 self.started.set()
                 self.gate.wait(5)
             super().emit_event(event_type, data, context)
@@ -1100,3 +1162,129 @@ def test_fully_answered_empty_describes_remain_successful(reply, batch):
         assert all(not handlers for handlers in hub.handlers.values())
     finally:
         sdk.close()
+
+
+# A language the hub never loaded ---------------------------------------------
+#
+# Measured on all 13 public hubs on 2026-10-11: a hub loads its `lang` and
+# `secondary_langs` (en-US and fr-FR on most) and lists nothing under any other
+# tag. A phone set to Spanish, Japanese or German asked in its own language,
+# its usual form, got nothing twice and showed an empty list -- while the hub
+# answered those people in its own language.
+
+BOTH = {"en-us": REGISTRATIONS["en-us"], "fr-fr": REGISTRATIONS["fr-fr"]}
+# The hub's own listing order on Daily Desk and Rewrite Forge: French first.
+FRENCH_FIRST = {"fr-fr": REGISTRATIONS["fr-fr"], "en-us": REGISTRATIONS["en-us"]}
+
+
+@pytest.mark.parametrize("phone", ["es-ES", "ja-JP", "de-DE"])
+def test_a_language_the_hub_never_loaded_is_listed_in_the_hubs_own(phone: str) -> None:
+    hub = FakeHubTransport(registrations=FRENCH_FIRST, hub_lang="en-US", fallbacks=[])
+    inventory = client(hub).intents([phone])
+
+    assert inventory.languages == (phone,)
+    assert inventory.listed_in == ("en-US",), "the language the hub answers that person in"
+    assert inventory.has_phrases
+    assert [skill.skill_id for skill in inventory.skills] == [SHADOW, WEATHER]
+    weather = inventory.skills[1].intents[0]
+    assert weather.phrases_for(inventory.listed_in[0])[0] == "what is the weather"
+    asked = [data.get("lang") for name, data, _ in hub.emitted if name == "ovos.intent.list"]
+    assert asked.count(None) == 1, f"the hub's own listing is asked once: {asked}"
+
+
+def test_the_same_language_in_another_region_comes_first() -> None:
+    """en-CA's usual form is en-US; a hub that loaded en-GB has neither."""
+    hub = FakeHubTransport(
+        registrations={"fr-fr": REGISTRATIONS["fr-fr"], "en-gb": REGISTRATIONS["en-us"]},
+        hub_lang="fr-FR",
+    )
+    inventory = client(hub).intents(["en-CA"])
+
+    assert inventory.listed_in == ("en-GB",), "English before the hub's own French"
+
+
+def test_without_a_session_hint_the_language_with_most_sentences_wins() -> None:
+    hub = FakeHubTransport(registrations=FRENCH_FIRST)
+    assert client(hub).intents(["ja-JP"]).listed_in == ("en-US",), "two intents in English, one in French"
+
+
+def test_without_any_hint_a_tie_goes_to_the_first_language_listed() -> None:
+    from thalovant.intents import IntentRegistration, nearest_hub_language
+
+    def rows(lang: str) -> list[IntentRegistration]:
+        return [IntentRegistration(skill_id="s", intent_name="i", lang=lang, method="template")]
+
+    listed = {"fr-FR": rows("fr-FR"), "en-US": rows("en-US")}
+    assert nearest_hub_language("ja-JP", listed) == "fr-FR"
+    assert nearest_hub_language("ja-JP", listed, "en-US") == "en-US"
+    assert nearest_hub_language("ja-JP", listed, "ko-KR") == "fr-FR", "a hint the hub never listed is no hint"
+    assert nearest_hub_language("fr-CA", listed, "en-US") == "fr-FR"
+    keyword_only = {"en-US": [IntentRegistration(skill_id="s", intent_name="i", lang="en-US", method="keyword")]}
+    assert nearest_hub_language("ja-JP", keyword_only) is None
+
+
+def test_a_language_the_hub_loaded_never_asks_the_whole_manifest() -> None:
+    hub = FakeHubTransport(registrations=BOTH, hub_lang="en-US")
+    inventory = client(hub).intents(["fr-fr", "en-us"])
+
+    assert inventory.listed_in == ("fr-fr", "en-us")
+    assert all("lang" in data for name, data, _ in hub.emitted if name == "ovos.intent.list")
+
+
+def test_two_languages_that_land_on_the_same_hub_language_share_one_listing() -> None:
+    hub = FakeHubTransport(registrations=BOTH, hub_lang="en-US")
+    inventory = client(hub).intents(["en-us", "ja-JP"])
+
+    assert inventory.listed_in == ("en-us", "en-us"), "one key per language, not en-us and en-US"
+    weather = next(intent for intent in inventory.intents if intent.skill_id == WEATHER)
+    assert list(weather.phrases) == ["en-us"]
+
+
+@pytest.mark.parametrize("failure", ["silent", "refused", "denied"])
+def test_a_hub_that_cannot_list_its_languages_leaves_the_answer_as_it_was(failure: str) -> None:
+    class Hub(FakeHubTransport):
+        def emit_event(self, event_type, data, context):
+            if event_type == "ovos.intent.list" and "lang" not in data and failure == "denied":
+                self._deliver("hive.policy.denied", {"denied_type": event_type}, context)
+                return
+            super().emit_event(event_type, data, context)
+
+    hub = Hub(
+        registrations=BOTH,
+        keywords={"ja-JP": SCOUT_KEYWORDS},
+        list_silent_in=("",) if failure == "silent" else (),
+        list_fails_in=("",) if failure == "refused" else (),
+    )
+    inventory = client(hub).intents(["ja-JP"], timeout=0.2)
+
+    assert inventory.source == SOURCE_MANIFEST
+    assert inventory.listed_in == ("ja-JP",)
+    assert [intent.name for intent in inventory.intents] == ["SourceScoutRealPromptIntent", "SourceScoutTopicIntent"]
+
+
+def test_an_empty_hub_stays_empty_rather_than_failing() -> None:
+    hub = FakeHubTransport(registrations={})
+    inventory = client(hub).intents(["ja-JP"])
+    assert inventory.skills == () and inventory.listed_in == ("ja-JP",)
+
+
+def test_the_hubs_own_listing_is_not_asked_when_nearest_is_off() -> None:
+    hub = FakeHubTransport(registrations=BOTH)
+    inventory = client(hub).intents(["ja-JP"], nearest=False)
+    assert inventory.skills == ()
+    assert [data for name, data, _ in hub.emitted if name == "ovos.intent.list"] == [
+        {"lang": "ja-JP", "include_definitions": True},
+    ]
+
+
+def test_definitions_from_the_hubs_own_listing_need_no_describe() -> None:
+    hub = FakeHubTransport(registrations=BOTH, definitions_in_list=True, hub_lang="en-US")
+    inventory = client(hub).intents(["es-ES"])
+    assert inventory.has_phrases
+    assert not [name for name, _, _ in hub.emitted if name == "ovos.intent.describe"]
+
+
+def test_the_serialised_inventory_says_which_language_it_listed_in() -> None:
+    hub = FakeHubTransport(registrations=BOTH, hub_lang="en-US")
+    payload = client(hub).intents(["es-ES"]).as_dict()
+    assert payload["languages"] == ["es-ES"] and payload["listed_in"] == ["en-US"]
