@@ -950,9 +950,19 @@ async def _inventory(
                 # empty), so keyword names are never traded for other names.
                 usual = usual_form(lang)
                 if usual is not None:
-                    retried = await _list_intents(
-                        client, usual, timeout=timeout, include_definitions=describe
-                    )
+                    try:
+                        retried = await _list_intents(
+                            client, usual, timeout=timeout, include_definitions=describe
+                        )
+                    except (ThalovantTimeoutError, ThalovantRuntimeError):
+                        # A retry never makes the answer worse than the first
+                        # listing. Names the hub already gave stand when the
+                        # usual form times out, is refused or answers
+                        # `ok: false`; only an empty first listing lets the
+                        # failure through, exactly as before.
+                        if not rows:
+                            raise
+                        retried = []
                     if _can_carry_sentences(retried) or (retried and not rows):
                         rows = retried
                         tag = usual

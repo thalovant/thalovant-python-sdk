@@ -76,7 +76,12 @@ class FakeHubTransport:
         fallbacks: list[tuple[str, int]] | None = None,
         disabled: set[tuple[str, str]] | None = None,
         keywords: dict[str, list[tuple[str, str]]] | None = None,
+        list_silent_in: tuple[str, ...] = (),
+        list_fails_in: tuple[str, ...] = (),
     ) -> None:
+        # Languages whose `ovos.intent.list` gets no answer, or `ok: false`.
+        self.list_silent_in = list_silent_in
+        self.list_fails_in = list_fails_in
         self.registrations = registrations
         # Keyword (adapt) registrations per language: listed, never described
         # with sentences, exactly as ovos-core lists an IntentBuilder intent.
@@ -167,6 +172,11 @@ class FakeHubTransport:
                     for skill_id, priority in self.fallbacks]},
                 context,
             )
+            return
+        if event_type == "ovos.intent.list" and lang in self.list_silent_in:
+            return
+        if event_type == "ovos.intent.list" and lang in self.list_fails_in:
+            self._deliver("ovos.intent.list.response", {"ok": False, "error": "listing failed"}, context)
             return
         if event_type == "ovos.intent.list":
             rows = []
@@ -300,6 +310,28 @@ def test_keyword_rows_are_kept_when_the_usual_form_has_no_sentences_either() -> 
 
     assert inventory.listed_in == ("en-CA",), "nothing better to take"
     assert [intent.name for intent in inventory.intents] == ["SourceScoutRealPromptIntent", "SourceScoutTopicIntent"]
+
+
+@pytest.mark.parametrize("failure", ["silent", "refused"])
+def test_a_failed_retry_keeps_the_names_the_first_listing_gave(failure: str) -> None:
+    """A retry never makes the answer worse than the first listing."""
+
+    hub = FakeHubTransport(
+        keywords={"en-CA": SCOUT_KEYWORDS},
+        list_silent_in=("en-us",) if failure == "silent" else (),
+        list_fails_in=("en-us",) if failure == "refused" else (),
+    )
+    inventory = client(hub).intents(["en-CA"], timeout=0.2)
+
+    assert inventory.source == SOURCE_MANIFEST
+    assert inventory.listed_in == ("en-CA",)
+    assert [intent.name for intent in inventory.intents] == ["SourceScoutRealPromptIntent", "SourceScoutTopicIntent"]
+
+
+def test_a_failed_retry_after_an_empty_listing_still_fails_as_before() -> None:
+    hub = FakeHubTransport(registrations={}, list_fails_in=("en-us",))
+    with pytest.raises(ThalovantRuntimeError):
+        client(hub).intents(["en-CA"], timeout=0.2)
 
 
 def test_a_listing_with_sentences_is_not_retried_for_its_keyword_rows() -> None:
