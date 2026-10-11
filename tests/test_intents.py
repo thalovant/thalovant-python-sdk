@@ -75,8 +75,12 @@ class FakeHubTransport:
         repeats: int = 2,
         fallbacks: list[tuple[str, int]] | None = None,
         disabled: set[tuple[str, str]] | None = None,
+        keywords: dict[str, list[tuple[str, str]]] | None = None,
     ) -> None:
         self.registrations = registrations
+        # Keyword (adapt) registrations per language: listed, never described
+        # with sentences, exactly as ovos-core lists an IntentBuilder intent.
+        self.keywords = keywords or {}
         self.refuse = refuse
         self.silent = silent
         self.definitions_in_list = definitions_in_list
@@ -180,6 +184,11 @@ class FakeHubTransport:
                         "lang": lang, "samples": samples,
                     }
                 rows.append(row)
+            for skill_id, intent_name in self.keywords.get(lang, []):
+                rows.append({
+                    "skill_id": skill_id, "intent_name": intent_name, "lang": lang,
+                    "method": "keyword", "enabled": True, "session_id": "default",
+                })
             self._deliver("ovos.intent.list.response", {"ok": True, "intents": rows}, context)
         elif event_type == "ovos.intent.describe":
             key = (str(data["skill_id"]), str(data["intent_name"]))
@@ -259,6 +268,50 @@ def test_a_tag_the_hub_does_not_register_is_listed_under_its_usual_form() -> Non
         "what is the weather", "what is the weather in {location}", "how is it outside",
     )
     assert weather.phrases_for("en-CA") == weather.phrases_for("en-us")
+
+
+SCOUT = "thalovant-skill-source-scout.thalovant"
+SCOUT_KEYWORDS = [(SCOUT, "SourceScoutTopicIntent"), (SCOUT, "SourceScoutRealPromptIntent")]
+
+
+def test_a_tag_with_only_keyword_rows_is_listed_under_its_usual_form() -> None:
+    """Not empty is not the same as answered.
+
+    The Pop Culture hub on 2026-10-11: one skill registers its keyword
+    vocabulary in 63 regional tags, every other skill only in en-US. Its
+    en-CA listing was five keyword rows, which carry no sentences, so a phone
+    in Toronto was shown five names and nothing it could say -- the retry in
+    the usual form only ran on an empty listing.
+    """
+
+    hub = FakeHubTransport(keywords={"en-CA": SCOUT_KEYWORDS, "en-us": SCOUT_KEYWORDS})
+    inventory = client(hub).intents(["en-CA"])
+
+    assert inventory.listed_in == ("en-us",), "the usual form has sentences, en-CA has none"
+    assert inventory.has_phrases
+    assert [skill.skill_id for skill in inventory.skills] == [SHADOW, SCOUT, WEATHER]
+    listings = [data["lang"] for name, data, _ in hub.emitted if name == "ovos.intent.list"]
+    assert listings == ["en-CA", "en-us"]
+
+
+def test_keyword_rows_are_kept_when_the_usual_form_has_no_sentences_either() -> None:
+    hub = FakeHubTransport(registrations={}, keywords={"en-CA": SCOUT_KEYWORDS, "en-us": SCOUT_KEYWORDS[:1]})
+    inventory = client(hub).intents(["en-CA"])
+
+    assert inventory.listed_in == ("en-CA",), "nothing better to take"
+    assert [intent.name for intent in inventory.intents] == ["SourceScoutRealPromptIntent", "SourceScoutTopicIntent"]
+
+
+def test_a_listing_with_sentences_is_not_retried_for_its_keyword_rows() -> None:
+    hub = FakeHubTransport(
+        registrations={"en-CA": REGISTRATIONS["en-us"], "en-us": REGISTRATIONS["en-us"]},
+        keywords={"en-CA": SCOUT_KEYWORDS},
+    )
+    inventory = client(hub).intents(["en-CA"])
+
+    listings = [data["lang"] for name, data, _ in hub.emitted if name == "ovos.intent.list"]
+    assert listings == ["en-CA"]
+    assert inventory.listed_in == ("en-CA",)
 
 
 def test_the_canonical_spelling_still_gets_a_retry() -> None:
