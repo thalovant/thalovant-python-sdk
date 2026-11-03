@@ -477,6 +477,7 @@ def _bootstrap_mqtt_result():
         "https://dash.example.com/api", access_token="token", session=session
     )
     result = api.create_client_identity("hub-mqtt", name="kiosk")
+    assert result.identity.mqtt is not None
     secrets = {
         "access_key": result.identity.access_key,
         "password": result.identity.password,
