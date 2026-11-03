@@ -445,18 +445,26 @@ def test_one_conversation_keeps_a_bounded_number_of_aliases():
     assert group[:2] == ("sat-1", f"hub:{cap * 4 - 1}")
     assert client._continue_conversation(None, "sat-1")
     assert client._continue_conversation(None, f"hub:{cap * 4 - 1}")
+    # The inherited alias right behind the newest one is kept too.
+    assert group[2] == f"hub:{cap * 4 - 2}"
+    assert client._continue_conversation(None, f"hub:{cap * 4 - 2}")
     assert client._continue_conversation(None, "hub:0") is None
 
 
 class LateSplitIdHubTransport(SplitIdHubTransport):
     """Split ids, and the handled event arrives after the reply was handed back."""
 
-    def __init__(self, turns: list[HubTurn], speak_id: str, handled_id: str | None, delay: float = 0.05):
+    def __init__(self, turns: list[HubTurn], speak_id: str, handled_id: str | None):
+        """Hold the handled event until the test says ``ask()`` has returned."""
         super().__init__(turns, speak_id=speak_id, handled_id=handled_id)
-        self.delay = delay
         self.delivered = threading.Event()
+        # Set by the test once ask() has returned. A fixed sleep could let the
+        # handled event in before the reply settled, and then the early path
+        # would file the carry and the late one would never run.
+        self.released = threading.Event()
 
     def emit_event(self, event_type, data, context):
+        """Speak at once under ``speak_id``; send the handled event once released."""
         self.emitted.append((event_type, data, context))
         self.sent_sessions.append(dict(context.get("session") or {}))
         turn = self.turns.pop(0) if self.turns else HubTurn(session={})
@@ -472,7 +480,9 @@ class LateSplitIdHubTransport(SplitIdHubTransport):
         late_context = {**context, "session": handled}
 
         def _late() -> None:
-            time.sleep(self.delay)
+            """Deliver the handled event after ask() returned, or never."""
+            if not self.released.wait(5):
+                return
             for handler in self.handlers.get("ovos.utterance.handled", []):
                 handler(FakeMessage({}, context=late_context))
             self.delivered.set()
@@ -495,7 +505,10 @@ def test_a_late_handled_event_files_the_carry_under_the_id_the_reply_returned():
         client = ThalovantClient(identity(), transport=transport,
                                  reply_settle_seconds=0.0, empty_reply_wait_seconds=0.0)
 
-        reply = client.ask("Fais un prout", session_id="sat-1")
+        try:
+            reply = client.ask("Fais un prout", session_id="sat-1")
+        finally:
+            transport.released.set()
         assert reply.session_id == "hub-speak", (handled_id, reply.session_id)
         assert transport.delivered.wait(5), "the hub never said what the conversation was"
 

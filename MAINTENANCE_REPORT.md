@@ -26,6 +26,12 @@ Ten CodeRabbit review threads were still unresolved on three merged PRs. Each wa
 
 `AUDIT.md` and this file are new. No `src/` file changes. The parity reference digest, which covers `src/thalovant/*.py`, does not move, and `auto-release.yml` has no relevant path to release on.
 
+**Review follow-up on #107:** CodeRabbit's two review-body items are applied.
+
+- The alias test also asserts that the inherited alias right behind the newest one survives.
+- The late-handled fixture now waits on a release event set after `ask()` returns, instead of a fixed sleep, so the post-completion path is always the one exercised.
+- The new fixture methods have docstrings.
+
 **Verification:**
 
 - Each new test was run against `main` with its fix reverted locally, and failed:
