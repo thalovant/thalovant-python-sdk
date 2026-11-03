@@ -1,0 +1,22 @@
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Start the audit log with the CodeRabbit follow-up sweep of merged PRs #81, #83 and #94.
+
+# Audit
+
+Known issues, technical debt and security findings for `thalovant` (the Python SDK and the parity reference). Each entry cites the code and the test that show it. Line numbers are at `main` 51069339 (2026-11-03).
+
+Test run behind this file: `python -m pytest -q` on Python 3.12, 1326 passed, 1 skipped. `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
+
+## Open: known limitations
+
+### A blocking handler on MQTT or a custom transport holds up that transport's receive worker
+
+- **What:** WSS and HTTPS are native asyncio transports. A synchronous handler on them is posted to the client's own FIFO `CallbackThread` (`src/thalovant/_hive.py` `_call`, lines 409-419; `src/thalovant/_loop.py` `CallbackThread` 219 and `OffLoop` 259). The receive loop never runs user code. MQTT (`HiveMindMQTTTransport`) and a caller's own `transport=` go through `SyncLink`, which hands a synchronous handler to the transport "as it is" (`src/thalovant/_link.py` lines 15-16). `_ConnectionLifecycle._deliver_binary` (`src/thalovant/transport.py` 327) and the bus and hive dispatch beside it then call it inline on the MQTT `_receive_loop` worker (955).
+- **Effect:** On MQTT, a handler that blocks delays every later frame. Paho keeps queueing frames meanwhile. Once 256 frames are waiting (`transport.py` 581/700), `_on_message` (939) fails the session.
+- **Docs:** The sync client's `on_hive()` and `on_binary()` docstrings (`src/thalovant/client.py` 2671, 2692) say the handler "runs on this client's handler thread". That holds on WSS and HTTPS. On MQTT the handler runs on the transport's receive worker. Both docstrings correctly say a blocking handler holds up the next frame.
+- **Status:** This is a design decision. Moving MQTT onto the callback thread would change the reference AST digest that every consumer SDK acknowledges, so it belongs in a coordinated release. The decision came from CodeRabbit's thread on #81 (`transport.py`, "Dispatch binary subscribers outside transport receive loops"), which is now resolved, so the limitation is recorded here.
+- **Covered by:** `tests/test_wss_end_to_end.py::test_a_sync_handler_runs_off_the_loop_and_may_call_the_client_mid_turn` asserts that a WSS handler runs on `thalovant-handlers`.
+
+## Closed in this sweep
+
+- **The alias cap per conversation had no test.** `_remember_conversation` caps a group at `MAX_CONVERSATION_ALIASES` (`client.py` 372 and 1705, from 22d0551 / #84). Nothing failed when the cap was removed. `tests/test_conversation_continuity.py::test_one_conversation_keeps_a_bounded_number_of_aliases` now fails without it, with a 33-name group against a cap of 8.
+- **The late carry under the id the reply returned had no test.** The late `ovos.utterance.handled` callback also files the carried session under the id `ask()` returned (`client.py` 1993-1998 and 2196-2201, from 22d0551 / #84). The existing late-handled test continued under the request's own id, so this path was never exercised. `test_a_late_handled_event_files_the_carry_under_the_id_the_reply_returned` now fails without the fix: the follow-up `ask(session_id=reply.session_id)` sends no `converse_handlers`.
