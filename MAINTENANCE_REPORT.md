@@ -1,6 +1,58 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields; and record the CodeRabbit review-body sweep of merged PRs #19, #44, #78, #38, #53, #59 and #60.
 
 # Maintenance Report
+
+## 2026-11-03: CodeRabbit review-body items on merged PRs #38, #53, #59 and #60
+
+Four more review-body items were never answered. They were "outside the diff" comments, written as quoted blocks that the first sweep's matcher missed. Each was checked against `main` ced77a4f. All four were fixed before their PR merged.
+
+| Old PR | Item | Outcome |
+| :--- | :--- | :--- |
+| #38 | `transport.py`: require HTTPS before the HTTP transport sends anything (CWE-319) | Fixed in #38's own squash (43f7e66). `_preflight` (`src/thalovant/_hive.py` 1392-1399) refuses any endpoint that is not `https://` before the first request. Covered by `tests/test_client.py::test_http_transport_refuses_a_cleartext_endpoint`. |
+| #53 | `control.py`: drop every normalized spelling of the legacy crypto key (CWE-532) | Fixed in #53's own squash (b47584f) with `_normalize_secret_key` (`control.py` 1906-1910). The test covered only `cryptoKey` and `crypto_key`, so this PR adds `Crypto-Key`, `CRYPTO_KEY` and `cryptokey` to `test_create_client_identity_drops_a_callers_legacy_crypto_key`. With the old two-key `pop` the test now fails on those three spellings. |
+| #59 | `control.py`: keep `status_code` on device sign-in and redirect errors | Fixed in #59's own squash (ed2acef). Covered by `tests/test_config_concurrency.py::test_device_sign_in_errors_keep_their_http_status` and by the 302/307 cases of `::test_only_revision_conflicts_are_retried`. |
+| #60 | `control.py`: deep-copy the `merge=False` payload before dispatch | Fixed in #60's own squash (b2b0122): `control.py` 1391-1393. Covered by `tests/test_config_concurrency.py::test_replacement_snapshots_nested_values_before_transport_dispatch`. |
+
+**Changed:** `tests/test_control.py`, one test extended. There is no `src/` change, so the parity reference digest does not move, and `auto-release.yml` finds no release path.
+
+**Verification:** the extended test passes on the branch. With `control.py` reverted locally to the two-key `pop`, it fails with `a legacy crypto key spelt ['Crypto-Key', 'CRYPTO_KEY', 'cryptokey'] reached /v1/clients`.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read each item and checked it against current code.
+  - Found the fixing commit and test for each.
+  - Extended the one test that did not pin the normalization.
+  - Posted one comment per old PR.
+- **Oversight:** The work was done under the platform owner's instruction to handle every CodeRabbit comment. Hosted CI and the CodeRabbit review gate the merge. No release was cut.
+
+## 2026-11-03: CodeRabbit review-body items on merged PRs #19, #44 and #78
+
+Six review-body items (nitpick and duplicate comments, which are not threads) were never answered on three merged PRs. Each was checked against `main` ced77a4f.
+
+| Old PR | Item | Outcome |
+| :--- | :--- | :--- |
+| #19 | `tests/test_client.py`: MQTT coverage for query redaction | Already covered since b47584f (#53): `tests/test_noise_lifecycle.py::test_mqtt_callback_failure_diagnostics_redact_authorization_queries` (connect and subscribe failures, health and connection info) and `::test_mqtt_wait_timeout_reports_the_phase_without_credentials` (subscription and handshake timeouts). |
+| #19 | `control.py`: normalize key names before the secret denylist | Already fixed in b47584f (#53): `_normalize_secret_key`. Covered by the parametrized test at `tests/test_control.py:1492` (`apikey`, `Crypto_Key`, `INITIAL-IDENTIFY-TOKEN`, ...). |
+| #19 | `tests/test_control.py`: two test details | The `next(...)` half landed in b47584f (#53). The other half is done here: `_bootstrap_mqtt_result` now asserts `result.identity.mqtt is not None` before reading the MQTT password. |
+| #44 | `_noise_runtime.py`: domain error for a corrupt pin store | Already fixed in a87614b (#45): `_validated_noise_pins`. Covered by `tests/test_noise_store.py::test_malformed_pin_state_raises_domain_error_and_preserves_file`. |
+| #44 | `transport.py`: keep `ThalovantTimeoutError` on HTTP connect | Already fixed in a87614b (#45). Covered by `tests/test_noise_transports.py::test_https_handshake_deadline_preserves_timeout_and_releases_admission`. |
+| #78 | `native_auth.py`: bind `code_from` to the redirect URI | Already fixed before #78 merged (b9c7c30). `NativeSignIn.code_from` compares scheme, host and path with `redirect_uri`. Covered by `tests/test_native_auth.py::test_a_callback_arriving_somewhere_else_is_refused`. |
+
+**Changed:** one line in `tests/test_control.py`. There is no `src/` change, so the parity reference digest does not move, and `auto-release.yml` finds no release path.
+
+**Verification:** `python -m pytest -q` passes on the branch. This change only narrows a type in a test helper and changes no behaviour, so there is no revert-fails test for it.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read each review-body item and checked it against current code.
+  - Found the fixing commits and tests for five of them.
+  - Applied the remaining one-line test change.
+  - Posted one comment per old PR listing the outcome of each item.
+- **Oversight:** The work was done under the platform owner's instruction to handle every CodeRabbit comment. Hosted CI and the CodeRabbit review gate the merge. No release was cut.
 
 ## 2026-11-03 — Chat apps (0.10.0)
 

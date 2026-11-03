@@ -477,6 +477,7 @@ def _bootstrap_mqtt_result():
         "https://dash.example.com/api", access_token="token", session=session
     )
     result = api.create_client_identity("hub-mqtt", name="kiosk")
+    assert result.identity.mqtt is not None
     secrets = {
         "access_key": result.identity.access_key,
         "password": result.identity.password,
@@ -1382,6 +1383,11 @@ def test_create_client_identity_drops_a_callers_legacy_crypto_key():
         spec={
             "cryptoKey": "caller-supplied-SECRET",
             "crypto_key": "caller-supplied-SECRET-2",
+            # Matched after normalization, not by exact spelling: any casing
+            # or separator of the same name is the same legacy secret.
+            "Crypto-Key": "caller-supplied-SECRET-3",
+            "CRYPTO_KEY": "caller-supplied-SECRET-4",
+            "cryptokey": "caller-supplied-SECRET-5",
             "label": "keep-me",
         },
     )
@@ -1391,6 +1397,8 @@ def test_create_client_identity_drops_a_callers_legacy_crypto_key():
     ][0]["json"]["spec"]
     assert "cryptoKey" not in sent_spec, "a caller-supplied cryptoKey reached /v1/clients"
     assert "crypto_key" not in sent_spec, "a caller-supplied crypto_key reached /v1/clients"
+    leaked = [key for key in sent_spec if key.lower().replace("_", "").replace("-", "") == "cryptokey"]
+    assert not leaked, f"a legacy crypto key spelt {leaked} reached /v1/clients"
     assert sent_spec["label"] == "keep-me", "the rest of the caller's spec must survive"
 
 class ConfigSession:

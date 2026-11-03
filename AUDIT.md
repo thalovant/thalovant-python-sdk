@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields; and add the review-body sweeps of merged PRs #19, #44, #78, #38, #53, #59 and #60 to the closed findings.
 
 # Audit
 
@@ -17,6 +17,10 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1326 passed, 1 
 - **Covered by:** `tests/test_wss_end_to_end.py::test_a_sync_handler_runs_off_the_loop_and_may_call_the_client_mid_turn` asserts that a WSS handler runs on `thalovant-handlers`.
 
 ## Closed in this sweep
+
+- **Review-body items on #38, #53, #59 and #60 (2026-11-03).** All four were fixed before their PRs merged, and each is covered by a test listed in [MAINTENANCE_REPORT.md](MAINTENANCE_REPORT.md). One test did not pin the fix it covered. `test_create_client_identity_drops_a_callers_legacy_crypto_key` checked only `cryptoKey` and `crypto_key`, so reverting the normalized match in `control.py` 1906-1910 to two exact `pop`s passed. It now also sends `Crypto-Key`, `CRYPTO_KEY` and `cryptokey`. No open issue came out of these items.
+
+- **Review-body items on #19, #44 and #78 (2026-11-03).** Five of the six were already fixed and are covered by tests, which are listed in [MAINTENANCE_REPORT.md](MAINTENANCE_REPORT.md). The sixth is a type narrowing in a test helper: `tests/test_control.py` `_bootstrap_mqtt_result` read `result.identity.mqtt.password` without checking that `mqtt` is set, and it now asserts that first. No open issue came out of these items.
 
 - **The alias cap per conversation had no test.** `_remember_conversation` caps a group at `MAX_CONVERSATION_ALIASES` (`client.py` 372 and 1705, from 22d0551 / #84). Nothing failed when the cap was removed. `tests/test_conversation_continuity.py::test_one_conversation_keeps_a_bounded_number_of_aliases` now fails without it, with a 33-name group against a cap of 8.
 - **The late carry under the id the reply returned had no test.** The late `ovos.utterance.handled` callback also files the carried session under the id `ask()` returned (`client.py` 1993-1998 and 2196-2201, from 22d0551 / #84). The existing late-handled test continued under the request's own id, so this path was never exercised. `test_a_late_handled_event_files_the_carry_under_the_id_the_reply_returned` now fails without the fix: the follow-up `ask(session_id=reply.session_id)` sends no `converse_handlers`.
