@@ -110,7 +110,11 @@ dev = [
     # Lift once a hivemind-bus-client release supports bitstring 5.
     "bitstring>=4.1.1,<5",
     "poorman-handshake>=2.0.0a3",
-    "ovos-spec-tools[langcodes]>=1.10.5a1",
+    # ovos-spec-tools 1.17.0a1 (2026-11-03) matches Cantonese (yue) to zh-HK,
+    # which this SDK's language matching and the shared listing vectors do
+    # not, so the sweep that compares the two failed on every fresh dev
+    # install. Lift once the reference adopts it in a coordinated parity change.
+    "ovos-spec-tools[langcodes]>=1.10.5a1,<1.17",
 ]
 # Every word the intent listing turns a rule on -- what makes a phrase a
 # question, what a slot reads as -- lives in its own package, one file per

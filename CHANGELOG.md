@@ -6,6 +6,7 @@
 - `SecretValue` holds a credential and prints as `<redacted>` everywhere (`str`, `repr`, f-strings, logs); it cannot be pickled, and the SDK reads it only to build the request that sends it.
 - `ThalovantAPIError.fields` names what a refusal is about, such as the settings or secrets a chat app refused (`bridge_settings_invalid`, `bridge_url_not_public` ...), never their values. Empty when the body names none.
 - The parity reference moves: a new `chat-apps` capability (see `contracts/sdk-parity.json`).
+- The `dev` extra caps `ovos-spec-tools` below 1.17. 1.17.0a1, released 2026-11-03, matches Cantonese (`yue`) to `zh-HK`, which this SDK's language matching and the shared listing vectors do not, so the test that sweeps both failed on every fresh dev install. The installed SDK never depended on it and is unaffected.
 
 ## 0.9.7 — 2026-10-11
 
