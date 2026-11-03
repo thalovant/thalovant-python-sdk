@@ -48,7 +48,8 @@ BridgeStatusReason = Literal[
 #: Where the status came from.
 BridgeStatusSource = Literal["lifecycle", "operator", "watcher", "unavailable"]
 #: Why the platform paused a bridge: the plan allows fewer running bridges
-#: (resume it once it allows this one), or the account was deactivated.
+#: (the hold lifts on its own once the plan has room), or the account was
+#: deactivated (it resumes when the account is reactivated).
 BridgeHoldReason = Literal["plan_limit", "account_suspended"]
 #: ``offered`` and ``beta`` connectors are listed; ``hidden`` ones are not.
 ChatAppStatus = Literal["offered", "beta", "hidden"]

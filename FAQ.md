@@ -9,7 +9,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Create the FAQ with chat apps 
 The owner's plan has no room: Free plans allow no chat apps, and paid plans allow `max_chat_bridges`. Read `api.get_bridge_networks(hub_id).allowance` first.
 
 **How do I pause or resume a chat app?**
-`api.update_bridge(bridge_id, paused=True)` or `paused=False`. Resuming also ends a `plan_limit` hold once the plan has room again.
+`api.update_bridge(bridge_id, paused=True)` or `paused=False`. A `plan_limit` hold lifts on its own once the plan has room again; resuming it yourself works only then (otherwise `ThalovantPlanError`).
 
 **Which credentials does each connector need?**
 `api.list_chat_app_connectors()` lists them by key (`connector.secrets`): Telegram, Discord and Mattermost take `token`; Matrix `access_token`; Twitch `refresh_token` and `client_secret`. Non-secret settings (a Matrix `homeserver`, a Twitch `bot_login` and `client_id`) follow `connector.config_schema`.

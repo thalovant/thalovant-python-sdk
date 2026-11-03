@@ -60,7 +60,9 @@ api.send_bridge_test_message(bridge.id, bridge.allowed[0].id)
 
 The first non-empty `allowed` starts the bridge. Discord works the same way
 with its bot token; a Discord bridge always answers only what mentions it
-(`connector.options.require_mention_fixed`).
+(`connector.options.require_mention_fixed`). Mattermost takes its bot token
+too, plus the server's address as a setting:
+`create_bridge(hub_id, "mattermost", token=..., settings={"url": "https://chat.example.com"})`.
 
 ## Matrix (homeserver, user and access token)
 
@@ -125,8 +127,10 @@ Word a bridge's state from `bridge.status.reason`:
 
 `bridge.status.applied` is true once the running bridge carries the last
 change. `bridge.hold` is set when the platform paused the bridge:
-`plan_limit` (the plan allows fewer running bridges; resume it once it allows
-this one) or `account_suspended`. A reason, phase or hold this SDK does not
+`plan_limit` (the plan allows fewer running bridges; the hold lifts on its
+own, oldest bridge first, once the plan has room, and `paused=False` resumes
+it sooner when there is room) or `account_suspended` (it resumes when the
+account is reactivated). A reason, phase or hold this SDK does not
 know yet is kept as the string the API sent.
 
 ## Errors
