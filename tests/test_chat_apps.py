@@ -396,6 +396,7 @@ def test_create_bridge_with_twitch_secrets_as_plain_strings():
         {"token": 12345},
         {"secrets": {"access_token": ["not", "a", "string"]}},
         {"token": FAKE_TOKEN, "settings": {"password": SecretValue(FAKE_TOKEN)}},
+        {"token": FAKE_TOKEN, "settings": {"nested": {"deeper": [SecretValue(FAKE_TOKEN)]}}},
     ],
 )
 def test_create_bridge_refuses_bad_credentials_locally_without_echoing_them(kwargs):
@@ -456,7 +457,15 @@ def test_pause_and_resume_send_paused_without_if_match():
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"allowed": "-100"}, {"allowed": [{"title": "no id"}]}, {"allowed": [""]}, {"paused": "yes"}, {"session_scope": ""}],
+    [
+        {"allowed": "-100"},
+        {"allowed": [{"title": "no id"}]},
+        {"allowed": [""]},
+        {"allowed": [{"id": "   "}]},
+        {"paused": "yes"},
+        {"session_scope": ""},
+        {"settings": {"auth": {"token": SecretValue(FAKE_TOKEN)}}},
+    ],
 )
 def test_update_bridge_refuses_malformed_changes_locally(kwargs):
     session = BridgeSession({})
@@ -541,6 +550,52 @@ def test_get_bridge_avatar_returns_the_bytes():
     assert avatar.content == picture and avatar.content_type == "image/png"
     assert "PNG" not in repr(avatar)
     assert only(session)[2]["headers"]["accept"] == "image/*"
+    assert only(session)[2]["stream"] is True
+
+
+class StreamedResponse(FakeResponse):
+    """A streamed body: counts the chunks read and whether it was closed."""
+
+    def __init__(self, status_code, chunks, headers=None):
+        super().__init__(status_code, None, headers=headers)
+        self._chunks = chunks
+        self.read = 0
+        self.closed = False
+
+    def iter_content(self, chunk_size):
+        for chunk in self._chunks:
+            self.read += 1
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_requests_session_reads_the_avatar_streamed_and_stops_at_the_cap():
+    chunk = b"x" * (1024 * 1024)
+    endless = StreamedResponse(200, [chunk] * 100, headers={"content-type": "image/png"})
+    small = StreamedResponse(200, [b"GIF89a", b"\x00" * 10], headers={"content-type": "image/gif"})
+    session = BridgeSession({
+        ("GET", "/v1/bridges/big/avatar"): endless,
+        ("GET", "/v1/bridges/small/avatar"): small,
+    })
+    api = api_for(session)
+
+    with pytest.raises(ThalovantAPIError, match="larger than allowed"):
+        api.get_bridge_avatar("big")
+    assert endless.read == MAX_BRIDGE_AVATAR_BYTES // len(chunk) + 1 and endless.closed
+    avatar = api.get_bridge_avatar("small")
+    assert avatar.content == b"GIF89a" + b"\x00" * 10 and avatar.content_type == "image/gif" and small.closed
+
+
+def test_a_streamed_refusal_still_reads_as_the_apis_problem():
+    gone = StreamedResponse(404, [b'{"status": 404, ', b'"detail": "This bot has no picture"}'])
+    session = BridgeSession({("GET", "/v1/bridges/gone/avatar"): gone})
+
+    with pytest.raises(ThalovantAPIError) as raised:
+        api_for(session).get_bridge_avatar("gone")
+
+    assert raised.value.status_code == 404 and raised.value.detail == "This bot has no picture" and gone.closed
 
 
 def test_a_missing_avatar_is_the_apis_404_and_an_oversized_one_is_refused():
@@ -597,6 +652,7 @@ def test_fields_inside_a_detail_object_are_read_too():
     assert error.code == "bridge_secrets_invalid" and error.fields == ("client_secret",)
     assert ThalovantAPIError("local").fields == ()
     assert ThalovantAPIError(problem={"fields": ["a"]}, fields=["b"]).fields == ("b",)
+    assert ThalovantAPIError(problem={"fields": ["old"]}, fields="new").fields == ("new",)
 
 
 def test_plan_and_auth_refusals_keep_their_classes():
@@ -639,6 +695,8 @@ def test_a_secret_never_prints():
     with pytest.raises(TypeError):
         SecretValue(123)
     assert FAKE_TOKEN not in repr({"token": secret})
+    lone = "token-\udcff"  # a surrogate, as a Unix environment can hand one over
+    assert SecretValue(lone) == SecretValue(lone) and SecretValue(lone) != secret
 
 
 def test_a_refused_create_never_echoes_the_credentials():

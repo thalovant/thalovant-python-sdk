@@ -108,7 +108,11 @@ class SecretValue:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, SecretValue):
             return NotImplemented
-        return hmac.compare_digest(self.reveal().encode(), other.reveal().encode())
+        # surrogatepass: a credential read from a Unix environment can hold a
+        # lone surrogate, which the strict codec refuses.
+        return hmac.compare_digest(
+            self.reveal().encode("utf-8", "surrogatepass"), other.reveal().encode("utf-8", "surrogatepass")
+        )
 
     def __hash__(self) -> int:
         return hash((SecretValue, self.reveal()))
@@ -738,7 +742,7 @@ def _allowed_entry(chat: AllowedChatInput) -> dict[str, Any]:
         return chat.as_allowed().as_dict()
     if isinstance(chat, BridgeAllowedChat):
         return chat.as_dict()
-    if isinstance(chat, Mapping) and isinstance(chat.get("id"), str) and chat["id"]:
+    if isinstance(chat, Mapping) and isinstance(chat.get("id"), str) and chat["id"].strip():
         return {key: value for key, value in chat.items() if value is not None}
     raise ValueError("Each allowed chat is an id, or a chat with an id.")
 
@@ -747,9 +751,20 @@ def _settings(settings: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(settings, Mapping):
         raise ValueError("settings maps setting names to values.")
     for key, value in settings.items():
-        if isinstance(value, SecretValue):
+        if _holds_secret(value):
             raise ValueError(f"Setting {key!r} is a credential: send it as one of the connector's secrets.")
     return dict(settings)
+
+
+def _holds_secret(value: Any) -> bool:
+    """Whether a setting is, or holds anywhere inside it, a :class:`SecretValue`."""
+    if isinstance(value, SecretValue):
+        return True
+    if isinstance(value, Mapping):
+        return any(_holds_secret(item) for item in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_holds_secret(item) for item in value)
+    return False
 
 
 def _secret_map(secrets: Mapping[str, SecretInput]) -> dict[str, str]:

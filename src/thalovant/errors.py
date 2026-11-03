@@ -223,11 +223,13 @@ class ThalovantAPIError(ThalovantError):
         read_code, read_detail = _problem_fields(self.problem)
         self.code = code if code is not None else read_code
         self.detail = detail if detail is not None else read_detail
-        self.fields: tuple[str, ...] = (
-            tuple(item for item in fields if isinstance(item, str))
-            if fields is not None and not isinstance(fields, str)
-            else _problem_field_names(self.problem)
-        )
+        if isinstance(fields, str):
+            # One name, not its characters.
+            self.fields: tuple[str, ...] = (fields,)
+        elif fields is not None:
+            self.fields = tuple(item for item in fields if isinstance(item, str))
+        else:
+            self.fields = _problem_field_names(self.problem)
         #: How long the API asked the caller to wait before trying again, in
         #: seconds, when it said: a 429's ``retry_after_seconds`` (at the top
         #: of the problem or inside its ``detail`` object), else its

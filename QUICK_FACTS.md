@@ -23,7 +23,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Create the quick facts with th
 | `list_bridges(hub_id=None, *, owner_id=None, limit=None)` | `GET /v1/bridges` |
 | `get_bridge(bridge_id)` | `GET /v1/bridges/{id}` |
 | `create_bridge(hub_id, connector, *, token=None, secrets=None, settings=None)` | `POST /v1/bridges` |
-| `update_bridge(bridge_id, *, allowed, require_mention, session_scope, paused, settings, etag)` | `PATCH /v1/bridges/{id}` (`If-Match`) |
+| `update_bridge(bridge_id, *, allowed=None, require_mention=None, session_scope=None, paused=None, settings=None, etag=None)` | `PATCH /v1/bridges/{id}` (`If-Match` only when `etag` is given) |
 | `replace_bridge_token(bridge_id, token)` | `PUT /v1/bridges/{id}/token` |
 | `replace_bridge_secrets(bridge_id, secrets)` | `PUT /v1/bridges/{id}/secrets` |
 | `list_bridge_chats(bridge_id)` | `GET /v1/bridges/{id}/chats` |

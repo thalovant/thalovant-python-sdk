@@ -845,13 +845,13 @@
       "src/thalovant/_wire.py": "f6e589b234ca8a1f369a0d82ccc89bb2bdc95bdad7a140ffd16a7fdd46fef0e7",
       "src/thalovant/_yaml.py": "14741e3d6aca4d2007eeff8f1d6f1816a38120f5728e8d1db728b493636dc0ff",
       "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
-      "src/thalovant/chat_apps.py": "89dbf94526ebf1bd7017c43c8fa341a0d5ad586d12eac576bf04b27b3d5d63eb",
+      "src/thalovant/chat_apps.py": "64d0f88cfb0558fb582e5cdd52ef72c23a2e491df3f0407f05fb009a4cb8951b",
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "5f0d8f897650871398166feb4219644c20e348e46b9732d7929b902c856db6db",
+      "src/thalovant/control.py": "83fca864c2038f18fe09b1e1a893a97f1e066b2297bcc92094b8dffb1a4cd78e",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "e4ead53d7984af79947a17dcb009701ecb8e522ede41e79d223a0d2319cd4729",
+      "src/thalovant/errors.py": "3a0f18ff6d1a41cf6bed3baece13f4656f2cfc3ba87f12023c94e47e26ba70e8",
       "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
       "src/thalovant/home.py": "934f2618a39f35bd7d95b0ff8544b543e7089f8103aa89a5943c01735ccbefe6",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
@@ -912,7 +912,8 @@
     "3f37b7453397f577a1db5cf2db7f709ffa4b09194869e07970d0881239b7a218",
     "600b10e7e159f6ca9c1d59d7f2a4103c2e1c66a0894b587e0224e4d9c0e66bd1",
     "5b973a65ab583082069afaa67e2baf7257cbc4950a89460c9912851821258d16",
-    "1e56099da5dba82b48fb83b27e53192f3cd70e7d0f5a9c4f94bb08948e45a1d6"
+    "1e56099da5dba82b48fb83b27e53192f3cd70e7d0f5a9c4f94bb08948e45a1d6",
+    "57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9"
   ],
   "schema_version": 1
 }

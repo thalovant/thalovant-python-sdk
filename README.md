@@ -79,13 +79,16 @@ import os
 from thalovant import SecretValue, ThalovantControlPlane
 
 api = ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])
+hub_id = os.environ["THALOVANT_HUB_ID"]
 if not api.get_bridge_networks(hub_id).allowance.can_create:
     raise SystemExit("The plan has no room for another chat app.")
 
 # Telegram: a bot token.
 telegram = api.create_bridge(hub_id, "telegram", token=SecretValue(os.environ["TELEGRAM_BOT_TOKEN"]))
-chats = api.list_bridge_chats(telegram.id)
-telegram = api.update_bridge(telegram.id, allowed=list(chats)[:1], etag=telegram.etag)
+chats = [chat for chat in api.list_bridge_chats(telegram.id) if chat.selectable]
+if not chats:
+    raise SystemExit("Add the bot to a group and mention it there, then list the chats again.")
+telegram = api.update_bridge(telegram.id, allowed=chats[:1], etag=telegram.etag)
 api.send_bridge_test_message(telegram.id, telegram.allowed[0].id)
 
 # Matrix: a homeserver and user, and an access token. Room ids are typed.

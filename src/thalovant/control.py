@@ -4192,7 +4192,7 @@ class _BlockingSender:
         max_bytes: int | None = None,
     ) -> Any:
         try:
-            return self.session.request(
+            response = self.session.request(
                 method,
                 url,
                 json=json,
@@ -4203,7 +4203,11 @@ class _BlockingSender:
                 # An anonymous plaintext public request must not silently load
                 # credentials from netrc during Requests.prepare_request().
                 auth=(lambda prepared: prepared) if anonymous_plaintext else None,
+                **({"stream": True} if max_bytes is not None else {}),
             )
+            if max_bytes is None:
+                return response
+            return _bounded_response(response, max_bytes)
         except Exception as error:
             if type(error).__module__.split(".", 1)[0] in {"requests", "urllib3"} or isinstance(error, OSError):
                 # Requests error chains may contain URL credentials or query data.
@@ -4212,6 +4216,37 @@ class _BlockingSender:
 
     async def close(self) -> None:
         return None
+
+
+def _bounded_response(response: Any, max_bytes: int) -> Any:
+    """A streamed requests-style response read as bytes, no further than allowed.
+
+    A response object without ``iter_content`` has already read its body;
+    it is only measured.
+    """
+    chunks = getattr(response, "iter_content", None)
+    if chunks is None:
+        if len(getattr(response, "content", b"") or b"") > max_bytes:
+            raise ThalovantAPIError(
+                "Thalovant API returned a body larger than allowed.", status_code=response.status_code
+            )
+        return response
+    try:
+        buffer = bytearray()
+        for chunk in chunks(64 * 1024):
+            buffer += chunk
+            if len(buffer) > max_bytes:
+                raise ThalovantAPIError(
+                    "Thalovant API returned a body larger than allowed.", status_code=response.status_code
+                )
+        content = bytes(buffer)
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+    status = response.status_code
+    text = "" if 200 <= status < 300 else content.decode("utf-8", "replace")
+    return _Response(status, text, getattr(response, "headers", None) or {}, content)
 
 
 def _unreachable(error: BaseException) -> ThalovantAPIError:

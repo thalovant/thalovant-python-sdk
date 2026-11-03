@@ -21,6 +21,7 @@ allow none.
 from thalovant import ThalovantControlPlane
 
 api = ThalovantControlPlane(access_token="...")
+hub_id = "..."  # the hub's id, from api.list_hubs()
 networks = api.get_bridge_networks(hub_id)
 for offer in networks.networks:
     print(offer.network, offer.status, "offered" if offer.offered else "not yet")
@@ -54,7 +55,10 @@ print(bridge.invite_links.add_to_group)   # add the bot to a group, then mention
 
 chats = api.list_bridge_chats(bridge.id)  # chats with recent activity
 print(chats.note)
-bridge = api.update_bridge(bridge.id, allowed=[chat for chat in chats if chat.selectable][:1], etag=bridge.etag)
+choices = [chat for chat in chats if chat.selectable]
+if not choices:
+    raise SystemExit("No chat yet: add the bot to a group, mention it there, then list again.")
+bridge = api.update_bridge(bridge.id, allowed=choices[:1], etag=bridge.etag)
 api.send_bridge_test_message(bridge.id, bridge.allowed[0].id)
 ```
 
