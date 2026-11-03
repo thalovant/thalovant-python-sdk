@@ -419,3 +419,87 @@ def test_a_handled_event_that_arrives_after_the_reply_still_records_the_carry():
     transport.turns.append(HubTurn(session=_fart_handlers()))
     client.ask("Encore un", session_id="sat-1")
     assert transport.sent_sessions[-1].get("converse_handlers"), transport.sent_sessions[-1]
+
+
+def test_one_conversation_keeps_a_bounded_number_of_aliases():
+    """A hub that answers every turn under a fresh id must not grow one group forever.
+
+    Each turn files the id the caller sent plus the id the hub answered with,
+    and inherits every id the group already had. Without a per-group cap the
+    group gained one name per turn, so MAX_REMEMBERED_CONVERSATIONS bounded
+    conversations but not the names they hold, and every rewrite got slower.
+    """
+
+    client = ThalovantClient(identity(), transport=HubTransport([]))
+    cap = client.MAX_CONVERSATION_ALIASES
+    handlers = _fart_handlers()
+
+    for turn in range(cap * 4):
+        client._remember_conversation(["sat-1", f"hub:{turn}"], handlers)
+
+    assert client._remembered_conversations() == 1
+    group = client._conversations["sat-1"][0]
+    assert len(group) == cap, group
+    assert len(client._conversations) == cap
+    # The ids this turn used come first and survive; the stalest go.
+    assert group[:2] == ("sat-1", f"hub:{cap * 4 - 1}")
+    assert client._continue_conversation(None, "sat-1")
+    assert client._continue_conversation(None, f"hub:{cap * 4 - 1}")
+    assert client._continue_conversation(None, "hub:0") is None
+
+
+class LateSplitIdHubTransport(SplitIdHubTransport):
+    """Split ids, and the handled event arrives after the reply was handed back."""
+
+    def __init__(self, turns: list[HubTurn], speak_id: str, handled_id: str | None, delay: float = 0.05):
+        super().__init__(turns, speak_id=speak_id, handled_id=handled_id)
+        self.delay = delay
+        self.delivered = threading.Event()
+
+    def emit_event(self, event_type, data, context):
+        self.emitted.append((event_type, data, context))
+        self.sent_sessions.append(dict(context.get("session") or {}))
+        turn = self.turns.pop(0) if self.turns else HubTurn(session={})
+        base = {**(context.get("session") or {}), **turn.session}
+        for handler in self.handlers.get("speak", []):
+            handler(FakeMessage({"utterance": "Pfffft."},
+                                context={**context, "session": {**base, "session_id": self.speak_id}}))
+        handled = dict(base)
+        if self.handled_id is None:
+            handled.pop("session_id", None)
+        else:
+            handled["session_id"] = self.handled_id
+        late_context = {**context, "session": handled}
+
+        def _late() -> None:
+            time.sleep(self.delay)
+            for handler in self.handlers.get("ovos.utterance.handled", []):
+                handler(FakeMessage({}, context=late_context))
+            self.delivered.set()
+
+        threading.Thread(target=_late, daemon=True).start()
+
+
+def test_a_late_handled_event_files_the_carry_under_the_id_the_reply_returned():
+    """The reply settles first; the handled event comes inside the grace window.
+
+    `reply.session_id` is decided before the late callback runs, so that
+    callback could only reach the request id and the handled event's id. A
+    caller continuing with `ask(session_id=reply.session_id)` -- the natural
+    thing to do with what it was handed -- then sent no carried state.
+    """
+
+    for handled_id in ("hub-handled", None):
+        transport = LateSplitIdHubTransport([HubTurn(session=_fart_handlers())],
+                                            speak_id="hub-speak", handled_id=handled_id)
+        client = ThalovantClient(identity(), transport=transport,
+                                 reply_settle_seconds=0.0, empty_reply_wait_seconds=0.0)
+
+        reply = client.ask("Fais un prout", session_id="sat-1")
+        assert reply.session_id == "hub-speak", (handled_id, reply.session_id)
+        assert transport.delivered.wait(5), "the hub never said what the conversation was"
+
+        transport.turns.append(HubTurn(session=_fart_handlers()))
+        client.ask("Encore un", session_id=reply.session_id)
+        carried = transport.sent_sessions[-1]
+        assert carried.get("converse_handlers"), (handled_id, carried)
