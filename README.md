@@ -68,6 +68,53 @@ carry the client credentials. `result.as_dict()` redacts every secret and is
 safe to log; `result.as_dict(include_secrets=True)` returns the real
 credentials, so use it only to save the identity and never log it.
 
+## Chat apps
+
+A hub can answer in Telegram, Discord, Matrix, Mattermost or Twitch. Read the
+owner's allowance first (Free plans allow none), connect the bot, then choose
+where it answers. Credentials go in a `SecretValue`, which never prints.
+
+```python
+import os
+from thalovant import SecretValue, ThalovantControlPlane
+
+api = ThalovantControlPlane(access_token=os.environ["THALOVANT_API_TOKEN"])
+if not api.get_bridge_networks(hub_id).allowance.can_create:
+    raise SystemExit("The plan has no room for another chat app.")
+
+# Telegram: a bot token.
+telegram = api.create_bridge(hub_id, "telegram", token=SecretValue(os.environ["TELEGRAM_BOT_TOKEN"]))
+chats = api.list_bridge_chats(telegram.id)
+telegram = api.update_bridge(telegram.id, allowed=list(chats)[:1], etag=telegram.etag)
+api.send_bridge_test_message(telegram.id, telegram.allowed[0].id)
+
+# Matrix: a homeserver and user, and an access token. Room ids are typed.
+matrix = api.create_bridge(
+    hub_id, "matrix",
+    secrets={"access_token": SecretValue(os.environ["MATRIX_ACCESS_TOKEN"])},
+    settings={"homeserver": "https://matrix.example.org", "user_id": "@kitchen-hub:example.org"},
+)
+api.update_bridge(matrix.id, allowed=["!abcdefgh:example.org"])
+
+# Twitch: bot login and client id, refresh token and client secret.
+twitch = api.create_bridge(
+    hub_id, "twitch",
+    secrets={
+        "refresh_token": SecretValue(os.environ["TWITCH_REFRESH_TOKEN"]),
+        "client_secret": SecretValue(os.environ["TWITCH_CLIENT_SECRET"]),
+    },
+    settings={"bot_login": "kitchenhubbot", "client_id": os.environ["TWITCH_CLIENT_ID"]},
+)
+api.update_bridge(twitch.id, allowed=["#MyChannel"])
+
+api.update_bridge(twitch.id, paused=True)        # pause; paused=False resumes
+print(api.get_bridge(telegram.id).status.reason)  # Setup, Starting, Connected, Paused, ...
+```
+
+A refusal is a `ThalovantAPIError` with `code` and `fields` (the settings or
+secrets it names); see the [chat apps guide](docs/guides/chat-apps.md) for the
+status words, holds and every code.
+
 ## Documentation
 
 | Topic | Link |

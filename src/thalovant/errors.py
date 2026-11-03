@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 class ThalovantError(Exception):
@@ -193,14 +193,19 @@ class ThalovantAPIError(ThalovantError):
     * ``code`` is the body's machine-readable code, for branching without
       reading the prose.
     * ``detail`` is the API's own sentence, whole, exactly as sent.
+    * ``fields`` names what a refusal is about -- the settings or secrets a
+      chat app refused (``bridge_settings_invalid``, ``bridge_secrets_invalid``,
+      ``bridge_url_not_public`` ...) -- by name, never by value. Empty when
+      the body names none.
 
     The message is a single bounded line for display; it can be shortened, so
     it is never where to read what the API said. A value the body echoed back
     from the request never reaches the message, only ``problem``.
 
-    Passing ``problem`` alone derives ``code`` and ``detail`` from it; an
-    explicit ``code`` or ``detail`` wins. All three are ``None`` for a local
-    failure, such as a missing token or an unexpected response shape.
+    Passing ``problem`` alone derives ``code``, ``detail`` and ``fields`` from
+    it; an explicit ``code``, ``detail`` or ``fields`` wins. ``code`` and
+    ``detail`` are ``None``, and ``fields`` empty, for a local failure, such as
+    a missing token or an unexpected response shape.
     """
 
     def __init__(
@@ -210,6 +215,7 @@ class ThalovantAPIError(ThalovantError):
         code: str | None = None,
         detail: str | None = None,
         problem: Mapping[str, Any] | None = None,
+        fields: Sequence[str] | None = None,
     ) -> None:
         super().__init__(*args)
         self.status_code = status_code
@@ -217,6 +223,11 @@ class ThalovantAPIError(ThalovantError):
         read_code, read_detail = _problem_fields(self.problem)
         self.code = code if code is not None else read_code
         self.detail = detail if detail is not None else read_detail
+        self.fields: tuple[str, ...] = (
+            tuple(item for item in fields if isinstance(item, str))
+            if fields is not None and not isinstance(fields, str)
+            else _problem_field_names(self.problem)
+        )
         #: How long the API asked the caller to wait before trying again, in
         #: seconds, when it said: a 429's ``retry_after_seconds`` (at the top
         #: of the problem or inside its ``detail`` object), else its
@@ -243,6 +254,21 @@ def _retry_after(problem: Mapping[str, Any] | None) -> float | None:
         if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
             return float(value)
     return None
+
+
+def _problem_field_names(problem: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """The names a refusal's ``fields`` lists, at the body's top or inside an object ``detail``.
+
+    Only strings: a name, never a value the request sent.
+    """
+    if not isinstance(problem, Mapping):
+        return ()
+    nested = problem.get("detail")
+    for source in (problem, nested if isinstance(nested, Mapping) else {}):
+        value = source.get("fields")
+        if isinstance(value, list):
+            return tuple(item for item in value if isinstance(item, str))
+    return ()
 
 
 def _problem_fields(problem: Mapping[str, Any] | None) -> tuple[str | None, str | None]:

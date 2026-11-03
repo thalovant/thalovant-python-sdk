@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Start the audit log with the CodeRabbit follow-up sweep of merged PRs #81, #83 and #94.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields.
 
 # Audit
 
@@ -20,3 +20,10 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1326 passed, 1 
 
 - **The alias cap per conversation had no test.** `_remember_conversation` caps a group at `MAX_CONVERSATION_ALIASES` (`client.py` 372 and 1705, from 22d0551 / #84). Nothing failed when the cap was removed. `tests/test_conversation_continuity.py::test_one_conversation_keeps_a_bounded_number_of_aliases` now fails without it, with a 33-name group against a cap of 8.
 - **The late carry under the id the reply returned had no test.** The late `ovos.utterance.handled` callback also files the carried session under the id `ask()` returned (`client.py` 1993-1998 and 2196-2201, from 22d0551 / #84). The existing late-handled test continued under the request's own id, so this path was never exercised. `test_a_late_handled_event_files_the_carry_under_the_id_the_reply_returned` now fails without the fix: the follow-up `ask(session_id=reply.session_id)` sends no `converse_handlers`.
+
+## Chat apps (0.10.0)
+
+- **`GET /v1/bridges` has no cursor.** `list_bridges()` returns at most 500 bridges (`MAX_BRIDGE_LIST_LIMIT` in `src/thalovant/control.py`); a platform admin listing every bridge cannot page past that. `tests/test_chat_apps.py::test_list_bridges_refuses_a_blank_filter_and_a_bad_limit_before_sending` pins the bound.
+- **The routes' 412 and the deactivated-owner 403 carry no `code`.** A stale `etag` answers `detail: "ETag mismatch"` only (`test_a_stale_etag_is_the_apis_412`), so callers branch on `status_code`.
+- **No zeroing of credentials.** `SecretValue` (`src/thalovant/chat_apps.py`) keeps the credential as a Python `str` until it is garbage collected; Python cannot wipe one. It only guarantees that nothing prints it (`test_a_secret_never_prints`).
+- **Kotlin, Swift and .NET do not cover chat apps.** Recorded as not applicable in `contracts/sdk-parity.json` because the API's impact records name no obligation for them; a port would need that decision first.

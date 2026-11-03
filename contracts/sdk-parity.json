@@ -89,6 +89,50 @@
         "binary-frames.json"
       ]
     },
+    "chat-apps": {
+      "description": "Chat apps (managed chat bridges): the connector catalog (GET /v1/bridges/connectors: status, setup steps in en/fr, settings form, secrets by key, targets, options, helpers, offered, version), the networks offered with the owner's allowance (GET /v1/bridges/networks, hub_id optional), and every owner route under /v1/bridges -- list (hub_id, owner_id, limit 1-500; a blank filter refused, never dropped), create (token or secrets, never both, plus settings), get, patch (only the fields set; If-Match only when an etag is given), replace token, replace secrets, chats (manual_entry), test message, avatar bytes (bounded) and delete -- as typed models whose status reason, phase, source, state, session scope and hold reason keep any value the API sends; credentials only as a redacting SecretValue, never in a repr, an error or a log; and a refusal's fields (the settings or secrets it names) on the API error beside its code.",
+      "files": [
+        "src/thalovant/chat_apps.py",
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "reason": "The API's impact records for chat apps record no .NET obligation: the owner routes are offered in the Python, Node, Go and Rust SDKs and the MCP server. A .NET port is a separate decision to record in the API's impact file first, not a silent gap.",
+          "status": "not-applicable"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client; the caller owns every request it would make.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "reason": "The Android SDK is the app's data plane to its hubs. The API's impact records for chat apps record no Kotlin obligation: an owner connects and manages chat apps from the console, the Python, Node, Go and Rust SDKs or the MCP server, never from the phone app.",
+          "status": "not-applicable"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "reason": "The iOS SDK is the app's data plane to its hubs. The API's impact records for chat apps record no Swift obligation: an owner connects and manages chat apps from the console, the Python, Node, Go and Rust SDKs or the MCP server, never from the phone app.",
+          "status": "not-applicable"
+        }
+      },
+      "tests": [
+        "tests/test_chat_apps.py"
+      ]
+    },
     "cli": {
       "description": "Python command line interface",
       "files": [
@@ -790,7 +834,7 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "a4f731fdddd01fdb93ab11e6e5a5aeebb86968ef7cd0802739ba175105f5169a",
+      "src/thalovant/__init__.py": "31458f6961108d7776506c13fa7d39608947b273f1c5e336261ab5edde410b9a",
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
       "src/thalovant/_hive.py": "717d48525fbd6210ff701f23a2fa0a495954e5e4c396fb4e6811b7f7120270e6",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
@@ -801,12 +845,13 @@
       "src/thalovant/_wire.py": "f6e589b234ca8a1f369a0d82ccc89bb2bdc95bdad7a140ffd16a7fdd46fef0e7",
       "src/thalovant/_yaml.py": "14741e3d6aca4d2007eeff8f1d6f1816a38120f5728e8d1db728b493636dc0ff",
       "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
+      "src/thalovant/chat_apps.py": "89dbf94526ebf1bd7017c43c8fa341a0d5ad586d12eac576bf04b27b3d5d63eb",
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "03dcd3dea3ce07e361a9341cf8f5d3e5a663a8d70ccdac0c6783e919fdb2e30f",
+      "src/thalovant/control.py": "5f0d8f897650871398166feb4219644c20e348e46b9732d7929b902c856db6db",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "b98762ef918b0c27b0743b9b2251e9ee25df4873e639bdc3962d21c5c25c4969",
+      "src/thalovant/errors.py": "e4ead53d7984af79947a17dcb009701ecb8e522ede41e79d223a0d2319cd4729",
       "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
       "src/thalovant/home.py": "934f2618a39f35bd7d95b0ff8544b543e7089f8103aa89a5943c01735ccbefe6",
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
@@ -866,7 +911,8 @@
     "841f3bbeec23f04c5decae75c9cfd6ea6a397992c7e4d7cd4195dc9dd919cd1a",
     "3f37b7453397f577a1db5cf2db7f709ffa4b09194869e07970d0881239b7a218",
     "600b10e7e159f6ca9c1d59d7f2a4103c2e1c66a0894b587e0224e4d9c0e66bd1",
-    "5b973a65ab583082069afaa67e2baf7257cbc4950a89460c9912851821258d16"
+    "5b973a65ab583082069afaa67e2baf7257cbc4950a89460c9912851821258d16",
+    "1e56099da5dba82b48fb83b27e53192f3cd70e7d0f5a9c4f94bb08948e45a1d6"
   ],
   "schema_version": 1
 }
