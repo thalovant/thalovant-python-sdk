@@ -422,6 +422,30 @@ contain only Vault-backed secret references on normal resources. One-time
 identity responses include MQTT broker credentials on `identity.mqtt` when the
 hub exposes MQTT.
 
+### Chat apps
+
+A hub can answer in Telegram, Discord, Matrix, Mattermost or Twitch through a
+bridge (see the [Chat apps guide](guides/chat-apps.md)). Reads need
+`hubs:read`; writes and `list_bridge_chats` need `hubs:write`. Credentials are
+taken as `SecretValue` (or plain strings) and never printed.
+
+- `list_chat_app_connectors() -> list[ChatAppConnector]` — `GET /v1/bridges/connectors`.
+- `get_bridge_networks(hub_id=None) -> BridgeNetworks` — `GET /v1/bridges/networks`: `networks` offered and the owner's `allowance` (`limit`, `used`, `remaining`, `can_create`; Free allows none).
+- `list_bridges(hub_id=None, *, owner_id=None, limit=None) -> list[Bridge]` — `GET /v1/bridges`, at most 500, no cursor.
+- `get_bridge(bridge_id) -> Bridge`.
+- `create_bridge(hub_id, connector, *, token=None, secrets=None, settings=None) -> Bridge` — `token` or `secrets`, never both.
+- `update_bridge(bridge_id, *, allowed=None, require_mention=None, session_scope=None, paused=None, settings=None, etag=None) -> Bridge` — only what is passed is sent; `etag` becomes `If-Match`.
+- `replace_bridge_token(bridge_id, token)`, `replace_bridge_secrets(bridge_id, secrets) -> Bridge`.
+- `list_bridge_chats(bridge_id) -> BridgeChatList` — `manual_entry` when ids are typed.
+- `send_bridge_test_message(bridge_id, chat_id) -> BridgeTestResult`.
+- `get_bridge_avatar(bridge_id) -> BridgeAvatar` — the picture's bytes and `content_type`.
+- `delete_bridge(bridge_id) -> None`.
+
+`Bridge.status.reason` is one of `Setup`, `Starting`, `Connected`, `Paused`,
+`Unavailable`, `TokenMissing`, `TokenRejected`; `Bridge.hold.reason` is
+`plan_limit` or `account_suspended`. Values the SDK does not know yet are kept
+as sent.
+
 ### `AsyncThalovantClient`
 
 Async wrapper for asyncio applications. It mirrors the synchronous client with
@@ -647,7 +671,8 @@ Diagnostic report:
   repeats a value the body echoed back from the request. A structured refusal
   keeps its fields in `problem`: `refused_images`, `allowed_images` and
   `allowed_repositories` for `platform_image_required`; `resource`, `limit`,
-  `used` and `plan` for `plan_limit`.
+  `used` and `plan` for `plan_limit`. `fields` names what a refusal is
+  about (the settings or secrets of a chat app refusal), never their values.
 - `ThalovantIdentityError`
 - `ThalovantConnectionError`
 - `ThalovantTimeoutError`

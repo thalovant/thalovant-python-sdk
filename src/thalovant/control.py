@@ -15,7 +15,7 @@ from datetime import datetime
 import re
 import secrets
 import time
-from typing import Any, Awaitable, Callable, Coroutine, Iterable, Iterator, Literal, Mapping, TypeVar, cast
+from typing import Any, Awaitable, Callable, Coroutine, Iterable, Iterator, Literal, Mapping, Sequence, TypeVar, cast
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 import weakref
@@ -23,6 +23,24 @@ import webbrowser
 
 from . import _aiohttp
 from ._loop import LoopThread as _LoopThread
+from .chat_apps import (
+    MAX_BRIDGE_AVATAR_BYTES,
+    AllowedChatInput,
+    Bridge,
+    BridgeAvatar,
+    BridgeChatList,
+    BridgeNetworks,
+    BridgeSessionScope,
+    BridgeTestResult,
+    ChatAppConnector,
+    SecretInput,
+    bridge_create_body,
+    bridge_secrets_body,
+    bridge_token_body,
+    bridge_update_body,
+    bridges_from_payload,
+    connectors_from_payload,
+)
 from .errors import (
     ThalovantAdmissionFailedError,
     ThalovantAdmissionTimeoutError,
@@ -145,6 +163,25 @@ DEFAULT_HUB_SKILL_WAIT_TIMEOUT = 120.0
 
 #: Operation statuses after which the API will not move an operation again.
 _TERMINAL_OPERATION_STATUSES = frozenset({"ready", "failed", "timed_out"})
+
+
+#: The most bridges one ``GET /v1/bridges`` returns; it has no cursor.
+MAX_BRIDGE_LIST_LIMIT = 500
+
+
+def _bridge_path(bridge_id: str, *rest: str) -> str:
+    if not isinstance(bridge_id, str) or not bridge_id.strip():
+        raise ValueError("bridge_id must be a non-empty string.")
+    return "/".join(["/v1/bridges", quote(bridge_id, safe=""), *rest])
+
+
+def _filter_id(value: str | None, name: str) -> str | None:
+    """A list filter as sent; a blank one is refused, never silently dropped."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string when given.")
+    return value
 
 
 def _hub_skills_path(hub_id: str) -> str:
@@ -1854,6 +1891,220 @@ class AsyncThalovantControlPlane:
                 )
             await sleep(min(interval, remaining))
 
+    async def list_chat_app_connectors(self) -> list[ChatAppConnector]:
+        """The chat apps a bridge can connect to (``GET /v1/bridges/connectors``).
+
+        Each :class:`~thalovant.chat_apps.ChatAppConnector` carries its status
+        (``offered`` or ``beta``), setup steps and description in English and
+        French, the settings form (``config_schema``), the secrets it needs by
+        key, how its chats are named (``targets``), and whether a bridge can
+        be created for it now (``offered``). Hidden connectors are left out.
+
+        Requires ``hubs:read``.
+        """
+
+        return connectors_from_payload(await self._request("GET", "/v1/bridges/connectors"))
+
+    async def get_bridge_networks(self, hub_id: str | None = None) -> BridgeNetworks:
+        """The networks offered, and how many bridges the owner may still add.
+
+        With ``hub_id`` the allowance is the hub owner's -- bridges count
+        against the owner, whoever adds them -- and without it the caller's.
+        Free plans allow none. Read it before :meth:`create_bridge`.
+
+        Requires ``hubs:read``.
+        """
+
+        params = {"hub_id": _filter_id(hub_id, "hub_id")} if hub_id is not None else None
+        return BridgeNetworks.from_dict(await self._request("GET", "/v1/bridges/networks", params=params))
+
+    async def list_bridges(
+        self,
+        hub_id: str | None = None,
+        *,
+        owner_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[Bridge]:
+        """A hub's bridges, or (without ``hub_id``) every bridge the caller may see.
+
+        That is the caller's own, those of every tenant where they are a member
+        above basic, and all of them for a platform admin. ``owner_id`` narrows
+        the list to one owner. One answer holds at most ``limit`` bridges
+        (1--500, the API's default 200); there is no cursor.
+
+        Requires ``hubs:read``.
+        """
+
+        params: dict[str, Any] = {}
+        if hub_id is not None:
+            params["hub_id"] = _filter_id(hub_id, "hub_id")
+        if owner_id is not None:
+            params["owner_id"] = _filter_id(owner_id, "owner_id")
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_BRIDGE_LIST_LIMIT:
+                raise ValueError(f"limit must be an integer from 1 to {MAX_BRIDGE_LIST_LIMIT}")
+            params["limit"] = limit
+        return bridges_from_payload(await self._request("GET", "/v1/bridges", params=params or None))
+
+    async def get_bridge(self, bridge_id: str) -> Bridge:
+        """One bridge, with its status.
+
+        Requires ``hubs:read``.
+        """
+
+        return Bridge.from_dict(await self._request("GET", _bridge_path(bridge_id)))
+
+    async def create_bridge(
+        self,
+        hub_id: str,
+        connector: str,
+        *,
+        token: SecretInput | None = None,
+        secrets: Mapping[str, SecretInput] | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> Bridge:
+        """Connect a chat app to a hub. The bridge starts in ``setup``; nothing runs yet.
+
+        ``connector`` is a connector id from :meth:`list_chat_app_connectors`
+        (``telegram``, ``discord``, ``matrix``, ``mattermost``, ``twitch``).
+        Pass the credentials as ``token`` for a connector whose one secret is
+        its bot token (Telegram, Discord, Mattermost), or as ``secrets`` keyed
+        by the connector's secret keys (Matrix ``access_token``; Twitch
+        ``refresh_token`` and ``client_secret``) -- never both. ``settings``
+        are the non-secret ones its ``config_schema`` describes (a Matrix
+        ``homeserver``, a Twitch ``bot_login`` and ``client_id``).
+
+        Wrap credentials in :class:`~thalovant.chat_apps.SecretValue` to keep
+        them out of anything that prints; plain strings are accepted. They are
+        sent once, in this request's body, and never come back: the bridge
+        lists only the keys it holds (``secrets_set``).
+
+        Then choose the chats with :meth:`update_bridge` (``allowed``); the
+        first non-empty choice starts the bridge.
+
+        Requires a paid plan with room in its allowance
+        (:meth:`get_bridge_networks`) and ``hubs:write``. A plan refusal is a
+        :class:`ThalovantPlanError`; a settings or secrets refusal names what
+        it refused in ``ThalovantAPIError.fields``.
+        """
+
+        body = bridge_create_body(hub_id, connector, token=token, secrets=secrets, settings=settings)
+        return Bridge.from_dict(await self._request("POST", "/v1/bridges", json=body))
+
+    async def update_bridge(
+        self,
+        bridge_id: str,
+        *,
+        allowed: Sequence[AllowedChatInput] | None = None,
+        require_mention: bool | None = None,
+        session_scope: BridgeSessionScope | None = None,
+        paused: bool | None = None,
+        settings: Mapping[str, Any] | None = None,
+        etag: str | None = None,
+    ) -> Bridge:
+        """Choose the chats, the mention rule or the session scope; pause or resume.
+
+        Only what is passed is sent. ``allowed`` replaces the whole list of
+        chats the bridge answers in (never empty; the first choice starts a
+        bridge in setup); ``paused=True`` stops it and ``paused=False``
+        resumes it, which also ends a ``plan_limit`` hold once the plan has
+        room. ``settings`` are merged into the stored ones.
+
+        Pass the bridge's ``etag`` to refuse the change when the bridge
+        changed since it was read: a stale value fails with HTTP 412 and
+        nothing changes. The value comes only from the bridge's ``etag`` body
+        field.
+
+        Pausing is always allowed; anything else needs a paid plan, and
+        ``hubs:write``.
+        """
+
+        body = bridge_update_body(
+            allowed=allowed, require_mention=require_mention, session_scope=session_scope,
+            paused=paused, settings=settings,
+        )
+        headers = {"If-Match": etag} if etag is not None else None
+        return Bridge.from_dict(await self._request("PATCH", _bridge_path(bridge_id), json=body, headers=headers))
+
+    async def replace_bridge_token(self, bridge_id: str, token: SecretInput) -> Bridge:
+        """Replace the bot token, after it was reset; a running bridge restarts with it.
+
+        For a connector whose one secret is ``token``. Telegram and Discord
+        refuse a token of another bot (``bridge_token_other_bot``): connect
+        that bot as a new bridge. Requires ``hubs:write``.
+        """
+
+        return Bridge.from_dict(
+            await self._request("PUT", _bridge_path(bridge_id, "token"), json=bridge_token_body(token))
+        )
+
+    async def replace_bridge_secrets(self, bridge_id: str, secrets: Mapping[str, SecretInput]) -> Bridge:
+        """Replace some or all of a bridge's secrets (a Twitch refresh token, say).
+
+        Keys not sent stay as stored. A running bridge restarts with the new
+        values. Requires ``hubs:write``.
+        """
+
+        return Bridge.from_dict(
+            await self._request("PUT", _bridge_path(bridge_id, "secrets"), json=bridge_secrets_body(secrets))
+        )
+
+    async def list_bridge_chats(self, bridge_id: str) -> BridgeChatList:
+        """The chats or channels the bot can answer in, by name, to choose from.
+
+        Telegram lists only chats with recent activity, and only while the
+        bridge is stopped (``bridge_running`` otherwise: pause it first). For
+        a connector the API cannot list chats for, ``manual_entry`` is true
+        and the owner types the ids. Requires ``hubs:write``.
+        """
+
+        return BridgeChatList.from_dict(await self._request("GET", _bridge_path(bridge_id, "chats")))
+
+    async def send_bridge_test_message(self, bridge_id: str, chat_id: str) -> BridgeTestResult:
+        """Post a short "connected to <hub>" message in one allowed chat.
+
+        In the hub's language (French or English). Connectors without the
+        ``test_message`` helper answer 409 ``bridge_helper_unavailable``: start
+        the bridge and mention it in the chat instead. Requires ``hubs:write``.
+        """
+
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("chat_id must be a non-empty string.")
+        return BridgeTestResult.from_dict(
+            await self._request("POST", _bridge_path(bridge_id, "test"), json={"chat_id": chat_id})
+        )
+
+    async def get_bridge_avatar(self, bridge_id: str) -> BridgeAvatar:
+        """The bot's picture, as bytes the API serves itself.
+
+        HTTP 404 when the bot has none, or its connector has no ``avatar``
+        helper. Requires ``hubs:read``.
+        """
+
+        response = await self._send(
+            "GET", _bridge_path(bridge_id, "avatar"),
+            headers={"accept": "image/*"}, max_bytes=MAX_BRIDGE_AVATAR_BYTES,
+        )
+        if response.status_code < 200 or response.status_code >= 300:
+            raise _api_error(response)
+        content = getattr(response, "content", b"")
+        if not isinstance(content, (bytes, bytearray)):
+            raise ThalovantAPIError("Thalovant API returned an unreadable picture.", status_code=response.status_code)
+        if len(content) > MAX_BRIDGE_AVATAR_BYTES:
+            raise ThalovantAPIError("Thalovant API returned a picture larger than allowed.", status_code=response.status_code)
+        headers = getattr(response, "headers", None) or {}
+        content_type = headers.get("content-type") or headers.get("Content-Type") or "application/octet-stream"
+        return BridgeAvatar(content=bytes(content), content_type=str(content_type).split(";", 1)[0].strip())
+
+    async def delete_bridge(self, bridge_id: str) -> None:
+        """Stop and remove a bridge, and the credentials stored for it.
+
+        Pausing (``update_bridge(paused=True)``) keeps the bridge and its
+        credentials; deleting cannot be undone. Requires ``hubs:write``.
+        """
+
+        await self._request("DELETE", _bridge_path(bridge_id))
+
     async def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""
 
@@ -2219,6 +2470,7 @@ class AsyncThalovantControlPlane:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         auth: bool = True,
+        max_bytes: int | None = None,
     ) -> Any:
         request_headers = {
             "accept": "application/json",
@@ -2257,6 +2509,7 @@ class AsyncThalovantControlPlane:
             headers=request_headers,
             timeout=self.timeout,
             anonymous_plaintext=not has_credentials and parsed.scheme != "https" and not loopback,
+            **({"max_bytes": max_bytes} if max_bytes is not None else {}),
         )
         if 300 <= response.status_code < 400:
             raise ThalovantAPIError(
@@ -3197,6 +3450,85 @@ class ThalovantControlPlane:
         """
         return self._run(self._core.list_hub_skill_history(hub_id, limit=limit))
 
+    def list_chat_app_connectors(self) -> list[ChatAppConnector]:
+        """The chat apps a bridge can connect to. See :meth:`AsyncThalovantControlPlane.list_chat_app_connectors`."""
+        return self._run(self._core.list_chat_app_connectors())
+
+    def get_bridge_networks(self, hub_id: str | None = None) -> BridgeNetworks:
+        """The networks offered and the owner's allowance. See :meth:`AsyncThalovantControlPlane.get_bridge_networks`."""
+        return self._run(self._core.get_bridge_networks(hub_id))
+
+    def list_bridges(
+        self,
+        hub_id: str | None = None,
+        *,
+        owner_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[Bridge]:
+        """A hub's bridges, or every bridge the caller may see. See :meth:`AsyncThalovantControlPlane.list_bridges`."""
+        return self._run(self._core.list_bridges(hub_id, owner_id=owner_id, limit=limit))
+
+    def get_bridge(self, bridge_id: str) -> Bridge:
+        """One bridge, with its status. See :meth:`AsyncThalovantControlPlane.get_bridge`."""
+        return self._run(self._core.get_bridge(bridge_id))
+
+    def create_bridge(
+        self,
+        hub_id: str,
+        connector: str,
+        *,
+        token: SecretInput | None = None,
+        secrets: Mapping[str, SecretInput] | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> Bridge:
+        """Connect a chat app to a hub. See :meth:`AsyncThalovantControlPlane.create_bridge`."""
+        return self._run(
+            self._core.create_bridge(hub_id, connector, token=token, secrets=secrets, settings=settings)
+        )
+
+    def update_bridge(
+        self,
+        bridge_id: str,
+        *,
+        allowed: Sequence[AllowedChatInput] | None = None,
+        require_mention: bool | None = None,
+        session_scope: BridgeSessionScope | None = None,
+        paused: bool | None = None,
+        settings: Mapping[str, Any] | None = None,
+        etag: str | None = None,
+    ) -> Bridge:
+        """Choose the chats, the mention rule or the scope; pause or resume. See :meth:`AsyncThalovantControlPlane.update_bridge`."""
+        return self._run(
+            self._core.update_bridge(
+                bridge_id, allowed=allowed, require_mention=require_mention, session_scope=session_scope,
+                paused=paused, settings=settings, etag=etag,
+            )
+        )
+
+    def replace_bridge_token(self, bridge_id: str, token: SecretInput) -> Bridge:
+        """Replace the bot token. See :meth:`AsyncThalovantControlPlane.replace_bridge_token`."""
+        return self._run(self._core.replace_bridge_token(bridge_id, token))
+
+    def replace_bridge_secrets(self, bridge_id: str, secrets: Mapping[str, SecretInput]) -> Bridge:
+        """Replace some or all of a bridge's secrets. See :meth:`AsyncThalovantControlPlane.replace_bridge_secrets`."""
+        return self._run(self._core.replace_bridge_secrets(bridge_id, secrets))
+
+    def list_bridge_chats(self, bridge_id: str) -> BridgeChatList:
+        """The chats the bot can answer in. See :meth:`AsyncThalovantControlPlane.list_bridge_chats`."""
+        return self._run(self._core.list_bridge_chats(bridge_id))
+
+    def send_bridge_test_message(self, bridge_id: str, chat_id: str) -> BridgeTestResult:
+        """Post a test message in one allowed chat. See :meth:`AsyncThalovantControlPlane.send_bridge_test_message`."""
+        return self._run(self._core.send_bridge_test_message(bridge_id, chat_id))
+
+    def get_bridge_avatar(self, bridge_id: str) -> BridgeAvatar:
+        """The bot's picture. See :meth:`AsyncThalovantControlPlane.get_bridge_avatar`."""
+        return self._run(self._core.get_bridge_avatar(bridge_id))
+
+    def delete_bridge(self, bridge_id: str) -> None:
+        """Stop and remove a bridge. See :meth:`AsyncThalovantControlPlane.delete_bridge`."""
+        return self._run(self._core.delete_bridge(bridge_id))
+
     def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""
         return self._run(self._core.create_client(payload, idempotency_key=idempotency_key))
@@ -3735,10 +4067,12 @@ def _is_aiohttp_session(session: Any) -> bool:
 class _Response:
     """What the API answered, whichever HTTP library carried it."""
 
-    def __init__(self, status_code: int, text: str, headers: Mapping[str, str]) -> None:
+    def __init__(self, status_code: int, text: str, headers: Mapping[str, str], content: bytes = b"") -> None:
         self.status_code = status_code
         self.text = text
         self.headers = headers
+        #: The body's bytes, for a response read as bytes (a picture); else empty.
+        self.content = content
 
     def json(self) -> Any:
         import json
@@ -3790,6 +4124,7 @@ class _AiohttpSender:
         headers: Mapping[str, str],
         timeout: float,
         anonymous_plaintext: bool,
+        max_bytes: int | None = None,
     ) -> _Response:
         import aiohttp
 
@@ -3808,6 +4143,18 @@ class _AiohttpSender:
                 timeout=aiohttp.ClientTimeout(total=timeout),
                 **options,
             ) as response:
+                if max_bytes is not None:
+                    # Bytes, not text (a picture), read no further than allowed.
+                    buffer = bytearray()
+                    async for chunk in response.content.iter_chunked(64 * 1024):
+                        buffer += chunk
+                        if len(buffer) > max_bytes:
+                            raise ThalovantAPIError(
+                                "Thalovant API returned a body larger than allowed.", status_code=response.status
+                            )
+                    content = bytes(buffer)
+                    text = "" if 200 <= response.status < 300 else content.decode("utf-8", "replace")
+                    return _Response(response.status, text, response.headers, content)
                 text = await response.text()
                 return _Response(response.status, text, response.headers)
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as error:
@@ -3842,9 +4189,10 @@ class _BlockingSender:
         headers: Mapping[str, str],
         timeout: float,
         anonymous_plaintext: bool,
+        max_bytes: int | None = None,
     ) -> Any:
         try:
-            return self.session.request(
+            response = self.session.request(
                 method,
                 url,
                 json=json,
@@ -3855,7 +4203,11 @@ class _BlockingSender:
                 # An anonymous plaintext public request must not silently load
                 # credentials from netrc during Requests.prepare_request().
                 auth=(lambda prepared: prepared) if anonymous_plaintext else None,
+                **({"stream": True} if max_bytes is not None else {}),
             )
+            if max_bytes is None:
+                return response
+            return _bounded_response(response, max_bytes)
         except Exception as error:
             if type(error).__module__.split(".", 1)[0] in {"requests", "urllib3"} or isinstance(error, OSError):
                 # Requests error chains may contain URL credentials or query data.
@@ -3864,6 +4216,37 @@ class _BlockingSender:
 
     async def close(self) -> None:
         return None
+
+
+def _bounded_response(response: Any, max_bytes: int) -> Any:
+    """A streamed requests-style response read as bytes, no further than allowed.
+
+    A response object without ``iter_content`` has already read its body;
+    it is only measured.
+    """
+    chunks = getattr(response, "iter_content", None)
+    if chunks is None:
+        if len(getattr(response, "content", b"") or b"") > max_bytes:
+            raise ThalovantAPIError(
+                "Thalovant API returned a body larger than allowed.", status_code=response.status_code
+            )
+        return response
+    try:
+        buffer = bytearray()
+        for chunk in chunks(64 * 1024):
+            buffer += chunk
+            if len(buffer) > max_bytes:
+                raise ThalovantAPIError(
+                    "Thalovant API returned a body larger than allowed.", status_code=response.status_code
+                )
+        content = bytes(buffer)
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+    status = response.status_code
+    text = "" if 200 <= status < 300 else content.decode("utf-8", "replace")
+    return _Response(status, text, getattr(response, "headers", None) or {}, content)
 
 
 def _unreachable(error: BaseException) -> ThalovantAPIError:

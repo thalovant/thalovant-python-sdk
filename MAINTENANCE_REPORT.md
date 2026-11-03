@@ -1,6 +1,34 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Record the CodeRabbit follow-up sweep of merged PRs #81, #83 and #94.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields.
 
 # Maintenance Report
+
+## 2026-11-03 — Chat apps (0.10.0)
+
+**What changed:**
+
+- `src/thalovant/chat_apps.py` (new): the typed models of the chat apps routes (`ChatAppConnector`, `BridgeNetworks`, `BridgeAllowance`, `Bridge`, `BridgeStatus`, `BridgeHold`, `BridgeChatList`, `BridgeTestResult`, `BridgeAvatar` ...), the value sets (`BridgeStatusReason`, `BridgePhase`, `BridgeHoldReason` ...; unknown values kept as sent), `SecretValue`, and the request-body builders.
+- `src/thalovant/control.py`: twelve methods on `AsyncThalovantControlPlane` and `ThalovantControlPlane` for the owner routes under `/v1/bridges` (`list_chat_app_connectors`, `get_bridge_networks`, `list_bridges`, `get_bridge`, `create_bridge`, `update_bridge`, `replace_bridge_token`, `replace_bridge_secrets`, `list_bridge_chats`, `send_bridge_test_message`, `get_bridge_avatar`, `delete_bridge`). The senders can read a bounded binary body (`max_bytes`), for the avatar. Staff routes (`/v1/admin/chat-apps`) are not covered, as no other admin route is.
+- `src/thalovant/errors.py`: `ThalovantAPIError.fields`.
+- `contracts/sdk-parity.json`: a `chat-apps` capability (required for Python, Node, Go, Rust and MCP; not applicable to Kotlin, Swift and .NET, whose absence the API's impact records already state, and to embedded C), and the new reference digest `57c7e71f6456`.
+- Docs: `docs/guides/chat-apps.md`, `docs/reference/chat-apps.md`, `docs/api-reference.md`, README, CHANGELOG. Version 0.10.0.
+
+**Why:** the platform owner asked that the SDKs and the MCP server support chat apps, live in the API since 2026-11-03.
+
+**Review (CodeRabbit on #108):** fixed: `SecretValue` equality survives a lone surrogate; a mapping `allowed` entry with a blank id is refused locally like a blank string; a `SecretValue` nested anywhere in `settings` is refused locally; the requests-style sender streams the avatar and stops at `MAX_BRIDGE_AVATAR_BYTES`; `ThalovantAPIError(fields="name")` is one name; README, guide and quick facts examples define `hub_id`, guard an empty chat list and show the optional defaults. Declined: refusing an empty `allowed` locally (the API's 422 `bridge_allowed_required` is the contract and every port sends it through). The reference digest moved from `1e56099da5db` to `57c7e71f6456` with these fixes.
+
+**Verification:**
+
+- `python -m pytest -q`: 1376 passed, 1 skipped (50 new in `tests/test_chat_apps.py`, including a real aiohttp server for the avatar cap and `If-Match`).
+- `mypy` and `ruff check src tests scripts` clean; `python -m build` builds 0.10.0; `mkdocs build --strict` passes.
+- `scripts/check-sdk-parity.py` verifies the reference; with the workspace, every consumer is one reference behind until it records `57c7e71f6456` (expected during the rollout).
+- `scripts/generate-sdk-conformance.py --check` passes.
+- Every field and value the models declare was checked against the API's OpenAPI document of the deployed release.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (claude-opus-5-5), as a Claude Code agent.
+- **Actions Taken:** read the API's schemas and routes; wrote the module, the methods, the tests and the docs; updated the parity contract; coordinated the Node, Go, Rust and MCP ports.
+- **Oversight:** automated tests, hosted CI and the CodeRabbit review gate the merge; the platform owner's coordinating agent decides when it merges and releases.
 
 ## 2026-11-03: CodeRabbit follow-ups on merged PRs #81, #83 and #94
 
