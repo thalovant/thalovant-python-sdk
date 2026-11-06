@@ -96,7 +96,11 @@ Methods:
 - `login_with_browser(scopes=None, client_name=None, open_browser=True, prompt=None, timeout=900.0)`
 - `list_hubs(limit=100, cursor=None, owner_id=None)`
 - `list_public_hubs(limit=24, cursor=None)`
-- `get_hub(hub_id)`
+- `get_hub(hub_id)` — the hub resource. A public hub's listing review travels
+  on it: `listing_review_status` (`unreviewed`, `pending`, `approved` or
+  `rejected`), `listing_reviewed_at`, `listing_reviewed_by` and
+  `listing_review_note`. A hub made public waits in `pending` until an
+  administrator approves it, and `list_public_hubs` lists approved hubs only.
 - `get_public_hub(hub_ref)`
 - `get_operation(operation_id)`
 - `create_client(payload, idempotency_key=None)`
@@ -288,7 +292,13 @@ spellings, which are converted before the request is sent.
   `Marketplace skill not found.`; `"git"` requires `source_ref` to be a valid
   repository URL (HTTP 422 otherwise). Any other value is lower-cased,
   stripped, and stored as given, with `source_ref` defaulting to `skill_id`.
-  A deactivated catalog entry answers HTTP 409.
+  A deactivated catalog entry answers HTTP 409, and so does a store skill the
+  platform does not install for licensing reasons: HTTP 409
+  `skill_unavailable_licensing` with `reason: licensing` (YouTube, YouTube
+  Music, Spotify, SoundCloud and Bandcamp, whose terms do not allow a hosted
+  assistant to play their content). No plan, scope or version lifts it;
+  `list_marketplace_skills` announces it per skill as `unavailable_reason` and
+  `installable`.
 
   Two distinct HTTP 402s exist on this route: the plan-level API gate
   (`API access requires a paid plan.`) and a per-skill marketplace check
@@ -328,7 +338,11 @@ near the top of `thalovant/control.py`.
   answers HTTP 409 `skill_version_already_installed`. HTTP 404
   `hub_without_runtime_group` when the hub has no runtime group yet (a plain
   404 for an unknown hub), HTTP 422 for an unresolvable `"latest"` or an
-  invalid version.
+  invalid version, and HTTP 409 `skill_unavailable_licensing` (`reason:
+  licensing`) for a store skill the platform does not install because its
+  service's terms do not allow a hosted assistant to play its content (YouTube,
+  YouTube Music, Spotify, SoundCloud, Bandcamp); `list_marketplace_skills`
+  announces that per skill as `unavailable_reason` and `installable`.
 - `update_hub_skill(hub_id, skill, version=..., wait=False, timeout=120.0)` —
   `PATCH /v1/hubs/{hub_id}/skills/{skill}` with `{"version"}`, HTTP 202.
   `version` is required.
@@ -371,7 +385,12 @@ body as a `dict`, and omit query parameters that are `None`, blank, or `False`.
   `source_ref`, `package_name`, `compatibility`, `config_schema`,
   `secret_schema`) and the presentation and access fields (`title`, `summary`,
   `category`, `tags`, `verified`, `support_level`, `access_tier`,
-  `billing_sku`, `rating_average`, `is_active`). `owner_id` and
+  `billing_sku`, `rating_average`, `is_active`), and whether the store will
+  install the entry at all: `installable`, with `unavailable_reason`
+  (`licensing` for the media skills whose terms do not allow hosted playback)
+  when it will not; installing such a skill answers HTTP 409
+  `skill_unavailable_licensing`, and `GET /v1/public/skills` leaves it out.
+  `owner_id` and
   `include_inactive` apply to admin tokens only — the API **silently** scopes a
   non-admin caller to their own tenant and to active entries regardless of what
   is sent, rather than raising (contrast `list_runtime_groups`, which answers
