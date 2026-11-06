@@ -1,6 +1,22 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields; and record the CodeRabbit review-body sweep of merged PRs #19, #44, #78, #38, #53, #59 and #60.
+Last Edit: Claude Fable 5.1 - 2026-11-06 - Motive: Reference docs for the hub listing review, the marketplace availability fields and the 409 skill_unavailable_licensing refusal; record what the launch declarations still leave open.
 
 # Maintenance Report
+
+## 2026-11-06: the listing review and the store's licensing refusal, in the reference docs
+
+thalovant-api's launch data-protection declaration (`.changes/api-impact-launch-data-protection.yaml`, 2026-09-28) added `listing_review_status`, `listing_reviewed_at`, `listing_reviewed_by` and `listing_review_note` to the hub resource, `unavailable_reason` and `installable` to the marketplace entry, and the HTTP 409 `skill_unavailable_licensing` refusal to both skill-install routes. The SDK hands hubs and catalog entries back as the API's own mappings, so every field already reaches a caller unchanged, and a refusal already surfaces as `ThalovantAPIError` with its `code`; what was missing was any word of them in `docs/api-reference.md`. The entries for `get_hub`, `list_marketplace_skills`, `install_runtime_group_skill` and `install_hub_skill` now say what the fields and the refusal mean.
+
+**Changed:** `docs/api-reference.md` only. Nothing under `src/`: the docstrings of the same four methods can say the same when the next functional release touches `control.py`, because any `src/` change since the latest tag makes `auto-release.yml` cut a patch release, and a release for prose alone is not worth a version. The parity reference digest does not move.
+
+**Verification:** `python scripts/check-sdk-parity.py --workspace ..` verifies the reference and every consumer.
+
+**Not done here, by the later declarations' own reading:** the consumer-law billing calls (`withdrawals/me`, `cancellations/me`, `contracts`), `legal.versions()` and `auth.accept_terms()`, which `api-impact-launch-consumer-law.yaml` and `api-impact-launch-catalogue.yaml` asked for as follow-ups. `api-impact-billing-contract-country.yaml` (2026-09-29) and `api-impact-account-age-band.yaml` (2026-10-20) since record those routes as browser and dashboard actions no SDK wraps; the owner's decision closes or reopens them. The `ai_disclosure` string on `DeviceTokenResponse`, `NativeTokenResponse` and the identify payloads is the one launch field this SDK still drops (`ApiToken.from_dict` keeps five members); carrying it is a reference change every consumer re-reviews, so it waits for a round of its own.
+
+### Transparency Report
+
+- **AI Model:** Claude Fable 5.1 (Claude Code agent).
+- **Actions Taken:** Audited the SDKs and the MCP against thalovant-api's impact declarations; wrote the four reference entries and this note; ran the parity gate; opened the pull request.
+- **Oversight:** Run on the repository owner's request to bring the SDKs and MCP up to date with the platform's features; the pull request goes through the normal CI gates, and its merge waits for the owner.
 
 ## 2026-11-03: CodeRabbit review-body items on merged PRs #38, #53, #59 and #60
 
