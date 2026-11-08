@@ -1,6 +1,33 @@
-Last Edit: Claude Fable 5.1 - 2026-11-06 - Motive: Reference docs for the hub listing review, the marketplace availability fields and the 409 skill_unavailable_licensing refusal; record what the launch declarations still leave open.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review-body items on merged PRs #86 and #90, and a re-check of the earlier sweeps against current main.
 
 # Maintenance Report
+
+## 2026-11-08: CodeRabbit review-body items on merged PRs #86 and #90
+
+Two review-body items ("outside diff range" comments, which are not threads) had no answer. Each was checked against `main` bd4061f. The ten items on #19, #38, #44, #53, #59, #60 and #78 that the 2026-11-03 sweeps answered were checked again on the same commit, and each fix and test they cite is still in place.
+
+| Old PR | Item | Outcome |
+| :--- | :--- | :--- |
+| #86 | `scripts/check-sdk-parity.py`: reject non-object capability entries before the conformance comparison | Still valid; fixed here. A `null`, list, string or number entry raised `AttributeError` in `validate_consumer` (a known capability) or `compare_conformance` (one the reference does not know yet), and `check()` catches neither, so a whole-workspace run stopped at the first malformed consumer with a traceback. The new `acceptance_entries()` checks the manifest, `capabilities`, each entry and its `reason`, `implementation`, `tests` and `vectors` (and that every path and hash in them is a string), plus `reference_digests` (a string there was searched as text), and raises the gate's usual `ValueError`. `file_hash()` checks its argument's type before joining it to the checkout path. |
+| #90 | `intents.py`: include `listed_in` in `HubIntentInventory.as_dict()` | Already fixed in f8688da (#105, 0.9.7): `as_dict()` carries `"listed_in": list(self.listed_in)`. Covered by `tests/test_intents.py::test_the_serialised_inventory_says_which_language_it_listed_in`. |
+
+**Changed:** `scripts/check-sdk-parity.py` and `tests/test_sdk_parity_contract.py`. Nothing under `src/`, so the parity reference digest does not move and `auto-release.yml` finds no release path.
+
+**Verification:**
+
+- `python -m pytest -q`: 1397 passed, 1 skipped (1376 before, plus 21 new). `ruff check src tests scripts` and `mypy` pass.
+- The 21 new tests fail against the script on `main` (an uncaught `AttributeError` or `TypeError`, or the string `reference_digests` passing) and pass with the fix. Five of them come from CodeRabbit's review of this change: a path or hash that is not a string, and `file_hash()` given a number, `None` or a list.
+- `scripts/check-sdk-parity.py` verifies the reference, and `--workspace ... --consumer thalovant-node-sdk` verifies the Node consumer. All eight consumer manifests on `main` were read: every entry and field already has the shape the gate now requires, so no consumer changes outcome.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read every review-body item on the nine PRs and checked each against current code.
+  - Reproduced the #86 crash against a copy of the Node consumer.
+  - Wrote the shape check and its tests.
+  - Answered #86 and #90 on the old PRs.
+- **Oversight:** The work was done under the platform owner's instruction to close out every CodeRabbit finding. Hosted CI gates the merge. No release was cut.
 
 ## 2026-11-06: the listing review and the store's licensing refusal, in the reference docs
 

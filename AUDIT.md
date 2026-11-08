@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Chat apps (0.10.0): connectors, allowance, the /v1/bridges owner routes, SecretValue and ThalovantAPIError.fields; and add the review-body sweeps of merged PRs #19, #44, #78, #38, #53, #59 and #60 to the closed findings.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Close the parity gate's crash on a malformed consumer acceptance (CodeRabbit on #86), and record the #90 item as fixed since #105.
 
 # Audit
 
@@ -17,6 +17,8 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1326 passed, 1 
 - **Covered by:** `tests/test_wss_end_to_end.py::test_a_sync_handler_runs_off_the_loop_and_may_call_the_client_mid_turn` asserts that a WSS handler runs on `thalovant-handlers`.
 
 ## Closed in this sweep
+
+- **The parity gate stopped on a consumer acceptance of the wrong shape (2026-11-08, CodeRabbit on #86).** `scripts/check-sdk-parity.py` `validate_consumer` and `compare_conformance` read a consumer's manifest and each capability entry with `.get`. A `null`, list, string or number there raised `AttributeError`, which `check()` does not catch, so a whole-workspace run ended in a traceback and the consumers after the malformed one went unchecked. A string `reference_digests` was searched as text, so one that merely contained the current digest passed. `acceptance_entries()` now checks those shapes, and that every evidence path and hash is a string, and raises the gate's usual `ValueError`. `file_hash()` checks its argument's type before `root / name`, which raised `TypeError` for a number or a list. `tests/test_sdk_parity_contract.py::test_an_acceptance_entry_that_is_not_an_object_is_a_controlled_error`, `::test_an_acceptance_field_of_the_wrong_shape_is_a_controlled_error`, `::test_an_acceptance_of_the_wrong_shape_is_a_controlled_error` `::test_one_malformed_consumer_does_not_stop_the_workspace_run` and `::test_evidence_that_is_not_a_path_is_a_controlled_error` fail without it. The other item without an answer, `listed_in` in `HubIntentInventory.as_dict()` (#90), was already fixed in f8688da (#105).
 
 - **Review-body items on #38, #53, #59 and #60 (2026-11-03).** All four were fixed before their PRs merged, and each is covered by a test listed in [MAINTENANCE_REPORT.md](MAINTENANCE_REPORT.md). One test did not pin the fix it covered. `test_create_client_identity_drops_a_callers_legacy_crypto_key` checked only `cryptoKey` and `crypto_key`, so reverting the normalized match in `control.py` 1906-1910 to two exact `pop`s passed. It now also sends `Crypto-Key`, `CRYPTO_KEY` and `cryptokey`. No open issue came out of these items.
 
