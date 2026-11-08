@@ -791,3 +791,21 @@ def test_draining_a_connection_is_bounded(monkeypatch: pytest.MonkeyPatch) -> No
             await listener.close()
 
     assert asyncio.run(run()) == 0
+
+
+def test_every_secret_is_written_the_same_way_percent_encoded() -> None:
+    """The scrub matches a secret however a URL or form would encode it, because
+    nothing in one needs encoding: the verifier and the state are base64url, and
+    the API mints codes with ``secrets.token_urlsafe``. All RFC 3986 unreserved.
+    """
+
+    import secrets as randomness
+    from urllib.parse import quote, quote_plus
+
+    from thalovant.control import _scrub
+
+    for _ in range(200):
+        for secret in (new_verifier(), new_state(), randomness.token_urlsafe(32)):
+            assert quote(secret, safe="") == secret == quote_plus(secret)
+            encoded = f"echo: {quote(secret, safe='')} and {quote_plus(secret)}"
+            assert secret not in _scrub(encoded, (secret,))
