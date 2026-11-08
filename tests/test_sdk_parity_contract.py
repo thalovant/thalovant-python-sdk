@@ -420,3 +420,82 @@ def test_a_consumer_is_judged_on_what_it_produced_not_what_it_declared(tmp_path)
         parity.compare_conformance(
             "consumer", reference,
             _results(tmp_path, {"schema_version": 1, "results": stale}), [])
+
+
+def _rewrite_acceptance(root, change):
+    path = root / parity.MANIFEST
+    acceptance = json.loads(path.read_text())
+    acceptance = change(acceptance)
+    path.write_text(json.dumps(acceptance))
+
+
+@pytest.mark.parametrize("shape", [None, [], "required", 7])
+@pytest.mark.parametrize("name", ["feature", "future-capability"])
+def test_an_acceptance_entry_that_is_not_an_object_is_a_controlled_error(consumer, name, shape):
+    """A ``null`` or a list where an entry belongs reached ``.get``.
+
+    ``check`` does not catch ``AttributeError``, so the gate died with a
+    traceback, for a capability the reference knows and for one it does not
+    know yet, instead of reporting the manifest (CodeRabbit, #86).
+    """
+
+    contract, root = consumer
+
+    def change(acceptance):
+        acceptance["capabilities"][name] = shape
+        return acceptance
+
+    _rewrite_acceptance(root, change)
+    with pytest.raises(ValueError, match=f"consumer/{name}: the acceptance must be an object"):
+        parity.validate_consumer(contract, root, "consumer", [])
+    # compare_conformance reads the same declaration on its own.
+    results = {"shared-vectors.json": {"digest": "0" * 64, "cases": {}}}
+    with pytest.raises(ValueError, match="the acceptance must be an object"):
+        parity.compare_conformance("consumer", results, root, [])
+
+
+@pytest.mark.parametrize("field, value, message", [
+    ("reason", ["Ported"], "reason must be a string"),
+    ("implementation", ["src/code.txt"], "implementation must be an object"),
+    ("tests", "tests/test.txt", "tests must be an object"),
+    ("vectors", ["shared-vectors.json"], "vectors must be an object"),
+])
+def test_an_acceptance_field_of_the_wrong_shape_is_a_controlled_error(consumer, field, value, message):
+    contract, root = consumer
+
+    def change(acceptance):
+        acceptance["capabilities"]["feature"][field] = value
+        return acceptance
+
+    _rewrite_acceptance(root, change)
+    with pytest.raises(ValueError, match=message):
+        parity.validate_consumer(contract, root, "consumer", [])
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda acceptance: [acceptance], "must be a JSON object"),
+    (lambda acceptance: {**acceptance, "capabilities": list(acceptance["capabilities"])},
+     "capabilities must be an object"),
+    # Searched as text, a string that merely contained the digest passed.
+    (lambda acceptance: {**acceptance, "reference_digests": "old " + acceptance["reference_digests"][0]},
+     "reference_digests must be a list"),
+])
+def test_an_acceptance_of_the_wrong_shape_is_a_controlled_error(consumer, change, message):
+    contract, root = consumer
+    _rewrite_acceptance(root, change)
+    with pytest.raises(ValueError, match=message):
+        parity.validate_consumer(contract, root, "consumer", [])
+
+
+def test_one_malformed_consumer_does_not_stop_the_workspace_run(reference, tmp_path):
+    workspace = tmp_path / "ws"
+    contracts = workspace / "thalovant-node-sdk" / "contracts"
+    contracts.mkdir(parents=True)
+    (contracts / "sdk-parity.json").write_text(json.dumps({
+        "schema_version": 1, "reference_digests": [], "capabilities": {"future": None}}))
+    errors = parity.check(reference, workspace)
+    # Every consumer is still reported: the malformed one for its shape, the
+    # missing ones for their missing manifests.
+    assert len(errors) == 8
+    assert any("thalovant-node-sdk/future: the acceptance must be an object, not null" in error
+               for error in errors)

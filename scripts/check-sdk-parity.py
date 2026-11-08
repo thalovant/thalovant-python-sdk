@@ -300,12 +300,51 @@ def validate_reference(reference):
     return manifest
 
 
+#: How a parsed JSON value's type is named in an error about a wrong shape.
+_JSON_TYPE_NAMES = {type(None): "null", list: "a list", str: "a string",
+                    bool: "a boolean", int: "a number", float: "a number"}
+
+
+def acceptance_entries(acceptance, repo):
+    """A consumer acceptance's capability entries, once its shape is checked.
+
+    Every rule reads the acceptance and its entries with ``.get``, so a
+    ``null``, a list or a string in their place raised ``AttributeError``,
+    which ``check`` does not catch: one malformed manifest stopped a
+    whole-workspace run with a traceback, and every consumer after it went
+    unchecked. A wrong shape is now the controlled error any other bad
+    acceptance gets. ``reference_digests`` must be a list too: a string there
+    was searched as text, so one that merely contained the digest passed.
+    """
+
+    if not isinstance(acceptance, dict):
+        raise ValueError(f"{repo}: {MANIFEST} must be a JSON object")
+    recorded = acceptance.get("reference_digests", [])
+    if not isinstance(recorded, list) or not all(isinstance(value, str) for value in recorded):
+        raise ValueError(f"{repo}: reference_digests must be a list of digests")
+    entries = acceptance.get("capabilities", {})
+    if not isinstance(entries, dict):
+        raise ValueError(f"{repo}: capabilities must be an object of capability name to acceptance")
+    for name, entry in entries.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"{repo}/{name}: the acceptance must be an object, not "
+                             f"{_JSON_TYPE_NAMES.get(type(entry), type(entry).__name__)}")
+        if not isinstance(entry.get("reason", ""), str):
+            raise ValueError(f"{repo}/{name}: reason must be a string")
+        for kind in ("implementation", "tests", "vectors"):
+            if not isinstance(entry.get(kind, {}), dict):
+                raise ValueError(f"{repo}/{name}: {kind} must be an object of file to "
+                                 f"{'path' if kind == 'vectors' else 'hash'}")
+    return entries
+
+
 def validate_consumer(reference_manifest, root, repo, planned):
     """Check one consumer's acceptance; True when it acknowledges the current reference.
 
     False means it is one published reference behind, which *planned* reports.
     """
     acceptance = read(root / MANIFEST)
+    entries = acceptance_entries(acceptance, repo)
     expected = digest(reference_manifest["reference"])
     if acceptance.get("schema_version") != 1:
         raise ValueError(f"{repo}: unsupported acceptance schema")
@@ -327,7 +366,6 @@ def validate_consumer(reference_manifest, root, repo, planned):
                        f"{expected[:12]}")
         return False
     capabilities = reference_manifest["capabilities"]
-    entries = acceptance.get("capabilities", {})
     unknown = sorted(set(entries) - set(capabilities))
     if unknown:
         # Declaring a capability the reference does not have cannot weaken
@@ -464,7 +502,7 @@ def compare_conformance(repo, reference_results, root, planned):
         # read, so reaching here means a caller passed a bare directory.
         declaration = {}
     declared = set()
-    for capability in (declaration.get("capabilities") or {}).values():
+    for capability in acceptance_entries(declaration, repo).values():
         # Only what the consumer says it implements. A vector named under an
         # entry it has justified as planned or not-applicable is not evidence
         # it owes -- and a legacy vector left in such an entry would otherwise
