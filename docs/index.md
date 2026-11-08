@@ -1,3 +1,5 @@
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign in with interactive_login() (browser sign-in, 0.11.0). -->
+
 # Thalovant Python SDK
 
 Build Python clients and agents that connect directly to Thalovant hubs.
@@ -10,7 +12,7 @@ pip install thalovant
 from thalovant import ThalovantClient, ThalovantControlPlane
 
 api = ThalovantControlPlane()
-api.login("you@example.com", "password")
+api.interactive_login()  # the browser here, or a device code where there is none
 
 result = api.create_client_identity("hub-id", name="python-demo-client")
 

@@ -89,6 +89,52 @@
         "binary-frames.json"
       ]
     },
+    "browser-login": {
+      "description": "Browser sign-in for a program on a machine with a browser: the authorization code grant with PKCE (S256 only, RFC 7636) on a loopback redirect (RFC 8252 section 7.3), which, unlike a device code, cannot be relayed to somebody else. The SDK reads GET /v1/auth/native/config (no auth; a 404 is an API without browser sign-in, and an answer it cannot safely use is an error with no status), binds 127.0.0.1 on port 0 before building the URL, and opens {authorization_endpoint} with response_type=code, client_id (the configuration's sdk_client_id, thalovant-sdk), redirect_uri exactly http://127.0.0.1:<port>/callback, code_challenge, code_challenge_method=S256, state (at least 128 random bits), scope (left out when no scope is asked for) and device_name (at most 120 code points), in that order and RFC 3986 percent-encoded, and always prints the URL as well. The listener serves only GET /callback, anything else 404; a missing, repeated or wrong state (compared in constant time) is 400 and the wait goes on; the first callback with the right state is accepted and the port stops listening. error=access_denied is denied, any other error or no single code is a failed sign-in with no status, and a code is exchanged with POST {token_endpoint} carrying exactly code, code_verifier, client_id and redirect_uri. The accepted tab is answered once the sign-in has ended, with a self-contained page ('Signed in to Thalovant. You can close this tab.' or 'Sign-in was not completed.') sent no-store and no-referrer. No callback within the timeout (default 300 s) is expired; a refused exchange carries the api-errors fields (400 invalid_grant), and a 2xx that is not a JSON object with an access_token is an error with no status. The token is kept exactly as a device login's (access_token and token_id) and revokes itself the same way. The interactive login signs in through the browser when the machine can show one (never with CI, SSH_CONNECTION or SSH_TTY set; macOS and Windows yes; elsewhere only with DISPLAY or WAYLAND_DISPLAY) and the configuration is usable, with a device login otherwise; either can be forced, and once the browser is opened its outcome stands. Device login is unchanged. The code, the verifier, the state and the token never appear in an error.",
+      "files": [
+        "src/thalovant/_loopback.py",
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py",
+        "src/thalovant/native_auth.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client; the caller owns every request it would make, and every socket it would listen on.",
+          "status": "not-applicable"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        }
+      },
+      "tests": [
+        "tests/test_browser_login_vectors.py",
+        "tests/test_browser_login.py"
+      ],
+      "vectors": [
+        "browser-login-vectors.json"
+      ]
+    },
     "chat-apps": {
       "description": "Chat apps (managed chat bridges): the connector catalog (GET /v1/bridges/connectors: status, setup steps in en/fr, settings form, secrets by key, targets, options, helpers, offered, version), the networks offered with the owner's allowance (GET /v1/bridges/networks, hub_id optional), and every owner route under /v1/bridges -- list (hub_id, owner_id, limit 1-500; a blank filter refused, never dropped), create (token or secrets, never both, plus settings), get, patch (only the fields set; If-Match only when an etag is given), replace token, replace secrets, chats (manual_entry), test message, avatar bytes (bounded) and delete -- as typed models whose status reason, phase, source, state, session scope and hold reason keep any value the API sends; credentials only as a redacting SecretValue, never in a repr, an error or a log; and a refusal's fields (the settings or secrets it names) on the API error beside its code.",
       "files": [
@@ -801,6 +847,7 @@
       "api-error-vectors.json": "0800a7ab94a28cb49d44cd022b37c3444d4778af2003fc028f70e38f747c3eb0",
       "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
       "binary-vectors.json": "0660c8c368f192764fa761a1b5b787536e81793664c75ba3b1ff8ffe800a74fc",
+      "browser-login-vectors.json": "d0996dbe451aacfc94a69d5b2e1d01edc62b61292b440c1c6a7e09d5b1617707",
       "connection-admission-vectors.json": "a190ebe48fd28d0dc0db0927418ee8d4d2e1a0845580d91c81ed52c75568eec4",
       "connection-kinds-vectors.json": "87a0b76dbfd8b45e43b0e1685fb8271517cb1c6c0e0ea6b589f30406d4ca86a4",
       "conversation-vectors.json": "b0fb7576dfad247b3afff168d33ad6d7681b1d9833f87d3e284bbe236e755bf4",
@@ -834,12 +881,13 @@
       "requires-python": ">=3.10"
     },
     "files": {
-      "src/thalovant/__init__.py": "31458f6961108d7776506c13fa7d39608947b273f1c5e336261ab5edde410b9a",
+      "src/thalovant/__init__.py": "1e174d68342c79132d4ee694cb7e26b7e77cff74877216c042ee16a0089746c1",
       "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
       "src/thalovant/_hive.py": "717d48525fbd6210ff701f23a2fa0a495954e5e4c396fb4e6811b7f7120270e6",
       "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
       "src/thalovant/_link.py": "1b483dfca852f73d1e1797cfc6f82bc9596952f2efe6dd865377026fbc902470",
       "src/thalovant/_loop.py": "88ad7c593f4bb548a74fcf09dcc2fc6ded4afdcfd0f61de5166a61bd885cfbbc",
+      "src/thalovant/_loopback.py": "5e99f418fea22fbd5dca107caca931bd4f93738cf26be2fc105654e0540abcce",
       "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
       "src/thalovant/_noise_runtime.py": "5586628a803fc58f3fe9ca2f2674a7c00633cc208c47846ed77f66d3fb378473",
       "src/thalovant/_wire.py": "f6e589b234ca8a1f369a0d82ccc89bb2bdc95bdad7a140ffd16a7fdd46fef0e7",
@@ -849,7 +897,7 @@
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "83fca864c2038f18fe09b1e1a893a97f1e066b2297bcc92094b8dffb1a4cd78e",
+      "src/thalovant/control.py": "d4184574556236ab79047d6bb978fdfb565323c9872956a3ad1b59e8c78179b7",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "3a0f18ff6d1a41cf6bed3baece13f4656f2cfc3ba87f12023c94e47e26ba70e8",
       "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
@@ -860,7 +908,7 @@
       "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
       "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
       "src/thalovant/models.py": "029daed0271aa321ceb8e3d5f94541c0f43152eaeaf32146f68f053248ae660c",
-      "src/thalovant/native_auth.py": "86f04a39d04aedc580101d72fc4100b65da168d920d05f1b08de2dea91bf8aa8",
+      "src/thalovant/native_auth.py": "463f614392e74376ae1e44c7cce412564f4d75a4c86cc8ed9fbef3813f3990a2",
       "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
       "src/thalovant/rich.py": "7b4046ead3abca687e7cd353e653ced2e60b66f6d0b8b776367e8172fe218beb",
       "src/thalovant/session.py": "39813d00a928ede9bbeaf23bfbe4c5f0df8a19a60afd5ded6d5f176a60bdf3f5",
@@ -913,7 +961,8 @@
     "600b10e7e159f6ca9c1d59d7f2a4103c2e1c66a0894b587e0224e4d9c0e66bd1",
     "5b973a65ab583082069afaa67e2baf7257cbc4950a89460c9912851821258d16",
     "1e56099da5dba82b48fb83b27e53192f3cd70e7d0f5a9c4f94bb08948e45a1d6",
-    "57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9"
+    "57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9",
+    "49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b"
   ],
   "schema_version": 1
 }

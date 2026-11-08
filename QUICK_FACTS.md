@@ -1,11 +1,11 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Create the quick facts with the 0.10.0 chat apps surface.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): version, sign-in methods, the browser-login capability and its vectors.
 
 # Quick facts: thalovant (Python SDK)
 
 | Fact | Value |
 | :--- | :--- |
 | Package | `thalovant` on PyPI |
-| Version | 0.10.0 (`pyproject.toml`, `src/thalovant/_version.py`) |
+| Version | 0.11.0 (`pyproject.toml`, `src/thalovant/_version.py`) |
 | Python | 3.10+ |
 | Role | Reference implementation for the SDK parity contract (`contracts/sdk-parity.json`) |
 | Entry points | console script `thalovant` (`thalovant.cli:main`); import `thalovant` |
@@ -13,6 +13,24 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Create the quick facts with th
 | Control plane | `ThalovantControlPlane`, `AsyncThalovantControlPlane` (`src/thalovant/control.py`) |
 | Errors | `ThalovantAPIError` (`status_code`, `code`, `detail`, `problem`, `fields`), `ThalovantPlanError`, `ThalovantAuthError` (`src/thalovant/errors.py`) |
 | Release | merge to `main` with a new version -> `auto-release.yml` tags and dispatches `publish.yml` (PyPI trusted publishing) |
+| Parity reference digest | `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (0.11.0 candidate; `57c7e71f6456...` on 0.10.0) |
+
+## Sign-in (0.11.0)
+
+| Method | What it does |
+| :--- | :--- |
+| `interactive_login(method="auto", scopes=None, device_name=None, open_browser=True, timeout=None)` | Browser sign-in when `can_open_browser()` and `GET /v1/auth/native/config` is usable, device login otherwise; `"browser"`/`"device"` force one |
+| `browser_login(scopes=None, device_name=None, open_browser=True, timeout=300.0, prompt=None)` | PKCE (S256) on `http://127.0.0.1:<port>/callback`, client `thalovant-sdk`, exchange `POST /v1/auth/native/token` |
+| `login_with_browser(...)`, `begin_device_login`, `poll_device_login` | Device login (RFC 8628), unchanged |
+| `login(email, password, ...)` | Password sign-in, unchanged |
+
+| Fact | Value |
+| :--- | :--- |
+| Capability | `browser-login` in `contracts/sdk-parity.json` (scope matrix of `device-login`; embedded-c not applicable) |
+| Vectors | `contracts/conformance/browser-login-vectors.json` (98 cases), run by `tests/test_browser_login_vectors.py` |
+| Code | `src/thalovant/control.py` (`browser_login`, `interactive_login`), `src/thalovant/native_auth.py` (URL, redirect, state, config, browser rule), `src/thalovant/_loopback.py` (listener) |
+| Errors | `ThalovantDeviceLoginDenied` (denied), `ThalovantDeviceLoginExpired` (timeout, 300 s default), `ThalovantAPIError` (`invalid_grant`, config 404) |
+| Porting brief | `docs/browser-login-porting.md` |
 
 ## Chat apps (0.10.0)
 

@@ -1,3 +1,5 @@
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (browser_login, interactive_login) and the native_auth helpers, 0.11.0. -->
+
 # API Reference
 
 This is a concise reference for the public SDK surface. For generated API docs,
@@ -93,6 +95,8 @@ Authenticated helper for the Thalovant API.
 Methods:
 
 - `login(email, password, scope=None, otp_code=None, recovery_code=None)`
+- `interactive_login(method="auto", scopes=None, device_name=None, open_browser=True, timeout=None)`
+- `browser_login(scopes=None, device_name=None, open_browser=True, timeout=300.0, prompt=None)`
 - `login_with_browser(scopes=None, client_name=None, open_browser=True, prompt=None, timeout=900.0)`
 - `list_hubs(limit=100, cursor=None, owner_id=None)`
 - `list_public_hubs(limit=24, cursor=None)`
@@ -144,6 +148,77 @@ Skills on one hub:
 
 MFA-enabled accounts must pass a TOTP `otp_code` or a one-time `recovery_code`
 to `login(...)`; without one the API rejects the login with `mfa_required`.
+
+`interactive_login` signs a person in the best way the machine allows. With
+`method="auto"` (the default) it uses `browser_login` when the machine can show
+a browser and the API offers browser sign-in, and `login_with_browser` (device
+login) otherwise. `thalovant.native_auth.can_open_browser()` decides the first
+part:
+
+- never with `CI`, `SSH_CONNECTION` or `SSH_TTY` set;
+- otherwise always on macOS and Windows;
+- elsewhere only with `DISPLAY` or `WAYLAND_DISPLAY` set.
+
+A variable counts only when it has a value. The second part is whether
+`GET /v1/auth/native/config` answers with something usable; a 404 means an
+older API.
+
+`method="browser"` or `method="device"` forces one. Once the browser has been
+opened, the browser sign-in's outcome stands and no device login follows.
+`device_name` becomes the device login's `client_name`. `timeout=None` means
+300 seconds for the browser and 900 for a device login. It returns the token
+answer, as both methods do.
+
+`browser_login` is the authorization code grant with PKCE on a loopback
+redirect (RFC 7636 S256, RFC 8252):
+
+1. It reads the dashboard's consent page and the token path from
+   `GET /v1/auth/native/config`.
+2. It binds `127.0.0.1` on a port the system picks.
+3. It prints `Opening your browser to sign in to Thalovant. If it does not
+   open, visit:` followed by the URL, and opens the browser at
+   `{authorization_endpoint}?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A<port>%2Fcallback&code_challenge=…&code_challenge_method=S256&state=…&scope=…&device_name=…`.
+   Pass `prompt` (a callable receiving the URL) to show it yourself, or
+   `open_browser=False` to only print it.
+4. It waits for the browser to come back to `/callback`.
+5. It exchanges the code with `POST /v1/auth/native/token`, sending `code`,
+   `code_verifier`, `client_id` and `redirect_uri`.
+
+How it handles what comes back:
+
+- **Other requests.** The listener answers only `GET /callback`; anything else
+  is a 404.
+- **Another sign-in's state.** A callback with a missing or wrong `state` is a
+  400, and the wait goes on.
+- **The accepted callback.** The first callback with the right state ends the
+  listening. Its tab gets `Signed in to Thalovant. You can close this tab.` or
+  `Sign-in was not completed.` once the sign-in has ended.
+- **The token.** It is stored like a device login's: `access_token` and
+  `token_id` are set, and `revoke_api_token()` revokes it the same way.
+- **Errors.**
+  - Denied in the browser raises `ThalovantDeviceLoginDenied`.
+  - No answer within `timeout` seconds (default 300) raises
+    `ThalovantDeviceLoginExpired`.
+  - A refused exchange raises `ThalovantAPIError` with status 400 and
+    `detail` `invalid_grant`.
+  - An API without browser sign-in raises `ThalovantAPIError` with status 404.
+
+  The code, the verifier, the state and the token never appear in an error.
+  An API URL that is neither https nor loopback is refused before anything is
+  sent. `scopes` left out (or empty) asks for the API's default, `hubs:read
+  clients:write`. `device_name` defaults to `thalovant-python-sdk on
+  <hostname>`, at most 120 characters.
+
+`thalovant.native_auth` has the pieces, each checked against
+`contracts/conformance/browser-login-vectors.json`:
+
+- `browser_authorization_url(...)`
+- `loopback_redirect_uri(port)`
+- `new_state()`
+- `NativeSignInConfig.from_dict(...)`
+- `can_open_browser(environ=None, platform=None)`
+- `default_device_name()`
+- the constants `SDK_CLIENT_ID` and `DEFAULT_BROWSER_LOGIN_TIMEOUT`
 
 `login_with_browser` signs in accounts that have no password (for example
 Google sign-in) with an RFC 8628-style device flow. It requests a device

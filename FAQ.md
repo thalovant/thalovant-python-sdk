@@ -1,6 +1,28 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Create the FAQ with chat apps questions.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in questions (0.11.0).
 
 # FAQ: thalovant (Python SDK)
+
+**How do I sign in without a password?**
+`api.interactive_login()`. On a machine with a browser it opens the Thalovant consent page and waits for the browser to come back to `127.0.0.1` (browser sign-in, `browser_login()`). Elsewhere it prints a device code to approve from any browser (`login_with_browser()`).
+
+**Why did `interactive_login()` print a code instead of opening my browser?**
+One of these holds: `CI`, `SSH_CONNECTION` or `SSH_TTY` is set; you are on Linux with neither `DISPLAY` nor `WAYLAND_DISPLAY`; or the API answered `GET /v1/auth/native/config` with a 404 (an API without browser sign-in) or something unusable. `thalovant.native_auth.can_open_browser()` tells you the first part. `interactive_login(method="browser")` forces the browser.
+
+**The browser did not open. What now?**
+Open the address the SDK printed (`Opening your browser to sign in to Thalovant. If it does not open, visit:`) in a browser on the same computer. The sign-in waits 300 seconds (`timeout=`).
+
+**Can I approve a browser sign-in from my phone?**
+No. That is the point of it: the browser that approves delivers the code to its own computer's `127.0.0.1`. To approve from another device, use `interactive_login(method="device")`.
+
+**What does "This answer does not belong to the sign-in in progress." mean in a tab?**
+That tab came back with another sign-in's `state`, for example an old attempt. The sign-in in progress keeps waiting for its own tab.
+
+**Does a browser sign-in token behave like a device login token?**
+Yes. Both are API tokens that last 365 days, are listed in the dashboard and count against the plan. Each sets `access_token` and `token_id`, and `revoke_api_token()` revokes either one the same way.
+
+**Why do I get `invalid_grant` after approving?**
+The code was not exchanged within 60 seconds, or it was already used. Codes are single-use, and presenting one twice revokes the token it minted. Start the sign-in again; never retry the exchange.
+
 
 **How do I connect a Telegram bot to a hub?**
 `api.create_bridge(hub_id, "telegram", token=SecretValue(token))`, then `api.list_bridge_chats(bridge.id)` and `api.update_bridge(bridge.id, allowed=[...])`. The first non-empty `allowed` starts the bridge. See `docs/guides/chat-apps.md`.

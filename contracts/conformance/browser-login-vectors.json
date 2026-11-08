@@ -1,0 +1,2779 @@
+{
+  "schema_version": 1,
+  "description": "Browser sign-in: the OAuth authorization code grant with PKCE (RFC 7636, S256 only) on a loopback redirect (RFC 8252 section 7.3), for a program on a machine with a browser; device login stays the fallback for machines with none. The SDK reads GET /v1/auth/native/config (no auth); a 404 means an API without browser sign-in, and an answer it cannot safely use is an error with no status. It binds 127.0.0.1 on port 0 before building the URL, opens {authorization_endpoint}?response_type=code&client_id=&redirect_uri=&code_challenge=&code_challenge_method=S256&state=&scope=&device_name= (that order, RFC 3986 percent-encoding, a space as %20; scope left out when no non-empty scope is asked for, device_name cut to 120 code points and left out when empty) and always prints the URL too. redirect_uri is exactly http://127.0.0.1:<port>/callback. The listener serves only GET /callback (anything else 404); a callback whose state is missing, repeated or not this sign-in's (compared in constant time) is 400 and the wait goes on; the first callback with the right state is accepted and the port stops listening. error=access_denied is denied, any other error (it wins over a code) or no single non-empty code is a failed sign-in with no status, and a code is exchanged with POST {token_endpoint} carrying exactly code, code_verifier, client_id and redirect_uri. The accepted tab gets its page once the sign-in has ended: 'Signed in to Thalovant. You can close this tab.' on success, 'Sign-in was not completed.' otherwise, with the page_headers on every answer. No accepted callback within the timeout (default 300 s) is expired; a failed exchange carries the api-errors fields (400 invalid_grant), and a 2xx that is not a JSON object with an access_token is an error with no status. The token is kept as a device login's is (access_token and token_id) and revokes itself the same way. The chooser signs in through the browser when the machine has one (never with CI, SSH_CONNECTION or SSH_TTY set; macOS and Windows yes; elsewhere only with DISPLAY or WAYLAND_DISPLAY; an empty variable is not set) and the configuration is usable, with a device login otherwise; 'browser' and 'device' force one, and once the browser is opened its outcome stands. The code, the verifier, the state and the token never appear in an error.",
+  "source": "thalovant-api app/routes/auth_native.py (native_sign_in_config, native_token), app/auth/native_clients.py (thalovant-sdk, is_loopback_callback); thalovant-frontend src/utils/native-authorization.ts; RFC 7636 section 4 and Appendix B; RFC 8252 sections 7.3 and 8",
+  "client_id": "thalovant-sdk",
+  "redirect_uri": "http://127.0.0.1:{port}/callback",
+  "default_timeout_ms": 300000,
+  "device_name_max_code_points": 120,
+  "verifier": {
+    "min_length": 43,
+    "max_length": 128,
+    "alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+  },
+  "state": {
+    "min_random_bits": 128,
+    "min_length": 22,
+    "alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+  },
+  "pages": {
+    "signed_in": "Signed in to Thalovant. You can close this tab.",
+    "not_completed": "Sign-in was not completed."
+  },
+  "page_headers": {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'",
+    "X-Content-Type-Options": "nosniff"
+  },
+  "prompt": {
+    "opening": "Opening your browser to sign in to Thalovant. If it does not open, visit:\n{url}",
+    "not_opening": "To sign in to Thalovant, visit:\n{url}"
+  },
+  "message_excludes": [
+    "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+    "tvpat_synthetic_browser_token_do_not_log",
+    "tvpat_synthetic_device_token_do_not_log"
+  ],
+  "message_excludes_generated": [
+    "verifier",
+    "state"
+  ],
+  "record_key": "<section>/<name>",
+  "results": {
+    "approved": "{outcome: approved, token_type, scopes, expires_at, token_id}, read from the token answer",
+    "revoked": "{outcome: revoked}, after the approved token revoked itself (twice; the second sends nothing)",
+    "denied": "{outcome: denied, status: null}",
+    "expired": "{outcome: expired, status: null}",
+    "error": "{outcome: error, status, code}, plus detail when status is not null (the api-errors fields)"
+  },
+  "placeholders": {
+    "{port}": "the port the listener bound",
+    "{state}": "the state the SDK generated; in a request target, the runner puts it in",
+    "{challenge}": "the code_challenge in the authorization URL: 43 base64url characters",
+    "{verifier}": "the code_verifier the exchange sent, after checking it is 43-128 unreserved characters and that its S256 challenge is {challenge}"
+  },
+  "pkce": [
+    {
+      "name": "RFC 7636 Appendix B",
+      "verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      "expect": {
+        "challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+      }
+    },
+    {
+      "name": "the shortest verifier, 32 zero bytes in base64url",
+      "verifier": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "expect": {
+        "challenge": "DwBzhbb51LfusnSGBa_hqYSgo7-j8BTQnip4TOnlzRo"
+      }
+    },
+    {
+      "name": "the longest verifier, every unreserved character",
+      "verifier": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+      "expect": {
+        "challenge": "Gn88msbRKQ0wmy6Kms0RzrR4ZXFo3OGDewwvI9C7qZg"
+      }
+    }
+  ],
+  "redirect_uris": [
+    {
+      "name": "port 1024",
+      "port": 1024,
+      "expect": {
+        "redirect_uri": "http://127.0.0.1:1024/callback"
+      }
+    },
+    {
+      "name": "port 53682",
+      "port": 53682,
+      "expect": {
+        "redirect_uri": "http://127.0.0.1:53682/callback"
+      }
+    },
+    {
+      "name": "port 65535",
+      "port": 65535,
+      "expect": {
+        "redirect_uri": "http://127.0.0.1:65535/callback"
+      }
+    },
+    {
+      "name": "port 1023",
+      "port": 1023,
+      "expect": {
+        "error": "invalid_port"
+      }
+    },
+    {
+      "name": "port 0",
+      "port": 0,
+      "expect": {
+        "error": "invalid_port"
+      }
+    },
+    {
+      "name": "port 65536",
+      "port": 65536,
+      "expect": {
+        "error": "invalid_port"
+      }
+    }
+  ],
+  "authorization_urls": [
+    {
+      "name": "no scopes: scope is left out, and the API grants its default",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&device_name=thalovant-python-sdk%20on%20vectors"
+      }
+    },
+    {
+      "name": "an empty scope list is left out too",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": [],
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&device_name=thalovant-python-sdk%20on%20vectors"
+      }
+    },
+    {
+      "name": "scopes are joined by one space, sent as %20, colons encoded",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": [
+          "hubs:read",
+          "clients:read",
+          "clients:write"
+        ],
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&scope=hubs%3Aread%20clients%3Aread%20clients%3Awrite&device_name=thalovant-python-sdk%20on%20vectors"
+      }
+    },
+    {
+      "name": "empty scope strings are dropped; nothing left means no scope",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": [
+          "",
+          "hubs:read",
+          ""
+        ],
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&scope=hubs%3Aread&device_name=thalovant-python-sdk%20on%20vectors"
+      }
+    },
+    {
+      "name": "only empty scope strings: scope is left out",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": [
+          ""
+        ],
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&device_name=thalovant-python-sdk%20on%20vectors"
+      }
+    },
+    {
+      "name": "every character outside A-Z a-z 0-9 - . _ ~ is percent-encoded as UTF-8, a space as %20",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": [
+          "hubs:read"
+        ],
+        "device_name": "Gaëtan's Mac (salon) & desk/2 + 50% ~ok! *=?#"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&scope=hubs%3Aread&device_name=Ga%C3%ABtan%27s%20Mac%20%28salon%29%20%26%20desk%2F2%20%2B%2050%25%20~ok%21%20%2A%3D%3F%23"
+      }
+    },
+    {
+      "name": "a device name longer than 120 code points is cut to 120 code points, never inside one",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": null,
+        "device_name": "🎙🎙🎙🎙🎙🎙🎙🎙🎙🎙xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&device_name=%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99%F0%9F%8E%99xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "an empty device name is left out",
+      "input": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "client_id": "thalovant-sdk",
+        "port": 53682,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": null,
+        "device_name": ""
+      },
+      "expect": {
+        "url": "https://dash.thalovant.com/authorize?response_type=code&client_id=thalovant-sdk&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a"
+      }
+    },
+    {
+      "name": "the authorization endpoint and client id the API names are used as given",
+      "input": {
+        "authorization_endpoint": "http://127.0.0.1:5173/authorize",
+        "client_id": "thalovant-sdk-staging",
+        "port": 1024,
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a",
+        "scopes": [
+          "hubs:read"
+        ],
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "expect": {
+        "url": "http://127.0.0.1:5173/authorize?response_type=code&client_id=thalovant-sdk-staging&redirect_uri=http%3A%2F%2F127.0.0.1%3A1024%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=Xx0-_yLq7m3Vw9ZtR2cKp4HdN8sFjB6a&scope=hubs%3Aread&device_name=thalovant-python-sdk%20on%20vectors"
+      }
+    }
+  ],
+  "config": [
+    {
+      "name": "the API's own answer is usable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
+      "name": "a self-hosted dashboard on https is usable",
+      "body": {
+        "authorization_endpoint": "https://dash.example.org/app/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "https://dash.example.org/app/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
+      "name": "a loopback dashboard over http is usable while developing",
+      "body": {
+        "authorization_endpoint": "http://localhost:5173/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "http://localhost:5173/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
+      "name": "members the SDK does not read are ignored, device_authorization_endpoint included",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "extra": {
+          "anything": true
+        }
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
+      "name": "a cleartext dashboard is unusable",
+      "body": {
+        "authorization_endpoint": "http://dash.example.org/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard address carrying credentials is unusable",
+      "body": {
+        "authorization_endpoint": "https://evil.example@dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard address with a query is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize?next=/x",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard address with a fragment is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize#x",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard address that is not a URL is unusable",
+      "body": {
+        "authorization_endpoint": "dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "no dashboard address is unusable",
+      "body": {
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a token endpoint on another host is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "https://evil.example/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a protocol-relative token endpoint is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "//evil.example/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a token endpoint with a query is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token?x=1",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "no sdk_client_id is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "an API that does not offer S256 is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "plain"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "no code_challenge_methods_supported is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback"
+      },
+      "expect": {
+        "usable": false
+      }
+    }
+  ],
+  "environment": [
+    {
+      "name": "macOS has a browser",
+      "platform": "macos",
+      "env": {},
+      "expect": {
+        "browser": true
+      }
+    },
+    {
+      "name": "Windows has a browser",
+      "platform": "windows",
+      "env": {},
+      "expect": {
+        "browser": true
+      }
+    },
+    {
+      "name": "Linux without a display has none",
+      "platform": "linux",
+      "env": {},
+      "expect": {
+        "browser": false
+      }
+    },
+    {
+      "name": "Linux with DISPLAY has one",
+      "platform": "linux",
+      "env": {
+        "DISPLAY": ":0"
+      },
+      "expect": {
+        "browser": true
+      }
+    },
+    {
+      "name": "Linux with WAYLAND_DISPLAY has one",
+      "platform": "linux",
+      "env": {
+        "WAYLAND_DISPLAY": "wayland-0"
+      },
+      "expect": {
+        "browser": true
+      }
+    },
+    {
+      "name": "an empty DISPLAY is not set",
+      "platform": "linux",
+      "env": {
+        "DISPLAY": ""
+      },
+      "expect": {
+        "browser": false
+      }
+    },
+    {
+      "name": "over SSH (SSH_CONNECTION), even with a display, there is none",
+      "platform": "linux",
+      "env": {
+        "DISPLAY": "localhost:10.0",
+        "SSH_CONNECTION": "10.0.0.2 51022 10.0.0.9 22"
+      },
+      "expect": {
+        "browser": false
+      }
+    },
+    {
+      "name": "over SSH (SSH_TTY) on macOS there is none",
+      "platform": "macos",
+      "env": {
+        "SSH_TTY": "/dev/ttys003"
+      },
+      "expect": {
+        "browser": false
+      }
+    },
+    {
+      "name": "in CI there is none",
+      "platform": "windows",
+      "env": {
+        "CI": "true"
+      },
+      "expect": {
+        "browser": false
+      }
+    },
+    {
+      "name": "CI set to any value counts, false included",
+      "platform": "macos",
+      "env": {
+        "CI": "false"
+      },
+      "expect": {
+        "browser": false
+      }
+    },
+    {
+      "name": "an empty CI is not set",
+      "platform": "linux",
+      "env": {
+        "DISPLAY": ":0",
+        "CI": ""
+      },
+      "expect": {
+        "browser": true
+      }
+    },
+    {
+      "name": "another Unix follows the Linux rule: with a display",
+      "platform": "freebsd",
+      "env": {
+        "DISPLAY": ":0"
+      },
+      "expect": {
+        "browser": true
+      }
+    },
+    {
+      "name": "another Unix follows the Linux rule: without one",
+      "platform": "freebsd",
+      "env": {},
+      "expect": {
+        "browser": false
+      }
+    }
+  ],
+  "callbacks": [
+    {
+      "name": "a path that is not /callback is 404",
+      "request": {
+        "method": "GET",
+        "target": "/favicon.ico"
+      },
+      "expect": {
+        "status": 404,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "the root is 404",
+      "request": {
+        "method": "GET",
+        "target": "/"
+      },
+      "expect": {
+        "status": 404,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "a trailing slash is another path: 404",
+      "request": {
+        "method": "GET",
+        "target": "/callback/?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+      },
+      "expect": {
+        "status": 404,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "a path in another case is another path: 404",
+      "request": {
+        "method": "GET",
+        "target": "/Callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+      },
+      "expect": {
+        "status": 404,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "only GET is served: POST is 404",
+      "request": {
+        "method": "POST",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+      },
+      "expect": {
+        "status": 404,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "only GET is served: HEAD is 404",
+      "request": {
+        "method": "HEAD",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+      },
+      "expect": {
+        "status": 404,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "no state is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2"
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "a wrong state is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state=not-this-sign-in"
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "an empty state is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state="
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "the state is compared whole: one more character is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}x"
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "a state given twice is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}&state={state}"
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "a state that is not ASCII is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state=%C3%A9t%C3%A9"
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "no query at all is 400",
+      "request": {
+        "method": "GET",
+        "target": "/callback"
+      },
+      "expect": {
+        "status": 400,
+        "outcome": "ignored"
+      }
+    },
+    {
+      "name": "the right state with a code is accepted",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "code",
+        "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2"
+      }
+    },
+    {
+      "name": "parameters may come in any order",
+      "request": {
+        "method": "GET",
+        "target": "/callback?state={state}&code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "code",
+        "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2"
+      }
+    },
+    {
+      "name": "the code is percent-decoded once",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=a%2Bb%2Fc%3D%2541&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "code",
+        "code": "a+b/c=%41"
+      }
+    },
+    {
+      "name": "error=access_denied is denied",
+      "request": {
+        "method": "GET",
+        "target": "/callback?error=access_denied&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "denied"
+      }
+    },
+    {
+      "name": "a refusal that also carries a code is still a refusal",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&error=access_denied&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "denied"
+      }
+    },
+    {
+      "name": "error_description is not read",
+      "request": {
+        "method": "GET",
+        "target": "/callback?error=access_denied&error_description=No%20thanks&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "denied"
+      }
+    },
+    {
+      "name": "another error fails the sign-in",
+      "request": {
+        "method": "GET",
+        "target": "/callback?error=server_error&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "failed",
+        "error": "server_error"
+      }
+    },
+    {
+      "name": "an empty error fails the sign-in",
+      "request": {
+        "method": "GET",
+        "target": "/callback?error=&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "failed",
+        "error": null
+      }
+    },
+    {
+      "name": "the right state without a code fails the sign-in",
+      "request": {
+        "method": "GET",
+        "target": "/callback?state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "failed",
+        "error": null
+      }
+    },
+    {
+      "name": "an empty code fails the sign-in",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "failed",
+        "error": null
+      }
+    },
+    {
+      "name": "a code given twice fails the sign-in",
+      "request": {
+        "method": "GET",
+        "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&code=other&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "failed",
+        "error": null
+      }
+    }
+  ],
+  "sign_ins": [
+    {
+      "name": "approved: the exchange sends exactly the four fields, and the token is kept",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "signed_in"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d"
+        }
+      }
+    },
+    {
+      "name": "a stray tab changes nothing: 404, 400 and 400, then the real answer",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/favicon.ico"
+        },
+        {
+          "method": "GET",
+          "target": "/callback?code=stolen&state=an-old-attempt"
+        },
+        {
+          "method": "GET",
+          "target": "/callback?code=stolen"
+        },
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 404
+          },
+          {
+            "status": 400
+          },
+          {
+            "status": 400
+          },
+          {
+            "status": 200,
+            "page": "signed_in"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d"
+        }
+      }
+    },
+    {
+      "name": "the scopes asked for reach the consent page",
+      "call": {
+        "scopes": [
+          "hubs:read",
+          "hubs:write",
+          "clients:read",
+          "clients:write"
+        ],
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "scope",
+              "hubs:read hubs:write clients:read clients:write"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "signed_in"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d"
+        }
+      }
+    },
+    {
+      "name": "the endpoints and the client id the configuration names are the ones used",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.staging.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk-staging\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk-staging",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.staging.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk-staging"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "signed_in"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk-staging",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d"
+        }
+      }
+    },
+    {
+      "name": "denied in the browser",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?error=access_denied&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "not_completed"
+          }
+        ],
+        "closed": true,
+        "result": {
+          "outcome": "denied",
+          "status": null
+        }
+      }
+    },
+    {
+      "name": "another error from the consent page fails the sign-in",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?error=server_error&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "not_completed"
+          }
+        ],
+        "closed": true,
+        "result": {
+          "outcome": "error",
+          "status": null,
+          "code": "server_error"
+        }
+      }
+    },
+    {
+      "name": "the right state without a code fails the sign-in",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "not_completed"
+          }
+        ],
+        "closed": true,
+        "result": {
+          "outcome": "error",
+          "status": null,
+          "code": null
+        }
+      }
+    },
+    {
+      "name": "a code the API will not exchange is invalid_grant, with the api-errors fields",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 400,
+            "content_type": "application/json",
+            "body": "{\"detail\":\"invalid_grant\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "not_completed"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "error",
+          "status": 400,
+          "code": null,
+          "detail": "invalid_grant"
+        }
+      }
+    },
+    {
+      "name": "a token answer that is not a JSON object is an error with no status",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "[]"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "not_completed"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "error",
+          "status": null,
+          "code": null
+        }
+      }
+    },
+    {
+      "name": "a token answer without an access_token is an error with no status",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"token_type\":\"bearer\",\"scopes\":[]}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "not_completed"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "error",
+          "status": null,
+          "code": null
+        }
+      }
+    },
+    {
+      "name": "no answer before the timeout is expired; a stray tab does not end the wait",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors",
+        "timeout_ms": 400
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=stolen&state=an-old-attempt"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 400
+          }
+        ],
+        "closed": true,
+        "result": {
+          "outcome": "expired",
+          "status": null
+        }
+      }
+    },
+    {
+      "name": "an API without browser sign-in answers the configuration 404",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 404,
+            "content_type": "application/json",
+            "body": "{\"detail\":\"Not Found\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "result": {
+          "outcome": "error",
+          "status": 404,
+          "code": null,
+          "detail": "Not Found"
+        }
+      }
+    },
+    {
+      "name": "an unusable configuration is an error with no status, and nothing is opened",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"plain\"]}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "result": {
+          "outcome": "error",
+          "status": null,
+          "code": null
+        }
+      }
+    },
+    {
+      "name": "a configuration that is not a JSON object is an error",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "[]"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "result": {
+          "outcome": "error",
+          "status": null,
+          "code": null
+        }
+      }
+    },
+    {
+      "name": "the token revokes itself as a device login's does, and revoking again sends nothing",
+      "call": {
+        "scopes": null,
+        "device_name": "thalovant-python-sdk on vectors",
+        "then": "revoke"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        },
+        {
+          "request": {
+            "method": "DELETE",
+            "path": "/v1/auth/api-tokens/3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d",
+            "authorization": "Bearer tvpat_synthetic_browser_token_do_not_log"
+          },
+          "response": {
+            "status": 204,
+            "content_type": "application/json",
+            "body": ""
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "authorization_url": {
+          "endpoint": "https://dash.thalovant.com/authorize",
+          "query": [
+            [
+              "response_type",
+              "code"
+            ],
+            [
+              "client_id",
+              "thalovant-sdk"
+            ],
+            [
+              "redirect_uri",
+              "http://127.0.0.1:{port}/callback"
+            ],
+            [
+              "code_challenge",
+              "{challenge}"
+            ],
+            [
+              "code_challenge_method",
+              "S256"
+            ],
+            [
+              "state",
+              "{state}"
+            ],
+            [
+              "device_name",
+              "thalovant-python-sdk on vectors"
+            ]
+          ]
+        },
+        "browser": [
+          {
+            "status": 200,
+            "page": "signed_in"
+          }
+        ],
+        "closed": true,
+        "exchange": {
+          "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+          "code_verifier": "{verifier}",
+          "client_id": "thalovant-sdk",
+          "redirect_uri": "http://127.0.0.1:{port}/callback"
+        },
+        "result": {
+          "outcome": "revoked"
+        }
+      }
+    }
+  ],
+  "chooser": [
+    {
+      "name": "auto on a desktop signs in through the browser",
+      "platform": "linux",
+      "env": {
+        "DISPLAY": ":0"
+      },
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "method": "browser",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d"
+        }
+      }
+    },
+    {
+      "name": "auto falls back to a device login when the API answers the configuration 404",
+      "platform": "macos",
+      "env": {},
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 404,
+            "content_type": "application/json",
+            "body": "{\"detail\":\"Not Found\"}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "auto falls back to a device login when the configuration is unusable",
+      "platform": "windows",
+      "env": {},
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"plain\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "auto falls back to a device login when the configuration fails",
+      "platform": "linux",
+      "env": {
+        "WAYLAND_DISPLAY": "wayland-0"
+      },
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 503,
+            "content_type": "application/json",
+            "body": "{\"detail\":\"Service Unavailable\"}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "auto over SSH uses a device login without asking for the configuration",
+      "platform": "linux",
+      "env": {
+        "DISPLAY": "localhost:10.0",
+        "SSH_CONNECTION": "10.0.0.2 51022 10.0.0.9 22"
+      },
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "auto in CI uses a device login",
+      "platform": "macos",
+      "env": {
+        "CI": "true"
+      },
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "auto on Linux without a display uses a device login",
+      "platform": "linux",
+      "env": {},
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "browser forced over SSH still signs in through the browser",
+      "platform": "linux",
+      "env": {
+        "SSH_TTY": "/dev/pts/3"
+      },
+      "call": {
+        "method": "browser",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/native/token",
+            "json": {
+              "code": "nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2",
+              "code_verifier": "{verifier}",
+              "client_id": "thalovant-sdk",
+              "redirect_uri": "http://127.0.0.1:{port}/callback"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_browser_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d\",\"ai_disclosure\":\"Thalovant uses AI to answer you.\"}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?code=nc_synthetic_code_7d3f9a2b1c4e5f60a7b8c9d0e1f2&state={state}"
+        }
+      ],
+      "expect": {
+        "method": "browser",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "3f1c9a52-6d0e-4b7a-9c21-8e4f5a6b7c8d"
+        }
+      }
+    },
+    {
+      "name": "device forced on a desktop never asks for the configuration",
+      "platform": "macos",
+      "env": {},
+      "call": {
+        "method": "device",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/authorize",
+            "json": {
+              "client_name": "thalovant-python-sdk on vectors"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"device_code\":\"dc-synthetic-browser-login-chooser\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://thalovant.com/activate\",\"verification_uri_complete\":\"https://thalovant.com/activate?code=WDJB-MJHT\",\"expires_in\":900,\"interval\":0}"
+          }
+        },
+        {
+          "request": {
+            "method": "POST",
+            "path": "/v1/auth/device/token",
+            "json": {
+              "device_code": "dc-synthetic-browser-login-chooser"
+            }
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"access_token\":\"tvpat_synthetic_device_token_do_not_log\",\"token_type\":\"bearer\",\"scopes\":[\"hubs:read\",\"clients:write\"],\"expires_at\":\"2027-11-08T12:00:00Z\",\"token_id\":\"7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "device",
+        "result": {
+          "outcome": "approved",
+          "token_type": "bearer",
+          "scopes": [
+            "hubs:read",
+            "clients:write"
+          ],
+          "expires_at": "2027-11-08T12:00:00Z",
+          "token_id": "7a2b9c1d-0e3f-4a5b-8c6d-9e0f1a2b3c4d"
+        }
+      }
+    },
+    {
+      "name": "browser forced against an API without it is an error, never a device login",
+      "platform": "macos",
+      "env": {},
+      "call": {
+        "method": "browser",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 404,
+            "content_type": "application/json",
+            "body": "{\"detail\":\"Not Found\"}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "browser",
+        "result": {
+          "outcome": "error",
+          "status": 404,
+          "code": null,
+          "detail": "Not Found"
+        }
+      }
+    },
+    {
+      "name": "once the browser is opened, a denial stands: no device login follows",
+      "platform": "windows",
+      "env": {},
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "target": "/callback?error=access_denied&state={state}"
+        }
+      ],
+      "expect": {
+        "method": "browser",
+        "result": {
+          "outcome": "denied",
+          "status": null
+        }
+      }
+    },
+    {
+      "name": "once the browser is opened, a timeout stands: no device login follows",
+      "platform": "macos",
+      "env": {},
+      "call": {
+        "method": "auto",
+        "device_name": "thalovant-python-sdk on vectors",
+        "timeout_ms": 400
+      },
+      "exchanges": [
+        {
+          "request": {
+            "method": "GET",
+            "path": "/v1/auth/native/config"
+          },
+          "response": {
+            "status": 200,
+            "content_type": "application/json",
+            "body": "{\"authorization_endpoint\":\"https://dash.thalovant.com/authorize\",\"token_endpoint\":\"/v1/auth/native/token\",\"device_authorization_endpoint\":\"/v1/auth/device/authorize\",\"sdk_client_id\":\"thalovant-sdk\",\"loopback_redirect_uri\":\"http://127.0.0.1:{port}/callback\",\"code_challenge_methods_supported\":[\"S256\"]}"
+          }
+        }
+      ],
+      "requests": [],
+      "expect": {
+        "method": "browser",
+        "result": {
+          "outcome": "expired",
+          "status": null
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,80 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review-body items on merged PRs #86 and #90, and a re-check of the earlier sweeps against current main.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): browser_login, interactive_login, the browser-login capability and its vectors.
 
 # Maintenance Report
+
+## 2026-11-08: Browser sign-in (0.11.0)
+
+The owner's goal is that a sign-in can be approved only by whoever started it, with no friction. A device code can be relayed to somebody else. A loopback redirect cannot, because the browser that approves delivers the code to its own computer. thalovant-api #501 adds `GET /v1/auth/native/config` and the `thalovant-sdk` client on `http://127.0.0.1:<port>/callback`. This SDK is the reference the six other SDKs and MCP port from. The contract is `browser-sign-in-SPEC.md` from the lead.
+
+**Changed:**
+
+- `src/thalovant/control.py`:
+  - On both control-plane classes: `browser_login()` and `interactive_login()`.
+  - Helpers: `_native_sign_in_config`, `_browser_login`, `_exchange_browser_code`, `_native_token_request`, `_present_browser_login`, `_open_browser_quietly` and `_without_secrets`.
+  - `LoginMethod` and `DEFAULT_DEVICE_LOGIN_TIMEOUT`.
+  - `complete_native_sign_in` now builds its body with `_native_token_request`. Its behaviour is unchanged.
+- `src/thalovant/native_auth.py`: `browser_authorization_url`, `loopback_redirect_uri`, `new_state` (now also used by `begin_native_sign_in`, unchanged at 24 bytes), `NativeSignInConfig`, `can_open_browser`, `default_device_name`, and the constants.
+- New `src/thalovant/_loopback.py`: `LoopbackListener`, `classify_request` and `response_bytes`.
+- `src/thalovant/__init__.py`: the exports.
+- The version: 0.11.0.
+- `contracts/sdk-parity.json`:
+  - The new `browser-login` capability, with `device-login`'s scope matrix and embedded-c's caller-owned networking reason.
+  - The reviewed reference snapshot.
+  - The candidate digest appended to `reference_history`.
+- `contracts/conformance/browser-login-vectors.json` (new, 98 cases).
+- `contracts/conformance-results.json`: the reference's results for those cases. The existing records are byte-identical.
+- New tests: `tests/test_browser_login_vectors.py` and `tests/test_browser_login.py`.
+- Docs:
+  - `docs/browser-login-porting.md` (new).
+  - The README's sign-in section and quick start.
+  - `docs/api-reference.md`, `docs/index.md` and `docs/quickstart.md`.
+- Records: the CHANGELOG under 0.11.0, AGENTS.md, QUICK_FACTS.md, FAQ.md, AUDIT.md and SUGGESTIONS.md.
+
+**Decisions the porters inherit** (all in `docs/browser-login-porting.md`):
+
+- **Return type.** `browser_login` returns what the one-call device login returns: the raw token answer, so `ai_disclosure` survives.
+- **Errors.** The device-login denied and expired types are reused; there are no new error types.
+- **Configuration.** It is strict, and anything unusable is an error with no status. `auto` then uses device login. An explicit `browser_login()` raises a config 404 rather than switching method.
+- **The tab.** It is answered after the exchange, so the page is true. Five headers go with every listener answer.
+- **Callbacks.** `error` wins over `code`. A right-state callback without exactly one code fails the sign-in.
+- **Scopes and device name.** Empty scope strings are dropped. `device_name` is cut at 120 code points.
+- **Environment.** A variable is set only when it is non-empty.
+- **Exchange errors.** They are redacted and raised outside their handler, so neither `__cause__` nor `__context__` holds the original.
+- **CLI.** It gains no `login` command, because it has nowhere to keep a token (SUGGESTIONS.md).
+
+**Reference digest:** `57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9` (current) to `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (candidate). Consumers accept both, merge and publish first; this PR merges last.
+
+**Verification:**
+
+- Baseline, on `main` 44b6e2b with `python -m pytest -q --cov=thalovant` on Python 3.12: 1397 passed, 1 skipped, total coverage 90%.
+- Python 3.12, `python -m pytest -q --cov=thalovant` with `THALOVANT_CONFORMANCE_OUT`: 1579 passed, 1 skipped.
+  - Total coverage is 90% (90.4% against 90.0%).
+  - `control.py` went from 92% to 93%.
+  - `native_auth.py` and `_loopback.py` are at 100%.
+- Python 3.10 at CI's floors (`aiohttp==3.11.0`, `cryptography==48.0.1`, `THALOVANT_MINIMUM_VERSIONS=1`): 1532 passed, 1 skipped. `tests/test_sdk_parity_contract.py` skips itself without `tomllib`.
+- Python 3.14: 1579 passed, 1 skipped.
+- Lint, types and the parity gate:
+  - `python -m mypy` (strict) and `python -m ruff check src tests scripts` pass.
+  - `python scripts/check-sdk-parity.py` reports "SDK parity reference verified".
+  - `--snapshot` digests to the candidate above.
+  - `scripts/generate-sdk-conformance.py --check` passes.
+- Packaging and docs:
+  - `python -m build` builds 0.11.0, and `twine check` passes both distributions.
+  - `mkdocs build --strict` passes.
+- The vectors:
+  - The RFC 7636 challenge and two more were checked with `openssl dgst -sha256`.
+  - The encoded device name was checked with Node's `encodeURIComponent` (plus `!'()*`).
+- Mutations: 14 hand mutations of the new code, of which 13 failed the new tests. The fourteenth replaced the token answer's shape check with `_accept_token({})`, which raises the same error with no status, so it is equivalent.
+- Not run: Windows and macOS (CI is `ubuntu-latest` only), the whole-workspace gate (`--workspace`), which needs the consumers' acceptances, and a sign-in against a live API, because #501 is not deployed yet.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read the contract, the device-login implementation, the API's #501 branch (`app/routes/auth_native.py`, `app/auth/native_clients.py`) and the consent page's parser (thalovant-frontend `src/utils/native-authorization.ts`).
+  - Wrote the implementation, the vectors (inputs by hand, expectations computed by the reference and cross-checked independently), the tests, the porting brief and the records.
+  - Ran the suites, the gate, the build, the docs build and the mutations.
+- **Oversight:** Done for the lead of the cross-SDK browser sign-in train, under the owner's goal above. The lead reviews and merges; this agent does not merge, tag or release.
 
 ## 2026-11-08: CodeRabbit review-body items on merged PRs #86 and #90
 
