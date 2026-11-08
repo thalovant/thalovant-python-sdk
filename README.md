@@ -1,4 +1,4 @@
-<!-- Last Edit: Codex - 2026-11-07 - Motive: Add the canonical Thalovant logo with light and dark theme support. -->
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign-in section for browser sign-in (0.11.0); the quick start signs in with interactive_login(). -->
 
 <p align="center">
   <picture>
@@ -57,8 +57,9 @@ public_hubs = api.list_public_hubs(limit=12)
 for hub in public_hubs["data"]:
     print(hub["id"], hub["slug"], hub["title"])
 
-# Auth is required when creating a client identity.
-api.login("you@example.com", "password")
+# Auth is required when creating a client identity. This opens the browser on
+# this machine, or prints a code to approve from any browser where there is none.
+api.interactive_login()
 
 result = api.create_client_identity(
     "hub-id",
@@ -77,6 +78,43 @@ Keep `result` secret: `result.identity` and the raw `result.client` API resource
 carry the client credentials. `result.as_dict()` redacts every secret and is
 safe to log; `result.as_dict(include_secrets=True)` returns the real
 credentials, so use it only to save the identity and never log it.
+
+## Sign in
+
+```python
+from thalovant import ThalovantControlPlane
+
+api = ThalovantControlPlane()
+api.interactive_login()  # the browser here, or a device code where there is none
+# method="browser" or method="device" forces one.
+```
+
+`interactive_login()` opens your browser at the Thalovant consent page and
+listens on `127.0.0.1` for the answer (OAuth with PKCE on a loopback redirect,
+RFC 8252). It always prints the address too, in case the browser does not
+open. The browser that approves hands the answer to its own computer, so a
+sign-in link sent to somebody on another computer delivers nothing to you or to
+them. (A forwarded port, such as `ssh -L`, or another user of the same computer
+can still complete it.)
+
+On a machine that cannot show a browser, it prints a code to enter at
+`thalovant.com/activate` from any browser instead: over SSH, in CI, or on Linux
+with neither `DISPLAY` nor `WAYLAND_DISPLAY`. It does the same against an API
+that does not offer browser sign-in yet. `browser_login()` and
+`login_with_browser()` (the device login) are the two methods on their own.
+`AsyncThalovantControlPlane` has the same methods, awaited.
+
+`scopes=` asks for what the token may do. The default is `hubs:read` and
+`clients:write`. `device_name=` is what the consent page and the token show.
+The default is `thalovant-python-sdk on <hostname>`.
+
+The result is a scoped API token that lasts 365 days and is listed in the
+dashboard. It counts against your plan. `api.revoke_api_token()` revokes it.
+
+A denied sign-in raises `ThalovantDeviceLoginDenied`. A browser sign-in that
+nobody answers within 300 seconds (`timeout=`) raises
+`ThalovantDeviceLoginExpired`. Accounts with a password can still use
+`api.login(email, password)`.
 
 ## Chat apps
 

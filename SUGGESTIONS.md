@@ -1,6 +1,25 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Note the port in native sign-in's redirect check, seen while re-checking the #78 review item.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Follow-ups from browser sign-in (0.11.0): ai_disclosure on ApiToken, a CLI sign-in with a credential store, a typed browser-unavailable error.
 
 # Suggestions: thalovant (Python SDK)
+
+## Carry `ai_disclosure` on `ApiToken`
+
+- **Problem:** `NativeTokenResponse` and `DeviceTokenResponse` both carry `ai_disclosure`, the AI disclosure an app shows at first contact. `ApiToken.from_dict` (`src/thalovant/control.py`) keeps five members and drops it. `browser_login()` and `login_with_browser()` return the raw answer, where it survives. `poll_device_login()` returns an `ApiToken`, where it does not. The 0.11.0 browser-login round left `ApiToken` alone so that device login stayed unchanged.
+- **Proposal:** add `ai_disclosure: str | None = None` to `ApiToken` (omitted from `as_dict()` when `None`) and a case to the device-login and browser-login vectors, in a coordinated round.
+- **Impact:** low. It touches the reference digest and every consumer's token type.
+
+## A `thalovant login` command with a credential store
+
+- **Problem:** the CLI reads `THALOVANT_API_TOKEN` or `--token` (`src/thalovant/cli.py` `_control_plane_from_args`) and has no way to sign in. `interactive_login()` is the right engine for one, but the SDK has nowhere to keep the token. Printing it for the caller to export would put a credential on a terminal and in shell history.
+- **Proposal:** `thalovant login [--browser | --device] [--scope ...]`, which keeps the token in the platform keychain (or a `0600` file under `~/.config/thalovant/`) with its `token_id`, and `thalovant logout`, which revokes it. Then have the `skills` commands read the stored token when neither variable nor option is given.
+- **Impact:** medium. It needs an owner decision on where a CLI credential lives. It would also be the "combined CLI entry" the browser sign-in contract describes, which only the MCP server has today.
+
+## A typed "browser sign-in unavailable" error
+
+- **Problem:** `browser_login()` raises a plain `ThalovantAPIError` with status 404 when the API does not offer browser sign-in. A caller that wants its own fallback has to read `status_code`. `interactive_login()` already does that fallback.
+- **Proposal:** a `ThalovantBrowserLoginUnavailable(ThalovantAPIError)` subclass, raised for the 404 and for an unusable configuration.
+- **Impact:** low. The contract deliberately added no error types this round.
+
 
 ## Compare the port when a native sign-in callback is matched to its redirect URI
 

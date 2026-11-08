@@ -11,6 +11,7 @@ Rules:
 - Do not create a release for internal platform changes with no Python SDK impact; record `no SDK impact` in the coordinated change instead.
 - Validate the built distribution and an install from PyPI before declaring a release complete.
 - Update affected `docs.thalovant.com` SDK pages in the same release train.
+- Sign-in: keep device login (`login_with_browser`, `begin_device_login`, `poll_device_login`) unchanged; `interactive_login()` prefers browser sign-in and falls back to device login only before the browser is opened. Never log or raise the authorization code, the PKCE verifier, the state or a token. `contracts/conformance/browser-login-vectors.json` is the shared contract (`docs/browser-login-porting.md`).
 
 Validate with `python -m pip install -e ".[dev]"`, `python -m pytest -q`, `python -m build`, and `python -m twine check dist/*`. A published release also requires a clean virtual-environment install of `thalovant==<version>` from PyPI and a basic import smoke test.
 

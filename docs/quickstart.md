@@ -1,3 +1,5 @@
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign in with interactive_login() (browser sign-in, 0.11.0). -->
+
 # Quickstart
 
 This guide takes you from discovery to a live hub request.
@@ -26,11 +28,15 @@ Use `api.get_public_hub("joke-garden")` to load one hub by slug or id.
 
 ## 3. Create A Client Identity
 
-Authenticate with an account that has API access, then create a client identity
-for the hub you want to use.
+Sign in with an account that has API access, then create a client identity
+for the hub you want to use. `interactive_login()` opens your browser at the
+Thalovant consent page and waits for it to come back to this machine. Over SSH,
+in CI or on a machine with no display, it prints a code to approve from any
+browser instead. Accounts with a password can also use
+`api.login(email, password)`.
 
 ```python
-api.login("you@example.com", "password")
+api.interactive_login()
 
 result = api.create_client_identity(
     "hub-id",

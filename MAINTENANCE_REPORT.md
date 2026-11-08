@@ -1,6 +1,187 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review-body items on merged PRs #86 and #90, and a re-check of the earlier sweeps against current main.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Final producer revision of #113 from the Node, Go, .NET and Rust ports: request-layer origin, endpoint rules, drain before close, relay wording; digest 6dfb3bb31ac7.
 
 # Maintenance Report
+
+## 2026-11-08: Final producer revision of #113, from the consumer ports
+
+While fixing their own review threads, the Node (#110), Go (#90), .NET (#54) and Rust ports found gaps in the reference. The lead passed them on. This revision folds them in and gives the final candidate.
+
+| From | Finding | Outcome |
+| :--- | :--- | :--- |
+| Node | A path joined with `urljoin(api, path.lstrip("/"))` can leave the API's origin | Fixed in the request layer. `_send` refuses every request whose resolved origin (scheme, host, port) is not the API's. Every caller passes an API path, ids quoted and `links.self` reduced to an id, so nothing legitimate is refused. Test: `test_no_request_leaves_the_api_origin`. There is no vector: the configuration rule refuses such a `token_endpoint` first, so no browser-login case can reach the request layer. |
+| Node | `authorization_endpoint` on port 0 was usable | Fixed. Config vector added. |
+| Node | A callback `error` that contains the state | Already covered by the RFC 6749 allow-list. Pure case added: `callbacks/an error that contains the state is not kept`. |
+| Node | In `auto`, fall back to device login when the listener cannot bind | Not adopted. Binding `127.0.0.1:0` on a machine with a browser essentially never fails. When it does, the loopback stack is broken, and a silent device login would hide it. Every port would also need bind-failure injection. Recorded in the porting brief. |
+| Node | `interactive_login` has no `prompt` | Not changed, as agreed. It needs a design decision (a URL for the browser, a code for the device). Recorded in the porting brief. |
+| Go | A broken percent-escape in `token_endpoint` (`/v1/%zz`) | Fixed. Every `%` must be followed by two hex digits, so `auto` falls back before the consent page. Three config vectors. |
+| Go | The tab's 60-second bound, which the first brief stated | The brief's "What changed since 49744ee385bf" now says outright: drop it, and the tab waits until the sign-in ends. |
+| Go | HTTP/2 can replay the exchange's body | One paragraph in the brief: check for transport-level retries of the exchange. aiohttp (HTTP/1.1) never resends a POST. A caller's own requests session would resend one only with a retry policy that allows POST. |
+| .NET | A host that will not parse to a real hostname (`https://%/authorize`) | Fixed. `_real_host` accepts only these: IPv6 between brackets; IPv4, whenever the last label is numeric; or ASCII letter, digit and inner-hyphen labels (`xn--` for international names, at most 253 characters). Eight config vectors, three of them usable. |
+| Rust | A connection closed with bytes unread resets, and macOS loses the answer (an oversized head's 400) | Confirmed on Linux too: from a 200 KB head the 400 arrives but the connection ends in `ECONNRESET`, and a 404 left with an unread POST body does the same. Fixed in `_answer` (`_loopback.py`): after every answer the listener shuts its write side, then reads and drops what the browser still sends until it closes, at most 2 s / 1 MiB. Tests: `test_an_early_answer_is_not_lost_to_a_reset` (oversized head, unread body; both fail with the drain removed) and `test_draining_a_connection_is_bounded`. No vector: this is transport behaviour. The brief has a "Drain before closing" rule. |
+| CodeRabbit (on `fafc96d`) | A percent-encoded secret in an error field would not be scrubbed | Answered, no change to `src/`. Every hidden value consists only of RFC 3986 unreserved characters: the verifier and the state are base64url, and the API mints codes with `token_urlsafe`. Their percent-encoded form is the raw form, which is matched. The API never percent-encodes an error: its 400 is the fixed `invalid_grant`, and FastAPI's 422 echoes raw JSON, which is scrubbed after parsing. Pinned by `test_every_secret_is_written_the_same_way_percent_encoded`. |
+| .NET | "Cannot be relayed" is too absolute | Reworded in the README, the brief, the docstrings, the CHANGELOG and the manifest's capability description. The claim is now: a link or code sent to someone on another computer delivers nothing to the sender. A forwarded callback port or another user of the same computer can still complete a sign-in (AUDIT.md). |
+
+**Vectors and digest:**
+
+- `browser-login-vectors.json` has 119 cases.
+  - The first head had 98: the review round added 8 and this round 13.
+  - The 98 original cases still record identical results.
+- The file's sha256 is `b0c73f808c4f26328c27dd4d04eebfbbc3e7c0c81b8d63a666f63737d0259e73`.
+- The final candidate reference digest is `6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df`.
+  - `reference_history` ends `57c7e71f…, 6dfb3bb3…`.
+  - The intermediate candidates `49744ee385bf…`, `50af6731e276…`, `0bb293e23686…` and `1374f68fee6c…` were never published and are not kept.
+
+**Verification:**
+
+- Python 3.12, `python -m pytest -q --cov=thalovant` with `THALOVANT_CONFORMANCE_OUT`: 1621 passed, 1 skipped. Total coverage is 90%; `native_auth.py` 100%, `_loopback.py` 98% (the drain's defensive error returns). The 106 cases recorded before this round still record identical results.
+- Python 3.10 at CI's floors (`aiohttp==3.11.0`, `cryptography==48.0.1`, `THALOVANT_MINIMUM_VERSIONS=1`): 1574 passed, 1 skipped.
+- Python 3.14: 1621 passed, 1 skipped. `mkdocs build --strict` passes. The live config fetch, URL build and `invalid_grant` exchange against `https://api.thalovant.com` pass on the final code.
+- `mypy`, `ruff`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` pass, and `--snapshot` digests to the final candidate.
+- Each of the seven new rules was reverted in turn, and every revert failed a test: port 0, the broken escape, the request-layer origin, the host check, the numeric-label check, the label pattern and the drain.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Checked each consumer finding against the reference, and every `_send`/`_request` caller before guarding the request layer.
+  - Wrote the fixes, tests and vectors.
+  - Mutation-checked the new rules.
+  - Re-ran the suites and the gate.
+  - Updated the brief, the docs and the records.
+- **Oversight:** Done at the request of the browser sign-in train's lead, who relays the final digest to the six ports. The merge stays with the lead, after the consumers.
+
+## 2026-11-08: CodeRabbit review of #113 (browser sign-in)
+
+CodeRabbit left nine threads on #113. Eight are fixed, with tests. One is answered without a change.
+
+| # | Thread | Outcome |
+| :--- | :--- | :--- |
+| 1 | `docs/browser-login-porting.md`: the Go rune slice can panic | Fixed. The Go line bounds the slice by its length. Docs only. |
+| 2 | `_loopback.py`: HEAD answers carry a body | Fixed. `response_bytes(head=True)` sends headers only. `Content-Length` is what a GET would carry. |
+| 3 | `_loopback.py`: the tab reports failure at 60 s while the exchange may still succeed | Fixed. The tab has no deadline of its own and waits until the sign-in ends. The exchange's HTTP timeout and `close()` bound that wait. |
+| 4 | `control.py`: session credentials on the config and token requests | Not changed. `auth=False` means "no SDK credential", as for device login. A caller's own session header goes only to this API's origin, and neither route authenticates with it. Stripping it would make browser sign-in unlike device login and the other SDKs, and aiohttp cannot do it per request. |
+| 5 | `control.py`: `device_name=""` sends the hostname | Fixed. Only `None` gets the default. An empty name is left out of the URL, and `interactive_login` sends device login no `client_name`. |
+| 6 | `control.py`: a callback `error` can repeat a secret | Fixed. `classify_request` keeps only RFC 6749's error codes (`OAUTH_ERRORS`). |
+| 7 | `control.py`: truncation leaves a secret prefix | Fixed. `_redacted_response` scrubs the answer before `_api_error` builds the message. `_scrub` makes one pass, longest value first, and never edits inside `[redacted]`. |
+| 8 | `control.py`: a transport error keeps the request body in `__context__` | Fixed. `_without_secrets` always builds a new error, raised outside the handler: no cause, no context. |
+| 9 | `native_auth.py`: the token endpoint can leave the API origin (Major) | Fixed. A colon anywhere in `token_endpoint` makes the configuration unusable. `_exchange_browser_code` also refuses a resolved URL off the API's origin. |
+
+**Behaviour that changed for the consumers** (`docs/browser-login-porting.md`, "What changed since 49744ee385bf"):
+
+- the token-endpoint colon rule and the origin check;
+- the RFC 6749 error allow-list;
+- the empty `device_name`;
+- a `HEAD` without a body;
+- the tab's wait;
+- redaction before the message is built, and a new error with no context.
+
+**Vectors and digest:**
+
+- `browser-login-vectors.json` grows from 98 to 106 cases:
+  - `config`: 2 more;
+  - `callbacks`: 2 more;
+  - `sign_ins`: 3 more;
+  - `chooser`: 1 more.
+- The vectors file's sha256 changes from `9058adf2ad30fd8b7f255882ce718865170d0d4b84d36f8fbfa23bde51d1651e` to `deac6fb8d4f5e999194a8dd47777278921035cf806ab509790de8874a08e77c5`.
+- The candidate reference digest changes from `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (never published, so removed from `reference_history`) to `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c`, itself superseded by the final revision above.
+
+**Verification:**
+
+- Python 3.12, `python -m pytest -q --cov=thalovant` with `THALOVANT_CONFORMANCE_OUT`: 1599 passed, 1 skipped (1579 before the review, plus 20 new). Coverage is 90% in total, and 100% for `_loopback.py` and `native_auth.py`. The 98 original browser-login cases record identical results; 8 are new.
+- Python 3.10 at CI's floors (`aiohttp==3.11.0`, `cryptography==48.0.1`, `THALOVANT_MINIMUM_VERSIONS=1`): 1552 passed, 1 skipped.
+- Python 3.14: 1599 passed, 1 skipped. `mkdocs build --strict`, `python -m build` and `twine check` pass.
+- `mypy` and `ruff` pass. `scripts/check-sdk-parity.py` verifies the reference, and `--snapshot` digests to the new candidate.
+- Mutation check: each of the ten review fixes was reverted in turn, and every revert failed at least one test.
+- Live check against `https://api.thalovant.com`, now that API #501 is deployed:
+  - `GET /v1/auth/native/config` answers 200 with exactly the contract's six members, and `NativeSignInConfig.from_dict` accepts them.
+  - The authorization URL built on a bound loopback port has the contract's parameters in order, and `https://dash.thalovant.com/authorize?...` answers 200 HTML.
+  - `POST /v1/auth/native/token` with a made-up code answers `ThalovantAPIError` 400, code `None`, detail `invalid_grant`, with no secret in the message and no token kept.
+  - No sign-in was completed; that needs a person in the browser.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read the nine threads.
+  - Confirmed each finding against the code, and the API's rate-limit middleware for thread 4.
+  - Wrote the fixes, the tests and the new vector cases.
+  - Mutation-checked the fixes, re-ran the suites, the gate and the live API checks.
+  - Answered and resolved every thread.
+- **Oversight:** Done at the request of the browser sign-in train's lead. The merge stays with the lead, after the consumers.
+
+## 2026-11-08: Browser sign-in (0.11.0)
+
+The owner's goal is that a sign-in can be approved only by whoever started it, with no friction. A device code can be relayed to somebody else. With a loopback redirect, a link or code sent to someone on another computer delivers nothing to the sender, because the browser that approves delivers the code to its own computer. A forwarded port or another user of the same computer is not covered. thalovant-api #501 adds `GET /v1/auth/native/config` and the `thalovant-sdk` client on `http://127.0.0.1:<port>/callback`. This SDK is the reference the six other SDKs and MCP port from. The contract is `browser-sign-in-SPEC.md` from the lead.
+
+**Changed:**
+
+- `src/thalovant/control.py`:
+  - On both control-plane classes: `browser_login()` and `interactive_login()`.
+  - Helpers: `_native_sign_in_config`, `_browser_login`, `_exchange_browser_code`, `_native_token_request`, `_present_browser_login`, `_open_browser_quietly` and `_without_secrets`.
+  - `LoginMethod` and `DEFAULT_DEVICE_LOGIN_TIMEOUT`.
+  - `complete_native_sign_in` now builds its body with `_native_token_request`. Its behaviour is unchanged.
+- `src/thalovant/native_auth.py`: `browser_authorization_url`, `loopback_redirect_uri`, `new_state` (now also used by `begin_native_sign_in`, unchanged at 24 bytes), `NativeSignInConfig`, `can_open_browser`, `default_device_name`, and the constants.
+- New `src/thalovant/_loopback.py`: `LoopbackListener`, `classify_request` and `response_bytes`.
+- `src/thalovant/__init__.py`: the exports.
+- The version: 0.11.0.
+- `contracts/sdk-parity.json`:
+  - The new `browser-login` capability, with `device-login`'s scope matrix and embedded-c's caller-owned networking reason.
+  - The reviewed reference snapshot.
+  - The candidate digest appended to `reference_history`.
+- `contracts/conformance/browser-login-vectors.json` (new, 98 cases).
+- `contracts/conformance-results.json`: the reference's results for those cases. The existing records are byte-identical.
+- New tests: `tests/test_browser_login_vectors.py` and `tests/test_browser_login.py`.
+- Docs:
+  - `docs/browser-login-porting.md` (new).
+  - The README's sign-in section and quick start.
+  - `docs/api-reference.md`, `docs/index.md` and `docs/quickstart.md`.
+- Records: the CHANGELOG under 0.11.0, AGENTS.md, QUICK_FACTS.md, FAQ.md, AUDIT.md and SUGGESTIONS.md.
+
+**Decisions the porters inherit** (all in `docs/browser-login-porting.md`):
+
+- **Return type.** `browser_login` returns what the one-call device login returns: the raw token answer, so `ai_disclosure` survives.
+- **Errors.** The device-login denied and expired types are reused; there are no new error types.
+- **Configuration.** It is strict, and anything unusable is an error with no status. `auto` then uses device login. An explicit `browser_login()` raises a config 404 rather than switching method.
+- **The tab.** It is answered after the exchange, so the page is true. Five headers go with every listener answer.
+- **Callbacks.** `error` wins over `code`. A right-state callback without exactly one code fails the sign-in.
+- **Scopes and device name.** Empty scope strings are dropped. `device_name` is cut at 120 code points.
+- **Environment.** A variable is set only when it is non-empty.
+- **Exchange errors.** They are redacted and raised outside their handler, so neither `__cause__` nor `__context__` holds the original.
+- **CLI.** It gains no `login` command, because it has nowhere to keep a token (SUGGESTIONS.md).
+
+**Reference digest:** `57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9` (current) to `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (candidate at the first head; superseded by `50af6731e276...` after the review, above). Consumers accept both, merge and publish first; this PR merges last.
+
+**Verification:**
+
+- Baseline, on `main` 44b6e2b with `python -m pytest -q --cov=thalovant` on Python 3.12: 1397 passed, 1 skipped, total coverage 90%.
+- Python 3.12, `python -m pytest -q --cov=thalovant` with `THALOVANT_CONFORMANCE_OUT`: 1579 passed, 1 skipped.
+  - Total coverage is 90% (90.4% against 90.0%).
+  - `control.py` went from 92% to 93%.
+  - `native_auth.py` and `_loopback.py` are at 100%.
+- Python 3.10 at CI's floors (`aiohttp==3.11.0`, `cryptography==48.0.1`, `THALOVANT_MINIMUM_VERSIONS=1`): 1532 passed, 1 skipped. `tests/test_sdk_parity_contract.py` skips itself without `tomllib`.
+- Python 3.14: 1579 passed, 1 skipped.
+- Lint, types and the parity gate:
+  - `python -m mypy` (strict) and `python -m ruff check src tests scripts` pass.
+  - `python scripts/check-sdk-parity.py` reports "SDK parity reference verified".
+  - `--snapshot` digests to the candidate above.
+  - `scripts/generate-sdk-conformance.py --check` passes.
+- Packaging and docs:
+  - `python -m build` builds 0.11.0, and `twine check` passes both distributions.
+  - `mkdocs build --strict` passes.
+- The vectors:
+  - The RFC 7636 challenge and two more were checked with `openssl dgst -sha256`.
+  - The encoded device name was checked with Node's `encodeURIComponent` (plus `!'()*`).
+- Mutations: 14 hand mutations of the new code, of which 13 failed the new tests. The fourteenth replaced the token answer's shape check with `_accept_token({})`, which raises the same error with no status, so it is equivalent.
+- Not run: Windows and macOS (CI is `ubuntu-latest` only), the whole-workspace gate (`--workspace`), which needs the consumers' acceptances, and a sign-in against a live API, because #501 is not deployed yet.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read the contract, the device-login implementation, the API's #501 branch (`app/routes/auth_native.py`, `app/auth/native_clients.py`) and the consent page's parser (thalovant-frontend `src/utils/native-authorization.ts`).
+  - Wrote the implementation, the vectors (inputs by hand, expectations computed by the reference and cross-checked independently), the tests, the porting brief and the records.
+  - Ran the suites, the gate, the build, the docs build and the mutations.
+- **Oversight:** Done for the lead of the cross-SDK browser sign-in train, under the owner's goal above. The lead reviews and merges; this agent does not merge, tag or release.
 
 ## 2026-11-08: CodeRabbit review-body items on merged PRs #86 and #90
 

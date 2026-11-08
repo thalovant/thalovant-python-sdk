@@ -21,6 +21,20 @@ a security bug rather than a visible one.
 ``begun.verifier`` never leaves the process and never enters the browser. That
 is what PKCE is for: a code intercepted by whatever else claimed the redirect
 is useless without it.
+
+The same grant signs a *program* in -- a script, a command line, the MCP
+server -- through ``ThalovantControlPlane.browser_login``, which listens on a
+loopback port for the answer (RFC 8252 section 7.3). The pieces it is made of
+live here, so that each can be checked against the shared vectors on its own:
+``browser_authorization_url`` builds the address the browser opens,
+``loopback_redirect_uri`` the redirect it comes back to, ``new_state`` the
+value that ties the two together, ``NativeSignInConfig`` reads where the API
+says to send the browser, and ``can_open_browser`` says whether this machine
+has a browser to send. The browser that approves hands the code to its own
+computer's ``127.0.0.1``, so a sign-in link sent to somebody on another computer
+delivers nothing to the sender. That is all it promises: a forwarded callback
+port (``ssh -L``, a port-forwarding tool) or another user of the same computer
+can still complete a sign-in.
 """
 
 from __future__ import annotations
@@ -28,16 +42,32 @@ from __future__ import annotations
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
 from hashlib import sha256
+import ipaddress
+import os
+import re
 import secrets
-from urllib.parse import parse_qsl, urlencode, urlsplit
+import socket
+import sys
+from typing import Any, Iterable, Mapping
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 __all__ = [
+    "DEFAULT_BROWSER_LOGIN_TIMEOUT",
     "DEFAULT_DASHBOARD_URL",
     "DEFAULT_NATIVE_SCOPES",
+    "LOOPBACK_CALLBACK_PATH",
+    "MAX_DEVICE_NAME_LENGTH",
     "NativeSignIn",
+    "NativeSignInConfig",
+    "SDK_CLIENT_ID",
     "begin_native_sign_in",
+    "browser_authorization_url",
+    "can_open_browser",
     "challenge_for",
+    "default_device_name",
     "is_thalovant_url",
+    "loopback_redirect_uri",
+    "new_state",
     "new_verifier",
 ]
 
@@ -46,6 +76,19 @@ DEFAULT_DASHBOARD_URL = "https://dash.thalovant.com"
 
 #: The three a phone needs; also the three a free plan may mint.
 DEFAULT_NATIVE_SCOPES = ("hubs:read", "clients:read", "clients:write")
+
+#: The SDKs' own registered app, which a program signs in as through the
+#: browser. ``GET /v1/auth/native/config`` names it as ``sdk_client_id``.
+SDK_CLIENT_ID = "thalovant-sdk"
+#: The one path the loopback listener answers.
+LOOPBACK_CALLBACK_PATH = "/callback"
+#: Seconds a browser sign-in waits for the browser to come back.
+DEFAULT_BROWSER_LOGIN_TIMEOUT = 300.0
+#: The longest ``device_name`` the consent page shows and the token is named by,
+#: in Unicode code points (the API refuses a longer one).
+MAX_DEVICE_NAME_LENGTH = 120
+#: The name this SDK gives itself in ``default_device_name``.
+SDK_DEVICE_LABEL = "thalovant-python-sdk"
 
 
 def _base64url(raw: bytes) -> str:
@@ -62,6 +105,255 @@ def challenge_for(verifier: str) -> str:
     """The S256 challenge for a verifier."""
 
     return _base64url(sha256(verifier.encode("ascii")).digest())
+
+
+def new_state() -> str:
+    """An OAuth ``state``: 24 random bytes (192 bits), base64url, no padding.
+
+    It ties the answer the browser brings back to the request that sent it.
+    Compare it in constant time.
+    """
+
+    return _base64url(secrets.token_bytes(24))
+
+
+def loopback_redirect_uri(port: int) -> str:
+    """``http://127.0.0.1:<port>/callback``, the one redirect a program is answered on.
+
+    The IP literal, never ``localhost``, which a hosts file or a resolver can
+    send elsewhere; that path; no query, no trailing slash. The API matches it
+    exactly and only for an unprivileged port, which is what a port bound as
+    port 0 always is.
+    """
+
+    if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+        raise ValueError(f"A loopback redirect needs a port from 1024 to 65535, not {port!r}.")
+    return f"http://127.0.0.1:{port}{LOOPBACK_CALLBACK_PATH}"
+
+
+def _query_value(value: str) -> str:
+    """RFC 3986 percent-encoding: unreserved characters as they are, every other
+    byte of the UTF-8 form as ``%XX``, a space as ``%20``."""
+
+    return quote(value, safe="")
+
+
+def browser_authorization_url(
+    authorization_endpoint: str,
+    *,
+    redirect_uri: str,
+    code_challenge: str,
+    state: str,
+    scopes: Iterable[str] | None = None,
+    device_name: str | None = None,
+    client_id: str = SDK_CLIENT_ID,
+) -> str:
+    """The address a browser sign-in opens.
+
+    ``{authorization_endpoint}?response_type=code&client_id=...&redirect_uri=...
+    &code_challenge=...&code_challenge_method=S256&state=...&scope=...
+    &device_name=...``, in that order, every value percent-encoded as RFC 3986
+    has it (a space is ``%20``). Empty strings among ``scopes`` are dropped and
+    the rest joined by one space; ``scope`` is left out when nothing is left,
+    and the API then grants its default (``hubs:read clients:write``).
+    ``device_name`` is cut to :data:`MAX_DEVICE_NAME_LENGTH` code points, and
+    left out when empty.
+    """
+
+    parameters = [
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", redirect_uri),
+        ("code_challenge", code_challenge),
+        # S256 only: `plain` puts the verifier in the browser.
+        ("code_challenge_method", "S256"),
+        ("state", state),
+    ]
+    scope = " ".join(value for value in (scopes or ()) if value)
+    if scope:
+        parameters.append(("scope", scope))
+    if device_name:
+        parameters.append(("device_name", device_name[:MAX_DEVICE_NAME_LENGTH]))
+    query = "&".join(f"{key}={_query_value(value)}" for key, value in parameters)
+    return f"{authorization_endpoint}?{query}"
+
+
+def default_device_name() -> str:
+    """``thalovant-python-sdk on <hostname>``: what the consent page and the token show."""
+
+    try:
+        host = socket.gethostname().strip()
+    except OSError:
+        host = ""
+    name = f"{SDK_DEVICE_LABEL} on {host}" if host else SDK_DEVICE_LABEL
+    return name[:MAX_DEVICE_NAME_LENGTH]
+
+
+def _platform_name() -> str:
+    """This machine as the browser rule names it: ``linux``, ``macos``, ``windows`` or another."""
+
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return sys.platform
+
+
+def can_open_browser(environ: Mapping[str, str] | None = None, platform: str | None = None) -> bool:
+    """Whether this machine can show a browser to the person signing in.
+
+    Never in CI (``CI`` set) or over SSH (``SSH_CONNECTION`` or ``SSH_TTY``
+    set): the browser would open on another machine, or nowhere. Otherwise
+    yes on ``macos`` and ``windows``; anywhere else -- Linux, the BSDs -- only
+    with a display (``DISPLAY`` or ``WAYLAND_DISPLAY``). A variable counts as
+    set when it has a value: an empty one is not set. ``environ`` and
+    ``platform`` default to this process's.
+    """
+
+    env: Mapping[str, str] = os.environ if environ is None else environ
+
+    def present(name: str) -> bool:
+        return bool(env.get(name))
+
+    if present("CI") or present("SSH_CONNECTION") or present("SSH_TTY"):
+        return False
+    system = _platform_name() if platform is None else platform
+    if system in {"macos", "windows"}:
+        return True
+    return present("DISPLAY") or present("WAYLAND_DISPLAY")
+
+
+_CLIENT_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+#: A ``%`` that is not followed by two hexadecimal digits.
+_BROKEN_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+#: One DNS label as a URL host carries it: letters, digits and inner hyphens.
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _real_host(host: str, bracketed: bool) -> bool:
+    """Whether *host* (lowercased, brackets off) names something a browser can reach.
+
+    An IP address -- IPv6 only between brackets, IPv4 whenever the last label
+    is a number, as a browser reads it -- or a DNS name: ASCII labels of
+    letters, digits and inner hyphens (an international name in its ``xn--``
+    form), at most 253 characters. ``%``, ``_``, an empty label and anything
+    else that will not parse to a hostname make the address unusable.
+    """
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if bracketed:
+        return address is not None and address.version == 6
+    if address is not None:
+        return address.version == 4
+    labels = host.split(".")
+    if labels[-1].isdigit():
+        return False  # numeric like an IPv4 address, and not one
+    return len(host) <= 253 and all(_HOST_LABEL.fullmatch(label) for label in labels)
+
+
+def _usable_authorization_endpoint(value: Any) -> bool:
+    """https, or http on a loopback host while developing; a host that parses
+    to a real hostname or IP address; a port a browser can open; no
+    credentials, query, fragment, whitespace or control characters."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    if any(char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        host = (parts.hostname or "").lower()
+        # Raises ValueError above 65535; 0 parses, and no browser can open it either.
+        if parts.port == 0:
+            return False
+    except ValueError:
+        return False
+    if not host or "@" in parts.netloc or parts.query or parts.fragment or "?" in value or "#" in value:
+        return False
+    if not _real_host(host, "[" in parts.netloc):
+        return False
+    scheme = parts.scheme.lower()
+    return scheme == "https" or (scheme == "http" and host in {"localhost", "127.0.0.1", "::1"})
+
+
+def _usable_token_endpoint(value: Any) -> bool:
+    """A path on the API: one leading slash, every ``%`` followed by two hex
+    digits, and no colon, query, fragment, backslash or whitespace.
+
+    No colon, because a URL joiner can read what follows the slash as a URL of
+    its own: ``/https://collector.example/token`` and
+    ``/collector.example:443/token`` both leave the API's origin once the
+    slash is taken off, and the exchange carries the code and the verifier.
+    """
+
+    if not isinstance(value, str) or not value.startswith("/") or value.startswith("//"):
+        return False
+    if _BROKEN_ESCAPE.search(value):
+        # "/v1/%zz" cannot be sent as written; better found out now, while a
+        # device login can still stand in, than after somebody approved.
+        return False
+    return not any(
+        char in ":?#\\" or char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value
+    )
+
+
+@dataclass(frozen=True)
+class NativeSignInConfig:
+    """Where a program signs in through the browser (``GET /v1/auth/native/config``).
+
+    ``authorization_endpoint`` is the dashboard page the browser opens;
+    ``token_endpoint`` the path on the API the code is exchanged at;
+    ``sdk_client_id`` the registered app the program signs in as. The API
+    reads it from its own settings, so a staging or self-hosted API sends the
+    browser to its own dashboard.
+    """
+
+    authorization_endpoint: str
+    token_endpoint: str
+    sdk_client_id: str
+    device_authorization_endpoint: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> NativeSignInConfig:
+        """Read the answer; refuse one a browser sign-in cannot safely use.
+
+        Unusable (``ValueError``): an ``authorization_endpoint`` that is not
+        https (or http on a loopback host), carries credentials, a query or a
+        fragment, names port 0 or one above 65535, or has a host that does not
+        parse to a real hostname or IP address; a ``token_endpoint`` that is not a path on the API (a colon
+        anywhere in it included); a missing
+        ``sdk_client_id``; or ``code_challenge_methods_supported`` without
+        ``S256``. Other members are ignored.
+        """
+
+        if not isinstance(payload, Mapping):
+            raise ValueError("The browser sign-in configuration is not an object.")
+        authorization = payload.get("authorization_endpoint")
+        token = payload.get("token_endpoint")
+        client_id = payload.get("sdk_client_id")
+        methods = payload.get("code_challenge_methods_supported")
+        if not _usable_authorization_endpoint(authorization):
+            raise ValueError("The browser sign-in configuration has no usable authorization_endpoint.")
+        if not _usable_token_endpoint(token):
+            raise ValueError("The browser sign-in configuration has no usable token_endpoint.")
+        if not isinstance(client_id, str) or not _CLIENT_ID.fullmatch(client_id):
+            raise ValueError("The browser sign-in configuration has no usable sdk_client_id.")
+        if not isinstance(methods, list) or "S256" not in methods:
+            raise ValueError("The browser sign-in configuration does not offer S256.")
+        device = payload.get("device_authorization_endpoint")
+        return cls(
+            authorization_endpoint=str(authorization),
+            token_endpoint=str(token),
+            sdk_client_id=client_id,
+            device_authorization_endpoint=device if isinstance(device, str) and device else None,
+        )
 
 
 def is_thalovant_url(url: str) -> bool:
@@ -185,7 +477,7 @@ def begin_native_sign_in(
         raise ValueError("redirect_uri is required to start a sign-in.")
     _require_safe_dashboard(dashboard_url)
     verifier = new_verifier()
-    state = _base64url(secrets.token_bytes(24))
+    state = new_state()
     query = urlencode(
         {
             "client_id": client_id,

@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 import re
 import secrets
+import threading
 import time
 from typing import Any, Awaitable, Callable, Coroutine, Iterable, Iterator, Literal, Mapping, Sequence, TypeVar, cast
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
@@ -23,6 +24,7 @@ import webbrowser
 
 from . import _aiohttp
 from ._loop import LoopThread as _LoopThread
+from ._loopback import LoopbackListener
 from .chat_apps import (
     MAX_BRIDGE_AVATAR_BYTES,
     AllowedChatInput,
@@ -57,6 +59,17 @@ from .errors import (
     ThalovantUnsupportedProtocolError,
 )
 from .identity import ThalovantIdentity
+from .native_auth import (
+    DEFAULT_BROWSER_LOGIN_TIMEOUT,
+    NativeSignInConfig,
+    browser_authorization_url,
+    can_open_browser,
+    challenge_for,
+    default_device_name,
+    loopback_redirect_uri,
+    new_state,
+    new_verifier,
+)
 from .protocols import (
     DEFAULT_PROTOCOL_PREFERENCE,
     HubDataPlaneEndpoints,
@@ -74,6 +87,13 @@ DEFAULT_CONTROL_API_URL = "https://api.thalovant.com"
 DEFAULT_CONTROL_USER_AGENT = USER_AGENT
 
 DEFAULT_DEVICE_POLL_INTERVAL = 5.0
+#: Seconds :meth:`AsyncThalovantControlPlane.login_with_browser` waits for a
+#: device sign-in to be approved by default.
+DEFAULT_DEVICE_LOGIN_TIMEOUT = 900.0
+#: How :meth:`AsyncThalovantControlPlane.interactive_login` signs in:
+#: ``auto`` (the browser when this machine has one and the API offers it,
+#: device login otherwise), or one of the two, forced.
+LoginMethod = Literal["auto", "browser", "device"]
 #: Seconds between two reads of an operation the caller is waiting on.
 DEFAULT_OPERATION_POLL_INTERVAL = 2.0
 #: How long :meth:`AsyncThalovantControlPlane.wait_for_admission` waits by
@@ -725,14 +745,239 @@ class AsyncThalovantControlPlane:
         """
 
         self._require_secure_token_exchange()
-        payload = {
-            "code": code,
-            "code_verifier": verifier,
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-        }
+        payload = _native_token_request(code, verifier, client_id, redirect_uri)
         token = await self._request("POST", "/v1/auth/native/token", json=payload, auth=False)
         return self._accept_token(token)
+
+    async def _exchange_browser_code(
+        self,
+        config: NativeSignInConfig,
+        code: str,
+        verifier: str,
+        redirect_uri: str,
+        hidden: Sequence[str],
+    ) -> dict[str, Any]:
+        """``POST {token_endpoint}`` with the four fields, and keep the token.
+
+        Read as a device-login token answer is: a 2xx whose body is not a JSON
+        object is an error with no status -- the API did not refuse, its
+        answer could not be used -- and any other failure carries the
+        api-errors fields (``invalid_grant`` for every way an exchange fails).
+        The answer has every value in *hidden* taken out before the error's
+        message is built, so a message cut to length cannot keep part of one.
+        """
+
+        self._require_secure_token_exchange()
+        # The configuration already refuses a token endpoint that could leave
+        # the API, and _send refuses any request off the API's origin: the
+        # code and the verifier go nowhere else.
+        payload = _native_token_request(code, verifier, config.sdk_client_id, redirect_uri)
+        response = await self._send("POST", config.token_endpoint, json=payload, auth=False)
+        if not 200 <= response.status_code < 300:
+            raise _api_error(_redacted_response(response, hidden))
+        try:
+            body: Any = response.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise ThalovantAPIError("Thalovant API returned an unexpected response shape.")
+        return self._accept_token(body)
+
+    async def browser_login(
+        self,
+        *,
+        scopes: Iterable[str] | None = None,
+        device_name: str | None = None,
+        open_browser: bool = True,
+        timeout: float = DEFAULT_BROWSER_LOGIN_TIMEOUT,
+        prompt: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Sign in through the browser and store the API token.
+
+        The authorization code grant with PKCE on a loopback redirect (RFC
+        8252): the SDK listens on ``127.0.0.1`` on a port the system picks,
+        opens the browser at the dashboard's consent page (read from ``GET
+        /v1/auth/native/config``), and waits for the browser to come back to
+        ``http://127.0.0.1:<port>/callback``. The browser that approves hands
+        the code to its own computer, so a sign-in link sent to somebody on
+        another computer delivers nothing to the sender -- which a device code,
+        read off one screen and typed in anywhere, cannot promise. A forwarded
+        callback port or another user of the same computer is another matter.
+
+        The URL is always printed as well as opened (``Opening your browser
+        to sign in to Thalovant. If it does not open, visit:`` and the URL);
+        pass ``prompt`` to present it yourself instead, and ``open_browser=
+        False`` to only show it. ``scopes`` are what the token carries; none
+        asks for the API's default, ``hubs:read`` and ``clients:write``.
+        ``device_name`` is what the consent page and the token show
+        (``thalovant-python-sdk on <hostname>`` by default, at most 120
+        characters).
+
+        Returns the token answer and stores its ``access_token`` and
+        ``token_id`` exactly as a device login does, so
+        :meth:`revoke_api_token` revokes it the same way. A tab that answers
+        with another sign-in's ``state`` is turned away and the wait goes on.
+        Denied in the browser raises :class:`ThalovantDeviceLoginDenied`; no
+        answer within ``timeout`` seconds (default 300) raises
+        :class:`ThalovantDeviceLoginExpired`; a code the API will not
+        exchange raises :class:`ThalovantAPIError` with its ``status_code``
+        and ``detail`` (``invalid_grant``). An API that does not offer browser
+        sign-in answers the configuration with a 404, raised as a
+        :class:`ThalovantAPIError`: :meth:`interactive_login` falls back to a
+        device login for it. Neither the code, the verifier, the state nor
+        the token appears in an error.
+        """
+
+        # Before anything is asked or opened: a code and its verifier never
+        # cross the network in cleartext.
+        self._require_secure_token_exchange()
+        config = await self._native_sign_in_config()
+        return await self._browser_login(
+            config, scopes=scopes, device_name=device_name, open_browser=open_browser,
+            timeout=timeout, prompt=prompt,
+        )
+
+    async def _native_sign_in_config(self) -> NativeSignInConfig:
+        """``GET /v1/auth/native/config``: where to send the browser, where to exchange."""
+
+        response = await self._send("GET", "/v1/auth/native/config", auth=False)
+        if response.status_code == 404:
+            error = _api_error(response)
+            raise ThalovantAPIError(
+                "This Thalovant API does not offer browser sign-in; sign in with a device login instead.",
+                status_code=404,
+                problem=error.problem,
+            )
+        if not 200 <= response.status_code < 300:
+            raise _api_error(response)
+        try:
+            body: Any = response.json()
+        except ValueError:
+            body = None
+        try:
+            # A 2xx the SDK cannot use is an error with no status, as a token
+            # answer's is: the API did not refuse.
+            return NativeSignInConfig.from_dict(body)
+        except ValueError as error:
+            raise ThalovantAPIError(f"Thalovant API answered an unusable browser sign-in configuration. {error}") from None
+
+    async def _browser_login(
+        self,
+        config: NativeSignInConfig,
+        *,
+        scopes: Iterable[str] | None,
+        device_name: str | None,
+        open_browser: bool,
+        timeout: float,
+        prompt: Callable[[str], None] | None,
+    ) -> dict[str, Any]:
+        """One browser sign-in against *config*: listen, open, wait, exchange, answer the tab."""
+
+        self._require_secure_token_exchange()
+        verifier = new_verifier()
+        state = new_state()
+        listener = LoopbackListener(state)
+        # Bound before the URL is built: the redirect names the port.
+        port = await listener.start()
+        try:
+            redirect_uri = loopback_redirect_uri(port)
+            url = browser_authorization_url(
+                config.authorization_endpoint,
+                client_id=config.sdk_client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=challenge_for(verifier),
+                state=state,
+                scopes=scopes,
+                # Only None asks for the default: an empty name is the
+                # caller's way of sending none, and keeps the hostname out.
+                device_name=default_device_name() if device_name is None else device_name,
+            )
+            _present_browser_login(url, prompt=prompt, open_browser=open_browser)
+            callback = await listener.wait(timeout)
+            if callback is None:
+                raise ThalovantDeviceLoginExpired(
+                    f"The browser sign-in was not completed within {timeout:g} seconds. "
+                    "Call browser_login() again to start a new one."
+                )
+            if callback.outcome == "denied":
+                raise ThalovantDeviceLoginDenied("The sign-in request was denied in the browser.")
+            if callback.code is None:
+                # callback.error is one of RFC 6749's codes or nothing: a value
+                # the page chose could be the state or a code.
+                raise ThalovantAPIError(
+                    "The browser came back without a sign-in code"
+                    + (f" ({callback.error})." if callback.error else "."),
+                    code=callback.error,
+                )
+            hidden = (callback.code, verifier, state)
+            failure: ThalovantAPIError | None = None
+            try:
+                token = await self._exchange_browser_code(config, callback.code, verifier, redirect_uri, hidden)
+            except ThalovantAPIError as error:
+                # A code is single-use: retrying the exchange would only
+                # revoke the token a first exchange minted (RFC 9700).
+                failure = _without_secrets(error, hidden)
+            if failure is not None:
+                # Raised here, outside the handler, so the original -- whose
+                # problem may echo the code and the verifier -- is not kept
+                # as this error's __context__ either.
+                raise failure from None
+            listener.finish(True)
+            return token
+        finally:
+            await listener.close()
+
+    async def interactive_login(
+        self,
+        *,
+        method: LoginMethod = "auto",
+        scopes: Iterable[str] | None = None,
+        device_name: str | None = None,
+        open_browser: bool = True,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Sign a person in the best way this machine allows, and store the API token.
+
+        ``method="auto"`` signs in through the browser (:meth:`browser_login`)
+        when this machine can show one (:func:`thalovant.native_auth.can_open_browser`:
+        never over SSH or in CI; on Linux only with a display) and the API
+        answers ``GET /v1/auth/native/config``; otherwise it uses a device
+        login (:meth:`login_with_browser`), whose code can be approved from
+        any browser. ``"browser"`` and ``"device"`` force one. Once the
+        browser has been sent to the consent page, the browser sign-in's own
+        outcome stands: it never turns into a device login.
+
+        ``device_name`` names this machine on the consent page (a device
+        login's ``client_name``). ``timeout`` defaults to each method's own:
+        300 seconds for the browser, 900 for a device login. Returns the
+        token answer, as both methods do.
+        """
+
+        if method not in ("auto", "browser", "device"):
+            raise ValueError(f"method must be 'auto', 'browser' or 'device', not {method!r}.")
+        requested = list(scopes) if scopes is not None else None
+        name = default_device_name() if device_name is None else device_name
+        config: NativeSignInConfig | None = None
+        if method == "browser":
+            self._require_secure_token_exchange()
+            config = await self._native_sign_in_config()
+        elif method == "auto" and can_open_browser():
+            try:
+                self._require_secure_token_exchange()
+                config = await self._native_sign_in_config()
+            except ThalovantAPIError:
+                # An older API (404), or one that cannot say: the browser has
+                # not been opened, so a device login is not a downgrade.
+                config = None
+        if config is None:
+            return await self.login_with_browser(
+                scopes=requested, client_name=name, open_browser=open_browser,
+                timeout=DEFAULT_DEVICE_LOGIN_TIMEOUT if timeout is None else timeout,
+            )
+        return await self._browser_login(
+            config, scopes=requested, device_name=name, open_browser=open_browser,
+            timeout=DEFAULT_BROWSER_LOGIN_TIMEOUT if timeout is None else timeout, prompt=None,
+        )
 
     async def login_with_browser(
         self,
@@ -2486,6 +2731,13 @@ class AsyncThalovantControlPlane:
             request_headers["authorization"] = f"Bearer {self.access_token}"
 
         url = urljoin(self.api_url, path.lstrip("/"))
+        if _origin(url) != _origin(self.api_url):
+            # A path is joined to the API's address with its leading slashes
+            # taken off, so "/https://elsewhere/x" -- or "/elsewhere:443/x",
+            # whose first segment reads as a scheme -- would become a URL of
+            # its own. Every request this client makes, and the token on it,
+            # stays on the API's origin.
+            raise ThalovantAPIError("Refusing a request off the Thalovant API's origin.")
         parsed = urlsplit(url)
         if parsed.username or parsed.password:
             raise ThalovantAPIError("Control-plane URLs must not include embedded credentials.")
@@ -2677,6 +2929,49 @@ class ThalovantControlPlane:
         _present_device_login(grant, prompt=prompt, open_browser=open_browser)
         token = self._poll_device_token(grant.device_code, interval=grant.interval, timeout=timeout)
         return self._core._accept_token(token)
+
+    def browser_login(
+        self,
+        *,
+        scopes: Iterable[str] | None = None,
+        device_name: str | None = None,
+        open_browser: bool = True,
+        timeout: float = DEFAULT_BROWSER_LOGIN_TIMEOUT,
+        prompt: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Sign in through the browser (PKCE on a loopback redirect) and store the API token.
+
+        See :meth:`AsyncThalovantControlPlane.browser_login`. ``prompt`` runs
+        on the SDK's event-loop thread.
+        """
+
+        return self._run(
+            self._core.browser_login(
+                scopes=scopes, device_name=device_name, open_browser=open_browser,
+                timeout=timeout, prompt=prompt,
+            )
+        )
+
+    def interactive_login(
+        self,
+        *,
+        method: LoginMethod = "auto",
+        scopes: Iterable[str] | None = None,
+        device_name: str | None = None,
+        open_browser: bool = True,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Sign in through the browser when this machine can, with a device login otherwise.
+
+        See :meth:`AsyncThalovantControlPlane.interactive_login`.
+        """
+
+        return self._run(
+            self._core.interactive_login(
+                method=method, scopes=scopes, device_name=device_name,
+                open_browser=open_browser, timeout=timeout,
+            )
+        )
 
     def _poll_device_token(
         self,
@@ -4041,6 +4336,95 @@ def _present_device_login(
             webbrowser.open(grant.verification_uri_complete)
         except Exception:  # noqa: BLE001 - browser availability is best-effort
             pass
+
+
+def _native_token_request(code: str, verifier: str, client_id: str, redirect_uri: str) -> dict[str, str]:
+    """The body of ``POST /v1/auth/native/token``: exactly these four fields."""
+
+    return {"code": code, "code_verifier": verifier, "client_id": client_id, "redirect_uri": redirect_uri}
+
+
+def _present_browser_login(url: str, *, prompt: Callable[[str], None] | None, open_browser: bool) -> None:
+    """Show the sign-in URL (opening a browser can fail without a word) and open it."""
+
+    if prompt is not None:
+        prompt(url)
+    elif open_browser:
+        print(f"Opening your browser to sign in to Thalovant. If it does not open, visit:\n{url}")
+    else:
+        print(f"To sign in to Thalovant, visit:\n{url}")
+    if open_browser:
+        # On a thread of its own: a console browser can hold the call until it
+        # exits, and the listener has to be answering by then.
+        threading.Thread(target=_open_browser_quietly, args=(url,), name="thalovant-browser", daemon=True).start()
+
+
+def _open_browser_quietly(url: str) -> None:
+    """``webbrowser.open``, whose failure changes nothing: the URL was already shown."""
+
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - browser availability is best-effort; the URL was shown
+        pass
+
+
+_REDACTED = "[redacted]"
+
+
+def _scrub(item: Any, hidden: Iterable[str | None]) -> Any:
+    """*item* with every value in *hidden* replaced by ``[redacted]``, keys and nesting included.
+
+    One pass, the longest value first, so that a value which is part of
+    another cannot break the longer one up before it is matched; and never
+    inside a ``[redacted]`` already there, so scrubbing twice changes nothing.
+    """
+
+    values = [value for value in hidden if value]
+    if isinstance(item, str):
+        if not values:
+            return item
+        pattern = re.compile("|".join(re.escape(value) for value in sorted(values, key=len, reverse=True)))
+        return _REDACTED.join(pattern.sub(_REDACTED, part) for part in item.split(_REDACTED))
+    if isinstance(item, Mapping):
+        return {_scrub(key, values): _scrub(member, values) for key, member in item.items()}
+    if isinstance(item, list):
+        return [_scrub(member, values) for member in item]
+    return item
+
+
+def _redacted_response(response: Any, hidden: Iterable[str | None]) -> _Response:
+    """*response* with *hidden* taken out of its body, before any message is made of it.
+
+    A body that parses is scrubbed as parsed -- an escaped value is still the
+    value -- and written back; one that does not is scrubbed as text.
+    """
+
+    import json
+
+    text = getattr(response, "text", "")
+    text = text if isinstance(text, str) else ""
+    try:
+        text = json.dumps(_scrub(json.loads(text), hidden))
+    except ValueError:
+        text = _scrub(text, hidden)
+    headers = getattr(response, "headers", None)
+    return _Response(response.status_code, text, headers if headers is not None else {})
+
+
+def _without_secrets(error: ThalovantAPIError, hidden: Iterable[str | None]) -> ThalovantAPIError:
+    """A new error like *error*, with every value in *hidden* taken out of its message and its problem.
+
+    An API that echoes a request back (a 422 lists each field's ``input``)
+    would otherwise hand the code and the verifier to whoever logs the error.
+    Always a new object, never *error* itself: the transport's own exception
+    rides on *error* as its ``__context__``, and a requests one keeps the
+    request -- its body, the code and the verifier -- on ``.request``.
+    """
+
+    problem = _scrub(error.problem, hidden) if error.problem is not None else None
+    clean = type(error)(_scrub(str(error), hidden), status_code=error.status_code, problem=problem)
+    clean.retry_after_seconds = error.retry_after_seconds
+    return clean
 
 
 def _awaitable_sleep(sleep: Callable[[float], Any]) -> Callable[[float], Awaitable[Any]]:
