@@ -423,6 +423,7 @@ def test_a_consumer_is_judged_on_what_it_produced_not_what_it_declared(tmp_path)
 
 
 def _rewrite_acceptance(root, change):
+    """Rewrite the consumer's acceptance with ``change`` applied to its parsed JSON."""
     path = root / parity.MANIFEST
     acceptance = json.loads(path.read_text())
     acceptance = change(acceptance)
@@ -459,8 +460,13 @@ def test_an_acceptance_entry_that_is_not_an_object_is_a_controlled_error(consume
     ("implementation", ["src/code.txt"], "implementation must be an object"),
     ("tests", "tests/test.txt", "tests must be an object"),
     ("vectors", ["shared-vectors.json"], "vectors must be an object"),
+    # A path or hash that is not a string reached ``root / path`` and raised
+    # TypeError, which named neither the capability nor the file.
+    ("vectors", {"shared-vectors.json": 5}, "vectors 'shared-vectors.json' must name a path as a string"),
+    ("implementation", {"src/code.txt": None}, "implementation 'src/code.txt' must name a hash as a string"),
 ])
 def test_an_acceptance_field_of_the_wrong_shape_is_a_controlled_error(consumer, field, value, message):
+    """A field read as text or as a mapping is checked before anything reads it."""
     contract, root = consumer
 
     def change(acceptance):
@@ -481,6 +487,7 @@ def test_an_acceptance_field_of_the_wrong_shape_is_a_controlled_error(consumer, 
      "reference_digests must be a list"),
 ])
 def test_an_acceptance_of_the_wrong_shape_is_a_controlled_error(consumer, change, message):
+    """The manifest, its capabilities and its digests have a shape before any rule reads them."""
     contract, root = consumer
     _rewrite_acceptance(root, change)
     with pytest.raises(ValueError, match=message):
@@ -488,6 +495,7 @@ def test_an_acceptance_of_the_wrong_shape_is_a_controlled_error(consumer, change
 
 
 def test_one_malformed_consumer_does_not_stop_the_workspace_run(reference, tmp_path):
+    """A malformed manifest is one consumer's error, not the end of the run."""
     workspace = tmp_path / "ws"
     contracts = workspace / "thalovant-node-sdk" / "contracts"
     contracts.mkdir(parents=True)
@@ -499,3 +507,10 @@ def test_one_malformed_consumer_does_not_stop_the_workspace_run(reference, tmp_p
     assert len(errors) == 8
     assert any("thalovant-node-sdk/future: the acceptance must be an object, not null" in error
                for error in errors)
+
+
+@pytest.mark.parametrize("name", [5, None, ["src/code.txt"]])
+def test_evidence_that_is_not_a_path_is_a_controlled_error(tmp_path, name):
+    """``root / name`` raised TypeError before the check that says what is wrong."""
+    with pytest.raises(ValueError, match="regular repository file"):
+        parity.file_hash(tmp_path, name)

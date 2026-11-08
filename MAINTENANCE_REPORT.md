@@ -8,15 +8,15 @@ Two review-body items ("outside diff range" comments, which are not threads) had
 
 | Old PR | Item | Outcome |
 | :--- | :--- | :--- |
-| #86 | `scripts/check-sdk-parity.py`: reject non-object capability entries before the conformance comparison | Still valid; fixed here. A `null`, list, string or number entry raised `AttributeError` in `validate_consumer` (a known capability) or `compare_conformance` (one the reference does not know yet), and `check()` catches neither, so a whole-workspace run stopped at the first malformed consumer with a traceback. The new `acceptance_entries()` checks the manifest, `capabilities`, each entry and its `reason`, `implementation`, `tests` and `vectors`, plus `reference_digests` (a string there was searched as text), and raises the gate's usual `ValueError`. |
+| #86 | `scripts/check-sdk-parity.py`: reject non-object capability entries before the conformance comparison | Still valid; fixed here. A `null`, list, string or number entry raised `AttributeError` in `validate_consumer` (a known capability) or `compare_conformance` (one the reference does not know yet), and `check()` catches neither, so a whole-workspace run stopped at the first malformed consumer with a traceback. The new `acceptance_entries()` checks the manifest, `capabilities`, each entry and its `reason`, `implementation`, `tests` and `vectors` (and that every path and hash in them is a string), plus `reference_digests` (a string there was searched as text), and raises the gate's usual `ValueError`. `file_hash()` checks its argument's type before joining it to the checkout path. |
 | #90 | `intents.py`: include `listed_in` in `HubIntentInventory.as_dict()` | Already fixed in f8688da (#105, 0.9.7): `as_dict()` carries `"listed_in": list(self.listed_in)`. Covered by `tests/test_intents.py::test_the_serialised_inventory_says_which_language_it_listed_in`. |
 
 **Changed:** `scripts/check-sdk-parity.py` and `tests/test_sdk_parity_contract.py`. Nothing under `src/`, so the parity reference digest does not move and `auto-release.yml` finds no release path.
 
 **Verification:**
 
-- `python -m pytest -q`: 1392 passed, 1 skipped (1376 before, plus 16 new). `ruff check src tests scripts` and `mypy` pass.
-- The 16 new tests fail against the script on `main` (an uncaught `AttributeError`, or the string `reference_digests` passing) and pass with the fix.
+- `python -m pytest -q`: 1397 passed, 1 skipped (1376 before, plus 21 new). `ruff check src tests scripts` and `mypy` pass.
+- The 21 new tests fail against the script on `main` (an uncaught `AttributeError` or `TypeError`, or the string `reference_digests` passing) and pass with the fix. Five of them come from CodeRabbit's review of this change: a path or hash that is not a string, and `file_hash()` given a number, `None` or a list.
 - `scripts/check-sdk-parity.py` verifies the reference, and `--workspace ... --consumer thalovant-node-sdk` verifies the Node consumer. All eight consumer manifests on `main` were read: every entry and field already has the shape the gate now requires, so no consumer changes outcome.
 
 ### Transparency Report

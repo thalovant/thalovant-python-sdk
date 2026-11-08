@@ -93,8 +93,12 @@ def read(path):
 
 
 def file_hash(root, name):
+    # The type first: ``root / name`` raises TypeError for a number or a list,
+    # before this check could say what was wrong.
+    if not isinstance(name, str) or not name:
+        raise ValueError("Evidence must be a regular repository file")
     path = root / name
-    if not isinstance(name, str) or not name or path.is_symlink():
+    if path.is_symlink():
         raise ValueError("Evidence must be a regular repository file")
     if not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
         raise ValueError(f"Missing or escaping evidence file: {name}")
@@ -332,9 +336,14 @@ def acceptance_entries(acceptance, repo):
         if not isinstance(entry.get("reason", ""), str):
             raise ValueError(f"{repo}/{name}: reason must be a string")
         for kind in ("implementation", "tests", "vectors"):
-            if not isinstance(entry.get(kind, {}), dict):
-                raise ValueError(f"{repo}/{name}: {kind} must be an object of file to "
-                                 f"{'path' if kind == 'vectors' else 'hash'}")
+            what = "path" if kind == "vectors" else "hash"
+            evidence = entry.get(kind, {})
+            if not isinstance(evidence, dict):
+                raise ValueError(f"{repo}/{name}: {kind} must be an object of file to {what}")
+            for key, value in evidence.items():
+                if not isinstance(value, str):
+                    raise ValueError(f"{repo}/{name}: {kind} {key!r} must name a {what} as a string, "
+                                     f"not {_JSON_TYPE_NAMES.get(type(value), type(value).__name__)}")
     return entries
 
 
