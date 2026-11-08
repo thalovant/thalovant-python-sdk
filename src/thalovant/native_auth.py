@@ -245,12 +245,19 @@ def _usable_authorization_endpoint(value: Any) -> bool:
 
 
 def _usable_token_endpoint(value: Any) -> bool:
-    """A path on the API: one leading slash, no query, fragment, backslash or whitespace."""
+    """A path on the API: one leading slash, and no colon, query, fragment,
+    backslash or whitespace.
+
+    No colon, because a URL joiner can read what follows the slash as a URL of
+    its own: ``/https://collector.example/token`` and
+    ``/collector.example:443/token`` both leave the API's origin once the
+    slash is taken off, and the exchange carries the code and the verifier.
+    """
 
     if not isinstance(value, str) or not value.startswith("/") or value.startswith("//"):
         return False
     return not any(
-        char in "?#\\" or char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value
+        char in ":?#\\" or char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value
     )
 
 
@@ -276,7 +283,8 @@ class NativeSignInConfig:
 
         Unusable (``ValueError``): an ``authorization_endpoint`` that is not
         https (or http on a loopback host), carries credentials, a query or a
-        fragment; a ``token_endpoint`` that is not a path on the API; a missing
+        fragment; a ``token_endpoint`` that is not a path on the API (a colon
+        anywhere in it included); a missing
         ``sdk_client_id``; or ``code_challenge_methods_supported`` without
         ``S256``. Other members are ignored.
         """

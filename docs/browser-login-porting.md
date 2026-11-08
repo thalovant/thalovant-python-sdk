@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Porting brief for the browser-login capability (browser sign-in with PKCE on a loopback redirect), Python 0.11.0 reference. -->
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review of #113: token endpoint origin rule, RFC 6749 error allow-list, HEAD without a body, the tab waits for the end, empty device name, redact before formatting, the Go rune slice; digest 50af6731e276. -->
 
 # Porting browser sign-in (`browser-login`)
 
@@ -18,7 +18,7 @@ vectors, records its results, and acknowledges the reference.
 
 | Capability | Vectors | Required in | Not applicable in |
 |---|---|---|---|
-| `browser-login` | `browser-login-vectors.json` (98 cases) | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
+| `browser-login` | `browser-login-vectors.json` (106 cases) | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
 
 The scope matrix is `device-login`'s. embedded-c is a caller-buffer wire library
 with no control-plane HTTP client. Its caller owns every request it would make and
@@ -103,7 +103,10 @@ something like this:
     `?`), a fragment, whitespace or control characters, or a port no browser can
     open.
   - `token_endpoint` is not a path on the API: one leading `/`, not `//`, and no
-    `?`, `#`, `\` or whitespace.
+    `:`, `?`, `#`, `\` or whitespace. A colon is refused anywhere because a URL
+    joiner can read what follows the slash as a URL of its own:
+    `/https://collector.example/token` and `/collector.example:443/token` leave
+    the API in Python's `urljoin` once the slash is stripped.
   - `sdk_client_id` is not 1-64 characters of `[A-Za-z0-9._-]`.
   - `code_challenge_methods_supported` is not a list that contains `S256`.
 
@@ -134,15 +137,21 @@ something like this:
   trailing slash and no query. The API accepts only ports 1024-65535, which an
   ephemeral port always is. Refuse anything else rather than send it.
 - **What it serves**: only `GET` on exactly `/callback`. Anything else is a 404: another
-  path, a trailing slash, another case, `POST`, `HEAD`. A request head that cannot be
-  read (no request line, or larger than 16 KiB) is a 400.
+  path, a trailing slash, another case, `POST`, `HEAD`. The answer to a `HEAD` carries
+  the headers and no body (RFC 9110); its `Content-Length` is what the page would have
+  been. A request head that cannot be read (no request line, or larger than 16 KiB) is
+  a 400.
 - **State**: a missing `state`, one given twice, or one that is not this sign-in's is a
   **400, and the wait goes on**. A stray tab (an old attempt's, another program's, a
   page probing local ports) must not end a real sign-in. Compare in constant time, as
   UTF-8 bytes, so that a non-ASCII value is a 400 rather than a crash.
 - **The first callback with the right state is accepted**, and its outcome is fixed:
   - Any `error` parameter wins, even alongside a code. `error=access_denied` (exactly
-    one value) is denied. Any other error is a failed sign-in.
+    one value) is denied. Any other error is a failed sign-in. **Keep the error value
+    only when it is one of RFC 6749's codes** (`invalid_request`,
+    `unauthorized_client`, `access_denied`, `unsupported_response_type`,
+    `invalid_scope`, `server_error`, `temporarily_unavailable`). Anything else
+    becomes `null`, because a value the page chose could be the state or a code.
   - Otherwise exactly one non-empty `code` is a code.
   - Anything else (no code, an empty code, two codes) is a failed sign-in.
   - Query values are percent-decoded once, the way a form decodes them, so
@@ -154,8 +163,13 @@ something like this:
   - `Signed in to Thalovant. You can close this tab.` once the exchange stored the
     token.
   - `Sign-in was not completed.` for denied, failed, a refused exchange, or a
-    timeout while the tab waits. Bound that wait: Python waits 60 seconds, and
-    closing the listener answers the tab at once.
+    cancelled sign-in.
+
+  The tab waits **as long as the sign-in takes**, with no deadline of its own. A
+  separate deadline shorter than the exchange's HTTP timeout would report a failure
+  for a sign-in that then succeeds. The wait is bounded anyway, because the exchange
+  has its HTTP timeout and closing the listener (which always happens) answers the
+  tab at once.
 - **Headers on every answer** (200, 400 and 404): `Content-Type: text/html;
   charset=utf-8`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
   `Content-Security-Policy: default-src 'none'` and `X-Content-Type-Options: nosniff`.
@@ -192,10 +206,12 @@ Rules for the values:
   `hubs:read clients:write`. Any non-admin scope may be asked for. The API refuses
   admin or unknown scopes when the person approves.
 - **`device_name`**: what the consent page and the token name show. When the caller
-  gives none, use `<sdk-package-name> on <hostname>`: `thalovant-python-sdk on
-  workstation`, `thalovant-node-sdk on …`, `thalovant-go-sdk on …`, and so on. Cut it
-  to **120 code points** and leave it out when it is empty. The API refuses a longer
-  one (422).
+  gives none (null, `nil`, `None`, an absent option), use `<sdk-package-name> on
+  <hostname>`: `thalovant-python-sdk on workstation`, `thalovant-node-sdk on …`,
+  `thalovant-go-sdk on …`, and so on. An **empty** name is the caller's way of sending
+  none: leave the parameter out, and do not put the hostname in. The chooser passes
+  the same empty name to device login, which then sends no `client_name`. Cut the
+  name to **120 code points**. The API refuses a longer one (422).
 
 **Show the URL every time.** Opening a browser can fail without a word. With
 `open_browser` true (the default), print this, with a line break after the colon:
@@ -225,6 +241,11 @@ Send `POST {api}{token_endpoint}` with a JSON body of **exactly**
 `{"code", "code_verifier", "client_id", "redirect_uri"}`. `redirect_uri` is the same
 string the URL carried, and `client_id` is the configuration's.
 
+Before sending, resolve the URL the way your HTTP client will, and refuse it, with an
+error with no status, unless its origin is the API's. An origin is the scheme, the
+host and the port. The configuration rule already refuses such an endpoint; this is
+the last word before the code and the verifier go on the wire.
+
 | Answer | Outcome |
 |---|---|
 | 2xx with a JSON object that has an `access_token` | approved: keep the token and its `token_id` |
@@ -248,10 +269,18 @@ The code, the verifier, the state and the token never appear in an error's messa
 its string form, or its problem body.
 
 An API that echoes a request back, as a FastAPI 422 lists each field's `input`, would
-put the code and the verifier in the problem. Python replaces each of them with
-`[redacted]` in the message and anywhere in the problem, keys included. It raises the
-clean copy with its context suppressed (`from None`), so the original never rides
-along as a cause.
+put the code and the verifier in the problem. Python handles this in three steps:
+
+1. **Redact the answer before any message is made of it.** The message is cut to
+   200 characters, and a cut can leave a prefix of a secret that a later
+   replacement cannot match.
+2. **Replace each secret with `[redacted]`** in the message and anywhere in the
+   problem, keys included. Do it in one pass, longest value first, and never inside
+   a `[redacted]` already there.
+3. **Raise a new error**, never the original. It has no cause and no context:
+   a transport's own exception keeps the request, and a requests one keeps its
+   body (the code and the verifier) on `.request`. Python raises the new one
+   outside the handler, `from None`.
 
 ### 8. The chooser
 
@@ -306,11 +335,11 @@ The cases are in eight sections. Record each one under **`<section>/<name>`**:
 | `pkce` (3) | your challenge function. The first case is RFC 7636 Appendix B. | `{"challenge"}` |
 | `redirect_uris` (6) | your redirect builder | `{"redirect_uri"}` or `{"error": "invalid_port"}` |
 | `authorization_urls` (9) | your URL builder, with the case's fixed `code_challenge` and `state` | `{"url"}`, compared as an exact string |
-| `config` (16) | your configuration parser | `{"usable": false}` or `{"usable": true, "authorization_endpoint", "token_endpoint", "sdk_client_id"}` |
+| `config` (18) | your configuration parser | `{"usable": false}` or `{"usable": true, "authorization_endpoint", "token_endpoint", "sdk_client_id"}` |
 | `environment` (13) | your browser rule, with the case's `platform` and `env` | `{"browser": bool}` |
-| `callbacks` (24) | your callback classifier, with the case's target and `{state}` replaced by a fixed state | `{"status", "outcome": "ignored"}`, `{"status": 200, "outcome": "code", "code"}`, `{"status": 200, "outcome": "denied"}` or `{"status": 200, "outcome": "failed", "error"}`. Python also runs every case through a real listener. |
-| `sign_ins` (15) | `browser_login`, for real (below) | `{"authorization_url", "browser", "closed", "exchange", "result"}`. The first four are present only when the SDK got that far. |
-| `chooser` (12) | `interactive_login`, for real, on the case's `platform` and `env` | `{"method": "browser" or "device", "result"}` |
+| `callbacks` (26) | your callback classifier, with the case's target and `{state}` replaced by a fixed state | `{"status", "outcome": "ignored"}`, `{"status": 200, "outcome": "code", "code"}`, `{"status": 200, "outcome": "denied"}` or `{"status": 200, "outcome": "failed", "error"}`. Python also runs every case through a real listener. |
+| `sign_ins` (18) | `browser_login`, for real (below) | `{"authorization_url", "browser", "closed", "exchange", "result"}`. The first four are present only when the SDK got that far. |
+| `chooser` (13) | `interactive_login`, for real, on the case's `platform` and `env` | `{"method": "browser" or "device", "result"}` |
 
 Every result has one of these shapes (the file's `results` member says the same):
 
@@ -365,6 +394,20 @@ device cases the device token answers on the first poll (`interval` 0).
 Durations in the cases are whole milliseconds (`timeout_ms`). The expired cases use
 400 ms.
 
+## What changed since `49744ee385bf`
+
+A port of the PR's first head (accepted as `49744ee385bf…`) needs these changes. The
+vectors file changed, so re-vendor it (98 to 106 cases) and re-record.
+
+| Change | Vector cases |
+|---|---|
+| A `token_endpoint` with a `:` anywhere is unusable, and the exchange refuses a URL off the API's origin | `config/a token endpoint that is another URL behind its slash is unusable`, `config/a token endpoint with a colon anywhere is unusable`, `sign_ins/a token endpoint that would leave the API is refused before anything is opened` |
+| Only RFC 6749's error codes are kept from a callback; anything else is `null` | `callbacks/an error outside RFC 6749's codes fails the sign-in and is not kept`, `callbacks/the state repeated as the error is not kept`, `sign_ins/an error that repeats the state never reaches the error` |
+| Only a missing `device_name` gets the default. An empty one is left out of the URL, and the device login sends no `client_name`. | `sign_ins/an empty device name keeps the hostname off the consent page`, `chooser/an empty device name is not sent to a device login either` |
+| A `HEAD` answer carries no body | none (Python: `test_a_head_request_gets_the_headers_and_no_body`) |
+| The accepted tab waits until the sign-in ends, with no separate deadline | none (`test_the_accepted_tab_waits_as_long_as_the_sign_in_takes`) |
+| The exchange's answer is redacted before its message is built, and the error raised is a new one with no cause or context | none (`test_a_message_cut_to_length_keeps_no_part_of_a_secret`, `test_a_transport_failure_during_the_exchange_carries_nothing_of_the_request`) |
+
 ## Parity acceptance
 
 The reference digest moves.
@@ -372,7 +415,8 @@ The reference digest moves.
 | Reference | Digest |
 |---|---|
 | Current (`main`, 0.10.0) | `57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9` |
-| Candidate (this change) | `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` |
+| Candidate (this change, after the review) | `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c` |
+| Superseded, never published | `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (the PR's first head; replace it) |
 
 The candidate is the digest of `python scripts/check-sdk-parity.py --snapshot` on the
 Python PR's head. It moves again if that PR changes anything under `src/` or
@@ -446,7 +490,8 @@ python <python-sdk>/scripts/check-sdk-parity.py --workspace <checkouts> --consum
   - Encoding: `url.QueryEscape` writes a space as `+`, so use
     `strings.ReplaceAll(url.QueryEscape(v), "+", "%20")`. A literal `+` is already
     `%2B`.
-  - Code points: `[]rune(name)[:120]`.
+  - Code points: `if r := []rune(name); len(r) > 120 { name = string(r[:120]) }`. A
+    bare `[]rune(name)[:120]` panics when the name is shorter.
   - State: `subtle.ConstantTimeCompare`.
 - **Rust.**
   - API: `async fn browser_login(&self, options: BrowserLoginOptions)` and

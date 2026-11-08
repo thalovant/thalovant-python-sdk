@@ -511,29 +511,174 @@ def test_a_connection_that_closes_or_breaks_before_its_answer_changes_nothing(mo
             monkeypatch.setattr(loopback, "classify_request", original)
             assert await listener.wait(0.1) is None
             # Neither was accepted, so this sign-in's own answer still is.
-            status, body = await get(port, "/callback?code=c&state=the-state")
-            assert status == 200 and "Sign-in was not completed." in body
+            tab = asyncio.ensure_future(get(port, "/callback?code=c&state=the-state"))
+            assert (await listener.wait(5)) is not None
+            listener.finish(True)
+            status, body = await tab
+            assert status == 200 and "Signed in to Thalovant." in body
         finally:
             await listener.close()
 
-    monkeypatch.setattr(loopback, "ANSWER_TIMEOUT", 0.05)
     asyncio.run(run())
 
 
-def test_a_tab_whose_answer_never_comes_is_told_the_sign_in_was_not_completed(monkeypatch: pytest.MonkeyPatch) -> None:
-    import thalovant._loopback as loopback
+def test_the_accepted_tab_waits_as_long_as_the_sign_in_takes() -> None:
+    """The page says how the sign-in ended, so it is written once it has, however long the exchange took."""
 
-    monkeypatch.setattr(loopback, "ANSWER_TIMEOUT", 0.05)
-
-    async def run() -> str:
+    async def run() -> tuple[str, float]:
         listener = LoopbackListener("the-state")
         port = await listener.start()
         try:
-            status, body = await get(port, "/callback?code=c&state=the-state")
-            assert status == 200
-            assert (await listener.wait(0)) is not None
-            return body
+            started = time.monotonic()
+            tab = asyncio.ensure_future(get(port, "/callback?code=c&state=the-state"))
+            assert (await listener.wait(5)) is not None
+            await asyncio.sleep(0.3)
+            assert not tab.done()
+            listener.finish(True)
+            _, body = await tab
+            return body, time.monotonic() - started
         finally:
             await listener.close()
 
+    body, took = asyncio.run(run())
+    assert "Signed in to Thalovant. You can close this tab." in body and took >= 0.3
+
+
+def test_closing_the_listener_answers_a_tab_that_is_still_waiting() -> None:
+    async def run() -> str:
+        listener = LoopbackListener("the-state")
+        port = await listener.start()
+        tab = asyncio.ensure_future(get(port, "/callback?code=c&state=the-state"))
+        assert (await listener.wait(5)) is not None
+        await listener.close()
+        return (await tab)[1]
+
     assert "Sign-in was not completed." in asyncio.run(run())
+
+
+def test_a_head_request_gets_the_headers_and_no_body() -> None:
+    async def run() -> bytes:
+        listener = LoopbackListener("the-state")
+        port = await listener.start()
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"HEAD /callback?code=c&state=the-state HTTP/1.1\r\n\r\n")
+            raw = await reader.read()
+            writer.close()
+            return raw
+        finally:
+            await listener.close()
+
+    head, _, body = asyncio.run(run()).partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.1 404 ") and body == b""
+    assert b"Content-Type: text/html; charset=utf-8" in head
+    length = int(re.search(rb"Content-Length: (\d+)", head).group(1))  # type: ignore[union-attr]
+    assert length > 0  # what a GET would have carried
+
+
+def test_a_message_cut_to_length_keeps_no_part_of_a_secret() -> None:
+    """The detail is redacted before the bounded message is made of it."""
+
+    seen: dict[str, str] = {}
+
+    def straddle(body: dict[str, Any]) -> web.Response:
+        seen.update(body)
+        # The verifier starts ten characters before the message's 200-character cut.
+        return web.json_response({"detail": "a" * 190 + body["code_verifier"]}, status=400)
+
+    async def run() -> ThalovantAPIError:
+        loop = asyncio.get_running_loop()
+        future, hand_over = opened_url(loop)
+        async with Api(straddle) as api:
+            plane = AsyncThalovantControlPlane(api.url)
+            task = asyncio.ensure_future(plane.browser_login(open_browser=False, prompt=hand_over))
+            port, state, _ = parts(await asyncio.wait_for(future, 5))
+            await get(port, f"/callback?code=c&state={state}")
+            with pytest.raises(ThalovantAPIError) as raised:
+                await task
+            await plane.aclose()
+            return raised.value
+
+    error = asyncio.run(run())
+    assert error.status_code == 400
+    prefix = seen["code_verifier"][:10]
+    for shown in (str(error), repr(error), str(error.detail), json.dumps(error.problem)):
+        assert prefix not in shown
+    assert error.detail == "a" * 190 + "[redacted]"
+
+
+def test_a_transport_failure_during_the_exchange_carries_nothing_of_the_request() -> None:
+    """A requests error keeps the request, body and all; the error raised must not keep it."""
+
+    class Failure(OSError):
+        def __init__(self, body: bytes) -> None:
+            super().__init__("connection reset")
+            self.request_body = body
+
+    class Answer:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.status_code = 200
+            self.text = json.dumps(payload)
+            self.headers = {"Content-Type": "application/json"}
+
+        def json(self) -> Any:
+            return json.loads(self.text)
+
+    class Session:
+        headers: dict[str, str] = {}
+
+        def request(self, method: str, url: str, *, json: Any = None, **_: Any) -> Answer:
+            if url.endswith("/v1/auth/native/config"):
+                return Answer(CONFIG)
+            raise Failure(repr(json).encode())
+
+        def close(self) -> None:
+            pass
+
+    async def run() -> ThalovantAPIError:
+        loop = asyncio.get_running_loop()
+        future, hand_over = opened_url(loop)
+        plane = ThalovantControlPlane("http://127.0.0.1:9", session=Session())
+        task = asyncio.ensure_future(asyncio.to_thread(plane.browser_login, open_browser=False, prompt=hand_over))
+        port, state, _ = parts(await asyncio.wait_for(future, 5))
+        await get(port, f"/callback?code=transport-code&state={state}")
+        with pytest.raises(ThalovantAPIError) as raised:
+            await task
+        await asyncio.to_thread(plane.close)
+        return raised.value
+
+    error = asyncio.run(run())
+    assert error.status_code is None
+    assert error.__context__ is None and error.__cause__ is None and error.__suppress_context__
+
+
+def test_the_exchange_never_leaves_the_api_origin() -> None:
+    """The configuration refuses such an endpoint; the exchange checks again before sending."""
+
+    async def run() -> tuple[ThalovantAPIError, list[str]]:
+        async with Api() as collector, Api() as api:
+            plane = AsyncThalovantControlPlane(api.url)
+            # Built directly, past the configuration's own check.
+            config = native_auth.NativeSignInConfig(
+                authorization_endpoint=CONFIG["authorization_endpoint"],
+                token_endpoint=f"/{collector.url}/v1/auth/native/token",
+                sdk_client_id="thalovant-sdk",
+            )
+            with pytest.raises(ThalovantAPIError, match="origin") as raised:
+                await plane._exchange_browser_code(config, "c", "v" * 43, "http://127.0.0.1:1/callback", ("c",))
+            await plane.aclose()
+            return raised.value, collector.requests + api.requests
+
+    error, requests = asyncio.run(run())
+    assert requests == [] and error.status_code is None
+
+
+def test_scrubbing_is_one_pass_longest_first_and_leaves_its_marker_alone() -> None:
+    from thalovant.control import _scrub
+
+    hidden = ("abc", "abcdef", "c")
+    assert _scrub("xx-abc-abcdef-[redacted]", hidden) == "xx-[redacted]-[redacted]-[redacted]"
+    once = _scrub({"seen:abcdef": ["c", {"deep": "abc"}]}, hidden)
+    assert once == {"seen:[redacted]": ["[redacted]", {"deep": "[redacted]"}]}
+    assert _scrub(once, hidden) == once
+    assert _scrub("nothing hidden", ()) == "nothing hidden"

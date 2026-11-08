@@ -1,10 +1,10 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): known limitations of the loopback flow, from the test run and a reading of the new code.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): the CodeRabbit review of #113 fixed the HEAD body and four secret-handling gaps; the loopback flow's known limits remain.
 
 # Audit
 
 Known issues, technical debt and security findings for `thalovant` (the Python SDK and the parity reference). Each entry cites the code and the test that show it. Line numbers are at `main` 51069339 (2026-11-03).
 
-Test run behind this file: `python -m pytest -q` on Python 3.12, 1579 passed, 1 skipped (branch `feat/browser-sign-in`, 2026-11-08). `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
+Test run behind this file: `python -m pytest -q` on Python 3.12, 1599 passed, 1 skipped (branch `feat/browser-sign-in` after the CodeRabbit review, 2026-11-08). `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
 
 ## Open: known limitations
 
@@ -29,15 +29,23 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1579 passed, 1 
 
 ## Browser sign-in (0.11.0)
 
-Read at branch `feat/browser-sign-in` (from `main` 44b6e2b). Behind it: the full suite, 182 browser sign-in tests (`tests/test_browser_login_vectors.py` and `tests/test_browser_login.py`), and 14 hand mutations of the new code, 13 of them killed. The fourteenth replaced the token answer's shape check with `_accept_token({})`, which raises the same error with no status, so it is equivalent.
+Read at branch `feat/browser-sign-in` (from `main` 44b6e2b). Behind it: the full suite, 202 browser sign-in tests (`tests/test_browser_login_vectors.py` and `tests/test_browser_login.py`), and 14 hand mutations of the new code, 13 of them killed. The fourteenth replaced the token answer's shape check with `_accept_token({})`, which raises the same error with no status, so it is equivalent.
 
-- **Another user on the same computer can sign the program in as themselves.** The authorization URL reaches the browser as a process argument (`_present_browser_login` and `_open_browser_quietly`, `src/thalovant/control.py` 4329-4350, through `webbrowser.open`). On a shared machine, another local user can read it from the process table. They can open it in their own browser and approve it with their own account, and the redirect lands on the same `127.0.0.1` port with the right `state`. The program is then signed in to *their* account. This is RFC 8252's loopback flow as `gh auth login` and `aws sso login` run it: the state and the challenge sit in the URL, so neither helps here. The consent page's `device_name` is what the approver sees. No mitigation in the SDK. A single-user desktop, the case this flow is for, is unaffected.
-- **A `HEAD` request gets a body.** The listener answers anything but `GET /callback` with a 404 page, a `HEAD` included (`_serve`, `src/thalovant/_loopback.py` 251; case `only GET is served: HEAD is 404` in `browser-login-vectors.json`). HTTP says a `HEAD` answer carries no body. Browsers do not send `HEAD` to a redirect target, and the connection closes after each answer, so nothing is affected.
-- **Deny reaches the SDK only once the dashboard sends it.** The SDK raises `ThalovantDeviceLoginDenied` on `error=access_denied` (`classify_request`, `_loopback.py` 84). The consent page sends that only after the dashboard change in the same train. Until then, a Deny never calls back and the sign-in expires after `timeout` (300 s).
+- **Another user on the same computer can sign the program in as themselves.** The authorization URL reaches the browser as a process argument (`_present_browser_login` and `_open_browser_quietly`, `src/thalovant/control.py` 4344-4370, through `webbrowser.open`). On a shared machine, another local user can read it from the process table. They can open it in their own browser and approve it with their own account, and the redirect lands on the same `127.0.0.1` port with the right `state`. The program is then signed in to *their* account. This is RFC 8252's loopback flow as `gh auth login` and `aws sso login` run it: the state and the challenge sit in the URL, so neither helps here. The consent page's `device_name` is what the approver sees. No mitigation in the SDK. A single-user desktop, the case this flow is for, is unaffected.
+- **Deny reaches the SDK only once the dashboard sends it.** The SDK raises `ThalovantDeviceLoginDenied` on `error=access_denied` (`classify_request`, `_loopback.py` 91). The consent page sends that only after the dashboard change in the same train. Until then, a Deny never calls back and the sign-in expires after `timeout` (300 s).
 - **`can_open_browser()` does not prove a browser exists.** It reads `CI`, `SSH_*`, `DISPLAY` and `WAYLAND_DISPLAY` (`src/thalovant/native_auth.py` 200), as the contract says. A Linux desktop with a display but no `xdg-open` still chooses the browser. The printed URL is the fallback there: once the browser is meant to open, the sign-in does not turn into a device login.
-- **Windows and macOS were not run.** This branch ran only on Linux (Python 3.10, 3.12 and 3.14), and CI runs `ubuntu-latest` only. The Windows exclusive-address option (`_loopback.py` 173) is `pragma: no cover`, and macOS's `open` is reached only through `webbrowser`.
+- **Windows and macOS were not run.** This branch ran only on Linux (Python 3.10, 3.12 and 3.14), and CI runs `ubuntu-latest` only. The Windows exclusive-address option (`_loopback.py` 185) is `pragma: no cover`, and macOS's `open` is reached only through `webbrowser`.
 - **`ai_disclosure` is still dropped by `ApiToken`.** It stays in the raw token answer that `browser_login()` returns. See [SUGGESTIONS.md](SUGGESTIONS.md).
-- **Nothing secret in errors, the context included.** An exchange error goes through `_without_secrets` (`control.py` 4353). It is raised outside its handler (`control.py` 913), so the unredacted original is neither `__cause__` nor `__context__`. `tests/test_browser_login.py::test_an_echoed_code_and_verifier_never_reach_the_error` pins this with a 422 that echoes the code and the verifier, one of them in a key.
+- **Fixed in review (CodeRabbit on #113):**
+  - **The token endpoint could leave the API.** `/https://collector.example/token` passed the configuration check, and `_send`'s `lstrip("/")` plus `urljoin` made it a foreign URL. A colon is now refused anywhere in `token_endpoint` (`_usable_token_endpoint`, `native_auth.py`). `_exchange_browser_code` also checks the resolved origin before sending.
+  - **A callback's `error` could carry the state into a message.** Only RFC 6749's codes are kept (`OAUTH_ERRORS`, `_loopback.py`).
+  - **A message cut to 200 characters could keep part of a secret that redaction then missed.** The answer is now redacted before the message is built (`_redacted_response`).
+  - **A transport error kept the request body in `__context__`.** `_without_secrets` now always builds a new error, and it is raised outside its handler, so it has no cause and no context.
+  - **A `HEAD` answer had a body.** It now carries headers only.
+  - **The accepted tab could report failure after 60 s** for an exchange that then succeeded. The tab now waits for the end; `close()` bounds it.
+  - **`device_name=""` sent the hostname.** Only `None` gets the default now.
+
+  Each fix has a test in `tests/test_browser_login.py` or a case in `browser-login-vectors.json`, and each was checked by reverting it: 10 of 10 reverts failed a test.
 
 ## Chat apps (0.10.0)
 

@@ -755,6 +755,7 @@ class AsyncThalovantControlPlane:
         code: str,
         verifier: str,
         redirect_uri: str,
+        hidden: Sequence[str],
     ) -> dict[str, Any]:
         """``POST {token_endpoint}`` with the four fields, and keep the token.
 
@@ -762,13 +763,23 @@ class AsyncThalovantControlPlane:
         object is an error with no status -- the API did not refuse, its
         answer could not be used -- and any other failure carries the
         api-errors fields (``invalid_grant`` for every way an exchange fails).
+        The answer has every value in *hidden* taken out before the error's
+        message is built, so a message cut to length cannot keep part of one.
         """
 
         self._require_secure_token_exchange()
+        # Where _send will send it, worked out the same way. The configuration
+        # already refuses a token endpoint that could leave the API; this is
+        # the last word before the code and the verifier go on the wire.
+        target = urljoin(self.api_url, config.token_endpoint.lstrip("/"))
+        if _origin(target) != _origin(self.api_url):
+            raise ThalovantAPIError(
+                "Refusing to send an authorization code to a token endpoint off the Thalovant API's origin."
+            )
         payload = _native_token_request(code, verifier, config.sdk_client_id, redirect_uri)
         response = await self._send("POST", config.token_endpoint, json=payload, auth=False)
         if not 200 <= response.status_code < 300:
-            raise _api_error(response)
+            raise _api_error(_redacted_response(response, hidden))
         try:
             body: Any = response.json()
         except ValueError:
@@ -881,7 +892,9 @@ class AsyncThalovantControlPlane:
                 code_challenge=challenge_for(verifier),
                 state=state,
                 scopes=scopes,
-                device_name=device_name or default_device_name(),
+                # Only None asks for the default: an empty name is the
+                # caller's way of sending none, and keeps the hostname out.
+                device_name=default_device_name() if device_name is None else device_name,
             )
             _present_browser_login(url, prompt=prompt, open_browser=open_browser)
             callback = await listener.wait(timeout)
@@ -893,19 +906,21 @@ class AsyncThalovantControlPlane:
             if callback.outcome == "denied":
                 raise ThalovantDeviceLoginDenied("The sign-in request was denied in the browser.")
             if callback.code is None:
-                code = callback.error if callback.error and _PROBLEM_CODE.fullmatch(callback.error) else None
+                # callback.error is one of RFC 6749's codes or nothing: a value
+                # the page chose could be the state or a code.
                 raise ThalovantAPIError(
                     "The browser came back without a sign-in code"
-                    + (f" ({code})." if code else "."),
-                    code=code,
+                    + (f" ({callback.error})." if callback.error else "."),
+                    code=callback.error,
                 )
+            hidden = (callback.code, verifier, state)
             failure: ThalovantAPIError | None = None
             try:
-                token = await self._exchange_browser_code(config, callback.code, verifier, redirect_uri)
+                token = await self._exchange_browser_code(config, callback.code, verifier, redirect_uri, hidden)
             except ThalovantAPIError as error:
                 # A code is single-use: retrying the exchange would only
                 # revoke the token a first exchange minted (RFC 9700).
-                failure = _without_secrets(error, (callback.code, verifier, state))
+                failure = _without_secrets(error, hidden)
             if failure is not None:
                 # Raised here, outside the handler, so the original -- whose
                 # problem may echo the code and the verifier -- is not kept
@@ -945,7 +960,7 @@ class AsyncThalovantControlPlane:
         if method not in ("auto", "browser", "device"):
             raise ValueError(f"method must be 'auto', 'browser' or 'device', not {method!r}.")
         requested = list(scopes) if scopes is not None else None
-        name = device_name or default_device_name()
+        name = default_device_name() if device_name is None else device_name
         config: NativeSignInConfig | None = None
         if method == "browser":
             self._require_secure_token_exchange()
@@ -4350,31 +4365,61 @@ def _open_browser_quietly(url: str) -> None:
         pass
 
 
-def _without_secrets(error: ThalovantAPIError, hidden: Iterable[str | None]) -> ThalovantAPIError:
-    """*error*, with every value in *hidden* taken out of its message and its problem.
+_REDACTED = "[redacted]"
 
-    An API that echoes a request back (a 422 lists each field's ``input``)
-    would otherwise hand the code and the verifier to whoever logs the error.
+
+def _scrub(item: Any, hidden: Iterable[str | None]) -> Any:
+    """*item* with every value in *hidden* replaced by ``[redacted]``, keys and nesting included.
+
+    One pass, the longest value first, so that a value which is part of
+    another cannot break the longer one up before it is matched; and never
+    inside a ``[redacted]`` already there, so scrubbing twice changes nothing.
     """
 
     values = [value for value in hidden if value]
-
-    def scrub(item: Any) -> Any:
-        if isinstance(item, str):
-            for value in values:
-                item = item.replace(value, "[redacted]")
+    if isinstance(item, str):
+        if not values:
             return item
-        if isinstance(item, Mapping):
-            return {scrub(key): scrub(member) for key, member in item.items()}
-        if isinstance(item, list):
-            return [scrub(member) for member in item]
-        return item
+        pattern = re.compile("|".join(re.escape(value) for value in sorted(values, key=len, reverse=True)))
+        return _REDACTED.join(pattern.sub(_REDACTED, part) for part in item.split(_REDACTED))
+    if isinstance(item, Mapping):
+        return {_scrub(key, values): _scrub(member, values) for key, member in item.items()}
+    if isinstance(item, list):
+        return [_scrub(member, values) for member in item]
+    return item
 
-    message = scrub(str(error))
-    problem = scrub(error.problem) if error.problem is not None else None
-    if message == str(error) and problem == error.problem:
-        return error
-    clean = type(error)(message, status_code=error.status_code, problem=problem)
+
+def _redacted_response(response: Any, hidden: Iterable[str | None]) -> _Response:
+    """*response* with *hidden* taken out of its body, before any message is made of it.
+
+    A body that parses is scrubbed as parsed -- an escaped value is still the
+    value -- and written back; one that does not is scrubbed as text.
+    """
+
+    import json
+
+    text = getattr(response, "text", "")
+    text = text if isinstance(text, str) else ""
+    try:
+        text = json.dumps(_scrub(json.loads(text), hidden))
+    except ValueError:
+        text = _scrub(text, hidden)
+    headers = getattr(response, "headers", None)
+    return _Response(response.status_code, text, headers if headers is not None else {})
+
+
+def _without_secrets(error: ThalovantAPIError, hidden: Iterable[str | None]) -> ThalovantAPIError:
+    """A new error like *error*, with every value in *hidden* taken out of its message and its problem.
+
+    An API that echoes a request back (a 422 lists each field's ``input``)
+    would otherwise hand the code and the verifier to whoever logs the error.
+    Always a new object, never *error* itself: the transport's own exception
+    rides on *error* as its ``__context__``, and a requests one keeps the
+    request -- its body, the code and the verifier -- on ``.request``.
+    """
+
+    problem = _scrub(error.problem, hidden) if error.problem is not None else None
+    clean = type(error)(_scrub(str(error), hidden), status_code=error.status_code, problem=problem)
     clean.retry_after_seconds = error.retry_after_seconds
     return clean
 

@@ -51,6 +51,7 @@
         "callbacks/an empty code fails the sign-in": "2414b9a92e1d146a61677bf77873b9744f7d64be2e10a448fa1a4908899a5baf",
         "callbacks/an empty error fails the sign-in": "2414b9a92e1d146a61677bf77873b9744f7d64be2e10a448fa1a4908899a5baf",
         "callbacks/an empty state is 400": "8a4f9900cece919492747e80514ac1515601f55f870267c1848a7eb05c30ad8d",
+        "callbacks/an error outside RFC 6749's codes fails the sign-in and is not kept": "2414b9a92e1d146a61677bf77873b9744f7d64be2e10a448fa1a4908899a5baf",
         "callbacks/another error fails the sign-in": "77bb4faa75eeebdacb177e7454478807209556d76da6ee9dcf778f9b53bdb114",
         "callbacks/error=access_denied is denied": "248eeabf0d84d0664cddcebb2f11f860b64ddf740c30059046c3f341cd0ad6d4",
         "callbacks/error_description is not read": "248eeabf0d84d0664cddcebb2f11f860b64ddf740c30059046c3f341cd0ad6d4",
@@ -64,6 +65,8 @@
         "callbacks/the right state without a code fails the sign-in": "2414b9a92e1d146a61677bf77873b9744f7d64be2e10a448fa1a4908899a5baf",
         "callbacks/the root is 404": "bfe91a7ea7bd87c5922936818284fb819c3cdb4ad49799f6f58e1a184f71e582",
         "callbacks/the state is compared whole: one more character is 400": "8a4f9900cece919492747e80514ac1515601f55f870267c1848a7eb05c30ad8d",
+        "callbacks/the state repeated as the error is not kept": "2414b9a92e1d146a61677bf77873b9744f7d64be2e10a448fa1a4908899a5baf",
+        "chooser/an empty device name is not sent to a device login either": "cbd66feb90d0d1675555bcfe1ec8cdcc9035889e16ef2190ea86725d019dce28",
         "chooser/auto falls back to a device login when the API answers the configuration 404": "cbd66feb90d0d1675555bcfe1ec8cdcc9035889e16ef2190ea86725d019dce28",
         "chooser/auto falls back to a device login when the configuration fails": "cbd66feb90d0d1675555bcfe1ec8cdcc9035889e16ef2190ea86725d019dce28",
         "chooser/auto falls back to a device login when the configuration is unusable": "cbd66feb90d0d1675555bcfe1ec8cdcc9035889e16ef2190ea86725d019dce28",
@@ -85,6 +88,8 @@
         "config/a protocol-relative token endpoint is unusable": "7372a48c108d97c022ce3f0f795170dba2a7db276445deb54579137efcbc93e6",
         "config/a self-hosted dashboard on https is usable": "92941cf241d2d08e846a4aca55496252abf041ae549660a8ca5c5ddea388385b",
         "config/a token endpoint on another host is unusable": "7372a48c108d97c022ce3f0f795170dba2a7db276445deb54579137efcbc93e6",
+        "config/a token endpoint that is another URL behind its slash is unusable": "7372a48c108d97c022ce3f0f795170dba2a7db276445deb54579137efcbc93e6",
+        "config/a token endpoint with a colon anywhere is unusable": "7372a48c108d97c022ce3f0f795170dba2a7db276445deb54579137efcbc93e6",
         "config/a token endpoint with a query is unusable": "7372a48c108d97c022ce3f0f795170dba2a7db276445deb54579137efcbc93e6",
         "config/an API that does not offer S256 is unusable": "7372a48c108d97c022ce3f0f795170dba2a7db276445deb54579137efcbc93e6",
         "config/members the SDK does not read are ignored, device_authorization_endpoint included": "85e072b2c48e2d5b62e9a307ab37cc6093334602a5075b94d0646a8cc8708734",
@@ -119,7 +124,10 @@
         "sign_ins/a stray tab changes nothing: 404, 400 and 400, then the real answer": "34ec9787fcf6508e98f9b148741b2d131c44bda3c86d398c0acc2b1d7b93c04b",
         "sign_ins/a token answer that is not a JSON object is an error with no status": "c7a4bd05cacde8c3652894a98e5cf934fdac526cc86fe3307863646f67419346",
         "sign_ins/a token answer without an access_token is an error with no status": "c7a4bd05cacde8c3652894a98e5cf934fdac526cc86fe3307863646f67419346",
+        "sign_ins/a token endpoint that would leave the API is refused before anything is opened": "9ee828420a4b5b209e9e78893da94e00b9c7c30f851c2a2861f967b70447c067",
         "sign_ins/an API without browser sign-in answers the configuration 404": "f13c38cf88a59d2fe39f434947997904f5499dc9218c4eba2221949936b3dead",
+        "sign_ins/an empty device name keeps the hostname off the consent page": "e5c4bb71284154beef54758890c80e4870d7f41154d80a2c32df313bfc1b841f",
+        "sign_ins/an error that repeats the state never reaches the error": "e0b9e52c109f5be05df855a7f0ae602933718e6b45d0235f8419c78f90932933",
         "sign_ins/an unusable configuration is an error with no status, and nothing is opened": "9ee828420a4b5b209e9e78893da94e00b9c7c30f851c2a2861f967b70447c067",
         "sign_ins/another error from the consent page fails the sign-in": "dbc48bfad6203f09d97d2c2fde507068e0f7c612f25506096e2176d76862919d",
         "sign_ins/approved: the exchange sends exactly the four fields, and the token is kept": "d2a573d587e3311ea14e8d9471c37cecd6e07ca7a51c5f7043880a07d67d7c46",
@@ -130,7 +138,7 @@
         "sign_ins/the scopes asked for reach the consent page": "3efcb38547b12cff63179261a58370db1d54cbfaff225518f6e26d1bd41a0b10",
         "sign_ins/the token revokes itself as a device login's does, and revoking again sends nothing": "dd94c2e8a548624b8012f25e9cd2e5a1c311dcf0d307c1a6f3e048f1ae3371b0"
       },
-      "digest": "b17cb43466c0ebc7d5a7f27ca8d71498f5a630530e14c90c1347da666f3db9ed"
+      "digest": "9987a0591e6d384605646c8d1edf79627e0e69dcdcdab4fb383dbbec69775401"
     },
     "connection-admission-vectors.json": {
       "cases": {

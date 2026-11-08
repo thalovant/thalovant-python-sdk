@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (browser_login, interactive_login) and the native_auth helpers, 0.11.0. -->
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (browser_login, interactive_login) and the native_auth helpers, 0.11.0, after the CodeRabbit review of #113. -->
 
 # API Reference
 
@@ -206,8 +206,10 @@ How it handles what comes back:
   The code, the verifier, the state and the token never appear in an error.
   An API URL that is neither https nor loopback is refused before anything is
   sent. `scopes` left out (or empty) asks for the API's default, `hubs:read
-  clients:write`. `device_name` defaults to `thalovant-python-sdk on
-  <hostname>`, at most 120 characters.
+  clients:write`. `device_name=None` defaults to
+  `thalovant-python-sdk on <hostname>`, and an empty `device_name` sends none.
+  Either way it is at most 120 characters. The code is only ever exchanged on
+  the API's own origin.
 
 `thalovant.native_auth` has the pieces, each checked against
 `contracts/conformance/browser-login-vectors.json`:

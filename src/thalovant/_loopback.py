@@ -31,6 +31,7 @@ __all__ = [
     "Callback",
     "LoopbackListener",
     "NOT_COMPLETED_TEXT",
+    "OAUTH_ERRORS",
     "PAGE_HEADERS",
     "SIGNED_IN_TEXT",
     "classify_request",
@@ -61,8 +62,13 @@ _REASONS = {200: "OK", 400: "Bad Request", 404: "Not Found"}
 MAX_REQUEST_HEAD = 16 * 1024
 #: How long one connection may take to send its request head.
 REQUEST_READ_TIMEOUT = 10.0
-#: How long an accepted tab waits for its page while the code is exchanged.
-ANSWER_TIMEOUT = 60.0
+#: The ``error`` values RFC 6749 section 4.1.2.1 defines. Only these are kept
+#: from a callback: anything else is a value somebody else chose, and it could
+#: be the state or a code, which must never reach an error message.
+OAUTH_ERRORS = frozenset({
+    "invalid_request", "unauthorized_client", "access_denied", "unsupported_response_type",
+    "invalid_scope", "server_error", "temporarily_unavailable",
+})
 #: How long closing waits for an accepted tab's page to be written.
 CLOSE_GRACE = 1.0
 
@@ -73,7 +79,8 @@ class Callback:
 
     ``code`` when the person approved; ``denied`` for ``error=access_denied``;
     ``failed`` for any other ``error``, or for neither an error nor exactly one
-    code. ``error`` is the ``error`` the page sent, when it sent one.
+    code. ``error`` is the ``error`` the page sent when it is one of
+    :data:`OAUTH_ERRORS`, and ``None`` otherwise.
     """
 
     outcome: Literal["code", "denied", "failed"]
@@ -88,8 +95,9 @@ def classify_request(method: str, target: str, state: str) -> tuple[int, Callbac
     ``(400, None)`` when ``state`` is missing, given more than once, or not
     this sign-in's (compared in constant time, as bytes); otherwise ``(200,
     callback)``. An ``error`` wins over a ``code`` sent with it: a refusal that
-    also carries a code is still a refusal. Query values are decoded once, as
-    a form decodes them.
+    also carries a code is still a refusal. An ``error`` outside
+    :data:`OAUTH_ERRORS` is not kept. Query values are decoded once, as a form
+    decodes them.
     """
 
     path, _, query = target.partition("?")
@@ -105,7 +113,7 @@ def classify_request(method: str, target: str, state: str) -> tuple[int, Callbac
     if errors:
         if errors == ["access_denied"]:
             return 200, Callback("denied", error="access_denied")
-        return 200, Callback("failed", error=errors[0] or None)
+        return 200, Callback("failed", error=errors[0] if errors[0] in OAUTH_ERRORS else None)
     codes = values.get("code", [])
     if len(codes) == 1 and codes[0]:
         return 200, Callback("code", code=codes[0])
@@ -122,14 +130,18 @@ def _page(text: str) -> bytes:
     ).encode("utf-8")
 
 
-def response_bytes(status: int, text: str) -> bytes:
-    """A whole HTTP/1.1 answer: the status, :data:`PAGE_HEADERS`, and a small page."""
+def response_bytes(status: int, text: str, *, head: bool = False) -> bytes:
+    """A whole HTTP/1.1 answer: the status, :data:`PAGE_HEADERS`, and a small page.
+
+    The answer to a ``HEAD`` carries no body (RFC 9110 section 9.3.2); its
+    ``Content-Length`` is the length the page would have had.
+    """
 
     body = _page(text)
     lines = [f"HTTP/1.1 {status} {_REASONS[status]}"]
     lines += [f"{name}: {value}" for name, value in PAGE_HEADERS]
     lines += [f"Content-Length: {len(body)}", "Connection: close", "", ""]
-    return "\r\n".join(lines).encode("ascii") + body
+    return "\r\n".join(lines).encode("ascii") + (b"" if head else body)
 
 
 def _request_line(head: bytes) -> tuple[str, str] | None:
@@ -271,7 +283,8 @@ class LoopbackListener:
             # accepted, is not this sign-in's any more either.
             if callback is not None:
                 status = 400
-            writer.write(response_bytes(status, NOT_FOUND_TEXT if status == 404 else WRONG_STATE_TEXT))
+            writer.write(response_bytes(status, NOT_FOUND_TEXT if status == 404 else WRONG_STATE_TEXT,
+                                        head=request[0] == "HEAD"))
             await writer.drain()
             return
         accepted.set_result(callback)
@@ -280,9 +293,9 @@ class LoopbackListener:
             # The first accepted callback ends the listening; a tab already
             # connected is still answered.
             self._server.close()
-        try:
-            signed_in = await asyncio.wait_for(asyncio.shield(answer), ANSWER_TIMEOUT)
-        except asyncio.TimeoutError:
-            signed_in = False
+        # Until the sign-in has ended, however long the exchange takes: the
+        # page says how it ended, so it cannot be written before it has.
+        # close() always answers, so this never outlives the sign-in.
+        signed_in = await answer
         writer.write(response_bytes(200, SIGNED_IN_TEXT if signed_in else NOT_COMPLETED_TEXT))
         await writer.drain()

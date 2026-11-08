@@ -1,6 +1,65 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): browser_login, interactive_login, the browser-login capability and its vectors.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review of #113 (browser sign-in): eight fixes with tests and vectors, one answered; digest 50af6731e276.
 
 # Maintenance Report
+
+## 2026-11-08: CodeRabbit review of #113 (browser sign-in)
+
+CodeRabbit left nine threads on #113. Eight are fixed, with tests. One is answered without a change.
+
+| # | Thread | Outcome |
+| :--- | :--- | :--- |
+| 1 | `docs/browser-login-porting.md`: the Go rune slice can panic | Fixed. The Go line bounds the slice by its length. Docs only. |
+| 2 | `_loopback.py`: HEAD answers carry a body | Fixed. `response_bytes(head=True)` sends headers only. `Content-Length` is what a GET would carry. |
+| 3 | `_loopback.py`: the tab reports failure at 60 s while the exchange may still succeed | Fixed. The tab has no deadline of its own and waits until the sign-in ends. The exchange's HTTP timeout and `close()` bound that wait. |
+| 4 | `control.py`: session credentials on the config and token requests | Not changed. `auth=False` means "no SDK credential", as for device login. A caller's own session header goes only to this API's origin, and neither route authenticates with it. Stripping it would make browser sign-in unlike device login and the other SDKs, and aiohttp cannot do it per request. |
+| 5 | `control.py`: `device_name=""` sends the hostname | Fixed. Only `None` gets the default. An empty name is left out of the URL, and `interactive_login` sends device login no `client_name`. |
+| 6 | `control.py`: a callback `error` can repeat a secret | Fixed. `classify_request` keeps only RFC 6749's error codes (`OAUTH_ERRORS`). |
+| 7 | `control.py`: truncation leaves a secret prefix | Fixed. `_redacted_response` scrubs the answer before `_api_error` builds the message. `_scrub` makes one pass, longest value first, and never edits inside `[redacted]`. |
+| 8 | `control.py`: a transport error keeps the request body in `__context__` | Fixed. `_without_secrets` always builds a new error, raised outside the handler: no cause, no context. |
+| 9 | `native_auth.py`: the token endpoint can leave the API origin (Major) | Fixed. A colon anywhere in `token_endpoint` makes the configuration unusable. `_exchange_browser_code` also refuses a resolved URL off the API's origin. |
+
+**Behaviour that changed for the consumers** (`docs/browser-login-porting.md`, "What changed since 49744ee385bf"):
+
+- the token-endpoint colon rule and the origin check;
+- the RFC 6749 error allow-list;
+- the empty `device_name`;
+- a `HEAD` without a body;
+- the tab's wait;
+- redaction before the message is built, and a new error with no context.
+
+**Vectors and digest:**
+
+- `browser-login-vectors.json` grows from 98 to 106 cases:
+  - `config`: 2 more;
+  - `callbacks`: 2 more;
+  - `sign_ins`: 3 more;
+  - `chooser`: 1 more.
+- The vectors file's sha256 changes from `9058adf2ad30fd8b7f255882ce718865170d0d4b84d36f8fbfa23bde51d1651e` to `deac6fb8d4f5e999194a8dd47777278921035cf806ab509790de8874a08e77c5`.
+- The candidate reference digest changes from `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (never published, so removed from `reference_history`) to `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c`.
+
+**Verification:**
+
+- Python 3.12, `python -m pytest -q --cov=thalovant` with `THALOVANT_CONFORMANCE_OUT`: 1599 passed, 1 skipped (1579 before the review, plus 20 new). Coverage is 90% in total, and 100% for `_loopback.py` and `native_auth.py`. The 98 original browser-login cases record identical results; 8 are new.
+- Python 3.10 at CI's floors (`aiohttp==3.11.0`, `cryptography==48.0.1`, `THALOVANT_MINIMUM_VERSIONS=1`): 1552 passed, 1 skipped.
+- Python 3.14: 1599 passed, 1 skipped. `mkdocs build --strict`, `python -m build` and `twine check` pass.
+- `mypy` and `ruff` pass. `scripts/check-sdk-parity.py` verifies the reference, and `--snapshot` digests to the new candidate.
+- Mutation check: each of the ten review fixes was reverted in turn, and every revert failed at least one test.
+- Live check against `https://api.thalovant.com`, now that API #501 is deployed:
+  - `GET /v1/auth/native/config` answers 200 with exactly the contract's six members, and `NativeSignInConfig.from_dict` accepts them.
+  - The authorization URL built on a bound loopback port has the contract's parameters in order, and `https://dash.thalovant.com/authorize?...` answers 200 HTML.
+  - `POST /v1/auth/native/token` with a made-up code answers `ThalovantAPIError` 400, code `None`, detail `invalid_grant`, with no secret in the message and no token kept.
+  - No sign-in was completed; that needs a person in the browser.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Read the nine threads.
+  - Confirmed each finding against the code, and the API's rate-limit middleware for thread 4.
+  - Wrote the fixes, the tests and the new vector cases.
+  - Mutation-checked the fixes, re-ran the suites, the gate and the live API checks.
+  - Answered and resolved every thread.
+- **Oversight:** Done at the request of the browser sign-in train's lead. The merge stays with the lead, after the consumers.
 
 ## 2026-11-08: Browser sign-in (0.11.0)
 
@@ -42,7 +101,7 @@ The owner's goal is that a sign-in can be approved only by whoever started it, w
 - **Exchange errors.** They are redacted and raised outside their handler, so neither `__cause__` nor `__context__` holds the original.
 - **CLI.** It gains no `login` command, because it has nowhere to keep a token (SUGGESTIONS.md).
 
-**Reference digest:** `57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9` (current) to `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (candidate). Consumers accept both, merge and publish first; this PR merges last.
+**Reference digest:** `57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9` (current) to `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (candidate at the first head; superseded by `50af6731e276...` after the review, above). Consumers accept both, merge and publish first; this PR merges last.
 
 **Verification:**
 
