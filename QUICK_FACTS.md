@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0) after the CodeRabbit review of #113: digest 50af6731e276, 106 vector cases.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0), final producer revision of #113: digest 6dfb3bb31ac7, 119 vector cases.
 
 # Quick facts: thalovant (Python SDK)
 
@@ -13,7 +13,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0) after
 | Control plane | `ThalovantControlPlane`, `AsyncThalovantControlPlane` (`src/thalovant/control.py`) |
 | Errors | `ThalovantAPIError` (`status_code`, `code`, `detail`, `problem`, `fields`), `ThalovantPlanError`, `ThalovantAuthError` (`src/thalovant/errors.py`) |
 | Release | merge to `main` with a new version -> `auto-release.yml` tags and dispatches `publish.yml` (PyPI trusted publishing) |
-| Parity reference digest | `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c` (0.11.0 candidate; `57c7e71f6456...` on 0.10.0) |
+| Parity reference digest | `6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df` (0.11.0 candidate; `57c7e71f6456...` on 0.10.0) |
 
 ## Sign-in (0.11.0)
 
@@ -27,7 +27,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0) after
 | Fact | Value |
 | :--- | :--- |
 | Capability | `browser-login` in `contracts/sdk-parity.json` (scope matrix of `device-login`; embedded-c not applicable) |
-| Vectors | `contracts/conformance/browser-login-vectors.json` (106 cases), run by `tests/test_browser_login_vectors.py` |
+| Vectors | `contracts/conformance/browser-login-vectors.json` (119 cases), run by `tests/test_browser_login_vectors.py` |
 | Code | `src/thalovant/control.py` (`browser_login`, `interactive_login`), `src/thalovant/native_auth.py` (URL, redirect, state, config, browser rule), `src/thalovant/_loopback.py` (listener) |
 | Errors | `ThalovantDeviceLoginDenied` (denied), `ThalovantDeviceLoginExpired` (timeout, 300 s default), `ThalovantAPIError` (`invalid_grant`, config 404) |
 | Porting brief | `docs/browser-login-porting.md` |

@@ -1,6 +1,53 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review of #113 (browser sign-in): eight fixes with tests and vectors, one answered; digest 50af6731e276.
+Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Final producer revision of #113 from the Node, Go, .NET and Rust ports: request-layer origin, endpoint rules, drain before close, relay wording; digest 6dfb3bb31ac7.
 
 # Maintenance Report
+
+## 2026-11-08: Final producer revision of #113, from the consumer ports
+
+While fixing their own review threads, the Node (#110), Go (#90), .NET (#54) and Rust ports found gaps in the reference. The lead passed them on. This revision folds them in and gives the final candidate.
+
+| From | Finding | Outcome |
+| :--- | :--- | :--- |
+| Node | A path joined with `urljoin(api, path.lstrip("/"))` can leave the API's origin | Fixed in the request layer. `_send` refuses every request whose resolved origin (scheme, host, port) is not the API's. Every caller passes an API path, ids quoted and `links.self` reduced to an id, so nothing legitimate is refused. Test: `test_no_request_leaves_the_api_origin`. There is no vector: the configuration rule refuses such a `token_endpoint` first, so no browser-login case can reach the request layer. |
+| Node | `authorization_endpoint` on port 0 was usable | Fixed. Config vector added. |
+| Node | A callback `error` that contains the state | Already covered by the RFC 6749 allow-list. Pure case added: `callbacks/an error that contains the state is not kept`. |
+| Node | In `auto`, fall back to device login when the listener cannot bind | Not adopted. Binding `127.0.0.1:0` on a machine with a browser essentially never fails. When it does, the loopback stack is broken, and a silent device login would hide it. Every port would also need bind-failure injection. Recorded in the porting brief. |
+| Node | `interactive_login` has no `prompt` | Not changed, as agreed. It needs a design decision (a URL for the browser, a code for the device). Recorded in the porting brief. |
+| Go | A broken percent-escape in `token_endpoint` (`/v1/%zz`) | Fixed. Every `%` must be followed by two hex digits, so `auto` falls back before the consent page. Three config vectors. |
+| Go | The tab's 60-second bound, which the first brief stated | The brief's "What changed since 49744ee385bf" now says outright: drop it, and the tab waits until the sign-in ends. |
+| Go | HTTP/2 can replay the exchange's body | One paragraph in the brief: check for transport-level retries of the exchange. aiohttp (HTTP/1.1) never resends a POST. A caller's own requests session would resend one only with a retry policy that allows POST. |
+| .NET | A host that will not parse to a real hostname (`https://%/authorize`) | Fixed. `_real_host` accepts only these: IPv6 between brackets; IPv4, whenever the last label is numeric; or ASCII letter, digit and inner-hyphen labels (`xn--` for international names, at most 253 characters). Eight config vectors, three of them usable. |
+| Rust | A connection closed with bytes unread resets, and macOS loses the answer (an oversized head's 400) | Confirmed on Linux too: from a 200 KB head the 400 arrives but the connection ends in `ECONNRESET`, and a 404 left with an unread POST body does the same. Fixed in `_answer` (`_loopback.py`): after every answer the listener shuts its write side, then reads and drops what the browser still sends until it closes, at most 2 s / 1 MiB. Tests: `test_an_early_answer_is_not_lost_to_a_reset` (oversized head, unread body; both fail with the drain removed) and `test_draining_a_connection_is_bounded`. No vector: this is transport behaviour. The brief has a "Drain before closing" rule. |
+| .NET | "Cannot be relayed" is too absolute | Reworded in the README, the brief, the docstrings, the CHANGELOG and the manifest's capability description. The claim is now: a link or code sent to someone on another computer delivers nothing to the sender. A forwarded callback port or another user of the same computer can still complete a sign-in (AUDIT.md). |
+
+**Vectors and digest:**
+
+- `browser-login-vectors.json` has 119 cases.
+  - The first head had 98: the review round added 8 and this round 13.
+  - The 98 original cases still record identical results.
+- The file's sha256 is `b0c73f808c4f26328c27dd4d04eebfbbc3e7c0c81b8d63a666f63737d0259e73`.
+- The final candidate reference digest is `6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df`.
+  - `reference_history` ends `57c7e71f…, 6dfb3bb3…`.
+  - The intermediate candidates `49744ee385bf…`, `50af6731e276…`, `0bb293e23686…` and `1374f68fee6c…` were never published and are not kept.
+
+**Verification:**
+
+- Python 3.12, `python -m pytest -q --cov=thalovant` with `THALOVANT_CONFORMANCE_OUT`: 1621 passed, 1 skipped. Total coverage is 90%; `native_auth.py` 100%, `_loopback.py` 98% (the drain's defensive error returns). The 106 cases recorded before this round still record identical results.
+- Python 3.10 at CI's floors (`aiohttp==3.11.0`, `cryptography==48.0.1`, `THALOVANT_MINIMUM_VERSIONS=1`): 1574 passed, 1 skipped.
+- Python 3.14: 1621 passed, 1 skipped. `mkdocs build --strict` passes. The live config fetch, URL build and `invalid_grant` exchange against `https://api.thalovant.com` pass on the final code.
+- `mypy`, `ruff`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` pass, and `--snapshot` digests to the final candidate.
+- Each of the seven new rules was reverted in turn, and every revert failed a test: port 0, the broken escape, the request-layer origin, the host check, the numeric-label check, the label pattern and the drain.
+
+### Transparency Report
+
+- **AI Model:** Claude Opus 5.5 (Claude Code agent).
+- **Actions Taken:**
+  - Checked each consumer finding against the reference, and every `_send`/`_request` caller before guarding the request layer.
+  - Wrote the fixes, tests and vectors.
+  - Mutation-checked the new rules.
+  - Re-ran the suites and the gate.
+  - Updated the brief, the docs and the records.
+- **Oversight:** Done at the request of the browser sign-in train's lead, who relays the final digest to the six ports. The merge stays with the lead, after the consumers.
 
 ## 2026-11-08: CodeRabbit review of #113 (browser sign-in)
 
@@ -35,7 +82,7 @@ CodeRabbit left nine threads on #113. Eight are fixed, with tests. One is answer
   - `sign_ins`: 3 more;
   - `chooser`: 1 more.
 - The vectors file's sha256 changes from `9058adf2ad30fd8b7f255882ce718865170d0d4b84d36f8fbfa23bde51d1651e` to `deac6fb8d4f5e999194a8dd47777278921035cf806ab509790de8874a08e77c5`.
-- The candidate reference digest changes from `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (never published, so removed from `reference_history`) to `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c`.
+- The candidate reference digest changes from `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (never published, so removed from `reference_history`) to `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c`, itself superseded by the final revision above.
 
 **Verification:**
 
@@ -63,7 +110,7 @@ CodeRabbit left nine threads on #113. Eight are fixed, with tests. One is answer
 
 ## 2026-11-08: Browser sign-in (0.11.0)
 
-The owner's goal is that a sign-in can be approved only by whoever started it, with no friction. A device code can be relayed to somebody else. A loopback redirect cannot, because the browser that approves delivers the code to its own computer. thalovant-api #501 adds `GET /v1/auth/native/config` and the `thalovant-sdk` client on `http://127.0.0.1:<port>/callback`. This SDK is the reference the six other SDKs and MCP port from. The contract is `browser-sign-in-SPEC.md` from the lead.
+The owner's goal is that a sign-in can be approved only by whoever started it, with no friction. A device code can be relayed to somebody else. With a loopback redirect, a link or code sent to someone on another computer delivers nothing to the sender, because the browser that approves delivers the code to its own computer. A forwarded port or another user of the same computer is not covered. thalovant-api #501 adds `GET /v1/auth/native/config` and the `thalovant-sdk` client on `http://127.0.0.1:<port>/callback`. This SDK is the reference the six other SDKs and MCP port from. The contract is `browser-sign-in-SPEC.md` from the lead.
 
 **Changed:**
 

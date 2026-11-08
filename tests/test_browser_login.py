@@ -682,3 +682,112 @@ def test_scrubbing_is_one_pass_longest_first_and_leaves_its_marker_alone() -> No
     assert once == {"seen:[redacted]": ["[redacted]", {"deep": "[redacted]"}]}
     assert _scrub(once, hidden) == once
     assert _scrub("nothing hidden", ()) == "nothing hidden"
+
+
+@pytest.mark.parametrize("path", ["/https://elsewhere.example/v1/x", "/elsewhere.example:443/v1/x", "/{collector}/v1/x",
+                                  "https://elsewhere.example/v1/x"])
+def test_no_request_leaves_the_api_origin(path: str) -> None:
+    """Every request is joined to the API's address; none may come out somewhere else.
+
+    The join takes the path's leading slashes off, so a path that is a URL --
+    or whose first segment reads as a scheme -- would otherwise be one.
+    """
+
+    async def run() -> tuple[ThalovantAPIError, list[str]]:
+        async with Api() as collector, Api() as api:
+            plane = AsyncThalovantControlPlane(api.url, access_token="tvpat_must_stay_home")
+            target = path.replace("{collector}", collector.url)
+            with pytest.raises(ThalovantAPIError, match="origin") as raised:
+                await plane._request("GET", target)
+            with pytest.raises(ThalovantAPIError, match="origin"):
+                await plane._send("POST", target, json={"code": "c"}, auth=False)
+            await plane.aclose()
+            return raised.value, collector.requests + api.requests
+
+    error, requests = asyncio.run(run())
+    assert requests == [] and error.status_code is None
+    assert "tvpat_must_stay_home" not in str(error)
+
+
+def test_an_ordinary_api_path_still_reaches_the_api() -> None:
+    async def run() -> list[str]:
+        async with Api() as api:
+            plane = AsyncThalovantControlPlane(api.url)
+            assert (await plane._request("GET", "/v1/auth/native/config", auth=False))["sdk_client_id"] == "thalovant-sdk"
+            await plane.aclose()
+            return api.requests
+
+    assert asyncio.run(run()) == ["GET /v1/auth/native/config"]
+
+
+def _send_and_read(port: int, request: bytes) -> tuple[bytes, str | None]:
+    """Send *request* while reading the answer, as a browser does; say how the connection ended."""
+
+    import socket as sockets
+
+    connection = sockets.create_connection(("127.0.0.1", port))
+    sender = threading.Thread(target=lambda: _quietly(connection.sendall, request), daemon=True)
+    sender.start()
+    data, ended = b"", None
+    try:
+        while chunk := connection.recv(65536):
+            data += chunk
+    except OSError as error:
+        ended = type(error).__name__
+    sender.join(5)
+    connection.close()
+    return data, ended
+
+
+def _quietly(send: Callable[[bytes], Any], data: bytes) -> None:
+    try:
+        send(data)
+    except OSError:
+        pass
+
+
+@pytest.mark.parametrize("request_bytes", [
+    # A head ten times the listener's limit: most of it is never read.
+    b"GET /callback?code=" + b"a" * 600_000 + b" HTTP/1.1\r\nHost: x\r\n\r\n",
+    # A body nobody asked for, behind a 404.
+    b"POST /callback HTTP/1.1\r\nHost: x\r\nContent-Length: 600000\r\n\r\n" + b"b" * 600_000,
+], ids=["oversized head", "unread body"])
+def test_an_early_answer_is_not_lost_to_a_reset(request_bytes: bytes) -> None:
+    """Closing with bytes unread resets the connection, and macOS then drops the
+    answer the browser had not read; Linux shows the reset as ECONNRESET."""
+
+    async def run() -> tuple[bytes, str | None]:
+        listener = LoopbackListener("the-state")
+        port = await listener.start()
+        try:
+            return await asyncio.to_thread(_send_and_read, port, request_bytes)
+        finally:
+            await listener.close()
+
+    data, ended = asyncio.run(run())
+    assert data.split(b"\r\n", 1)[0] in (b"HTTP/1.1 400 Bad Request", b"HTTP/1.1 404 Not Found")
+    assert ended is None, f"the connection ended with {ended}"
+
+
+def test_draining_a_connection_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A browser that never closes its side cannot keep a connection's task alive."""
+
+    import thalovant._loopback as loopback
+
+    monkeypatch.setattr(loopback, "DRAIN_TIMEOUT", 0.2)
+
+    async def run() -> int:
+        listener = LoopbackListener("the-state")
+        port = await listener.start()
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET /favicon.ico HTTP/1.1\r\n\r\n")
+            assert (await reader.read()).startswith(b"HTTP/1.1 404 ")  # the answer ends: our side is shut
+            await asyncio.sleep(0.5)  # ours stays open
+            left = len(listener._tasks)
+            writer.close()
+            return left
+        finally:
+            await listener.close()
+
+    assert asyncio.run(run()) == 0

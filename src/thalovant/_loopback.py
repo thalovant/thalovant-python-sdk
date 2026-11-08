@@ -71,6 +71,12 @@ OAUTH_ERRORS = frozenset({
 })
 #: How long closing waits for an accepted tab's page to be written.
 CLOSE_GRACE = 1.0
+#: After an answer, how long and how much of what the browser still sends is
+#: read and dropped before the connection closes. A socket closed with bytes
+#: unread answers them with a reset, and macOS then throws away the answer the
+#: browser had not read yet -- an oversized head's 400, say.
+DRAIN_TIMEOUT = 2.0
+DRAIN_LIMIT = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -266,15 +272,13 @@ class LoopbackListener:
         try:
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), REQUEST_READ_TIMEOUT)
         except asyncio.LimitOverrunError:
-            writer.write(response_bytes(400, WRONG_STATE_TEXT))
-            await writer.drain()
+            await _answer(reader, writer, response_bytes(400, WRONG_STATE_TEXT))
             return
         except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError):
             return
         request = _request_line(head)
         if request is None:
-            writer.write(response_bytes(400, WRONG_STATE_TEXT))
-            await writer.drain()
+            await _answer(reader, writer, response_bytes(400, WRONG_STATE_TEXT))
             return
         status, callback = classify_request(request[0], request[1], self._state)
         accepted, answer = self._accepted, self._answer
@@ -283,9 +287,8 @@ class LoopbackListener:
             # accepted, is not this sign-in's any more either.
             if callback is not None:
                 status = 400
-            writer.write(response_bytes(status, NOT_FOUND_TEXT if status == 404 else WRONG_STATE_TEXT,
-                                        head=request[0] == "HEAD"))
-            await writer.drain()
+            await _answer(reader, writer, response_bytes(
+                status, NOT_FOUND_TEXT if status == 404 else WRONG_STATE_TEXT, head=request[0] == "HEAD"))
             return
         accepted.set_result(callback)
         self._accepted_task = asyncio.current_task()
@@ -297,5 +300,36 @@ class LoopbackListener:
         # page says how it ended, so it cannot be written before it has.
         # close() always answers, so this never outlives the sign-in.
         signed_in = await answer
-        writer.write(response_bytes(200, SIGNED_IN_TEXT if signed_in else NOT_COMPLETED_TEXT))
-        await writer.drain()
+        await _answer(reader, writer, response_bytes(200, SIGNED_IN_TEXT if signed_in else NOT_COMPLETED_TEXT))
+
+
+async def _answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, response: bytes) -> None:
+    """Send *response*, then let the browser finish before the connection closes.
+
+    The write side is shut first (the browser sees the answer end), then what
+    the browser still sends -- the rest of an oversized head, a body nobody
+    asked for -- is read and dropped until it closes its side, for at most
+    :data:`DRAIN_TIMEOUT` seconds and :data:`DRAIN_LIMIT` bytes. Closing with
+    bytes unread would reset the connection instead.
+    """
+
+    writer.write(response)
+    await writer.drain()
+    try:
+        if writer.can_write_eof():
+            writer.write_eof()
+    except (OSError, RuntimeError):
+        return
+    deadline = time.monotonic() + DRAIN_TIMEOUT
+    drained = 0
+    while drained <= DRAIN_LIMIT:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        try:
+            chunk = await asyncio.wait_for(reader.read(64 * 1024), remaining)
+        except (asyncio.TimeoutError, ConnectionError, OSError):
+            return
+        if not chunk:
+            return
+        drained += len(chunk)

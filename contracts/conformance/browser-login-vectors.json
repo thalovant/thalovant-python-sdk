@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Browser sign-in: the OAuth authorization code grant with PKCE (RFC 7636, S256 only) on a loopback redirect (RFC 8252 section 7.3), for a program on a machine with a browser; device login stays the fallback for machines with none. The SDK reads GET /v1/auth/native/config (no auth); a 404 means an API without browser sign-in, and an answer it cannot safely use is an error with no status (a token_endpoint must be a path on the API: one leading slash, no colon, query, fragment or backslash, and the exchange is never sent off the API's origin). It binds 127.0.0.1 on port 0 before building the URL, opens {authorization_endpoint}?response_type=code&client_id=&redirect_uri=&code_challenge=&code_challenge_method=S256&state=&scope=&device_name= (that order, RFC 3986 percent-encoding, a space as %20; scope left out when no non-empty scope is asked for, device_name cut to 120 code points and left out when empty -- only a missing name gets the default, an empty one keeps the hostname out) and always prints the URL too. redirect_uri is exactly http://127.0.0.1:<port>/callback. The listener serves only GET /callback (anything else 404, and a HEAD gets no body); a callback whose state is missing, repeated or not this sign-in's (compared in constant time) is 400 and the wait goes on; the first callback with the right state is accepted and the port stops listening. error=access_denied is denied, any other error (it wins over a code; only RFC 6749's error codes are kept, so a value the page chose never reaches an error) or no single non-empty code is a failed sign-in with no status, and a code is exchanged with POST {token_endpoint} carrying exactly code, code_verifier, client_id and redirect_uri. The accepted tab gets its page once the sign-in has ended, however long the exchange takes: 'Signed in to Thalovant. You can close this tab.' on success, 'Sign-in was not completed.' otherwise, with the page_headers on every answer. No accepted callback within the timeout (default 300 s) is expired; a failed exchange carries the api-errors fields (400 invalid_grant), and a 2xx that is not a JSON object with an access_token is an error with no status. The token is kept as a device login's is (access_token and token_id) and revokes itself the same way. The chooser signs in through the browser when the machine has one (never with CI, SSH_CONNECTION or SSH_TTY set; macOS and Windows yes; elsewhere only with DISPLAY or WAYLAND_DISPLAY; an empty variable is not set) and the configuration is usable, with a device login otherwise; 'browser' and 'device' force one, and once the browser is opened its outcome stands. The code, the verifier, the state and the token never appear in an error.",
+  "description": "Browser sign-in: the OAuth authorization code grant with PKCE (RFC 7636, S256 only) on a loopback redirect (RFC 8252 section 7.3), for a program on a machine with a browser; device login stays the fallback for machines with none. The SDK reads GET /v1/auth/native/config (no auth); a 404 means an API without browser sign-in, and an answer it cannot safely use is an error with no status (a authorization_endpoint's host must be an IP address or ASCII letters, digits and inner hyphens (no %, _ or empty label) on a port other than 0; token_endpoint must be a path on the API: one leading slash, every % followed by two hex digits, no colon, query, fragment or backslash, and the exchange is never sent off the API's origin). It binds 127.0.0.1 on port 0 before building the URL, opens {authorization_endpoint}?response_type=code&client_id=&redirect_uri=&code_challenge=&code_challenge_method=S256&state=&scope=&device_name= (that order, RFC 3986 percent-encoding, a space as %20; scope left out when no non-empty scope is asked for, device_name cut to 120 code points and left out when empty -- only a missing name gets the default, an empty one keeps the hostname out) and always prints the URL too. redirect_uri is exactly http://127.0.0.1:<port>/callback. The listener serves only GET /callback (anything else 404, and a HEAD gets no body); a callback whose state is missing, repeated or not this sign-in's (compared in constant time) is 400 and the wait goes on; the first callback with the right state is accepted and the port stops listening. error=access_denied is denied, any other error (it wins over a code; only RFC 6749's error codes are kept, so a value the page chose never reaches an error) or no single non-empty code is a failed sign-in with no status, and a code is exchanged with POST {token_endpoint} carrying exactly code, code_verifier, client_id and redirect_uri. The accepted tab gets its page once the sign-in has ended, however long the exchange takes: 'Signed in to Thalovant. You can close this tab.' on success, 'Sign-in was not completed.' otherwise, with the page_headers on every answer. No accepted callback within the timeout (default 300 s) is expired; a failed exchange carries the api-errors fields (400 invalid_grant), and a 2xx that is not a JSON object with an access_token is an error with no status. The token is kept as a device login's is (access_token and token_id) and revokes itself the same way. The chooser signs in through the browser when the machine has one (never with CI, SSH_CONNECTION or SSH_TTY set; macOS and Windows yes; elsewhere only with DISPLAY or WAYLAND_DISPLAY; an empty variable is not set) and the configuration is usable, with a device login otherwise; 'browser' and 'device' force one, and once the browser is opened its outcome stands. The code, the verifier, the state and the token never appear in an error.",
   "source": "thalovant-api app/routes/auth_native.py (native_sign_in_config, native_token), app/auth/native_clients.py (thalovant-sdk, is_loopback_callback); thalovant-frontend src/utils/native-authorization.ts; RFC 7636 section 4 and Appendix B; RFC 8252 sections 7.3 and 8",
   "client_id": "thalovant-sdk",
   "redirect_uri": "http://127.0.0.1:{port}/callback",
@@ -431,6 +431,159 @@
       }
     },
     {
+      "name": "a dashboard address on port 0 is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com:0/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard host that is not a hostname is unusable",
+      "body": {
+        "authorization_endpoint": "https://%/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard host with an empty label is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash..thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard host with an underscore is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash_staging.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "an international dashboard host must be written in its xn-- form",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovânt.com/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a dashboard host that is numeric like IPv4 and not an address is unusable",
+      "body": {
+        "authorization_endpoint": "https://999.1.1.1/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "an international dashboard host in its xn-- form is usable",
+      "body": {
+        "authorization_endpoint": "https://xn--dsh-0na.example/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "https://xn--dsh-0na.example/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
+      "name": "a dashboard on an IPv4 address is usable",
+      "body": {
+        "authorization_endpoint": "https://192.0.2.10/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "https://192.0.2.10/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
+      "name": "a loopback dashboard on IPv6 over http is usable while developing",
+      "body": {
+        "authorization_endpoint": "http://[::1]:5173/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "http://[::1]:5173/authorize",
+        "token_endpoint": "/v1/auth/native/token",
+        "sdk_client_id": "thalovant-sdk"
+      }
+    },
+    {
       "name": "no dashboard address is unusable",
       "body": {
         "token_endpoint": "/v1/auth/native/token",
@@ -523,6 +676,57 @@
       },
       "expect": {
         "usable": false
+      }
+    },
+    {
+      "name": "a token endpoint with a broken percent-escape is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/%zz",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a token endpoint with a percent sign at its end is unusable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/token%",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": false
+      }
+    },
+    {
+      "name": "a token endpoint with whole percent-escapes is usable",
+      "body": {
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/%74oken",
+        "device_authorization_endpoint": "/v1/auth/device/authorize",
+        "sdk_client_id": "thalovant-sdk",
+        "loopback_redirect_uri": "http://127.0.0.1:{port}/callback",
+        "code_challenge_methods_supported": [
+          "S256"
+        ]
+      },
+      "expect": {
+        "usable": true,
+        "authorization_endpoint": "https://dash.thalovant.com/authorize",
+        "token_endpoint": "/v1/auth/native/%74oken",
+        "sdk_client_id": "thalovant-sdk"
       }
     },
     {
@@ -950,6 +1154,18 @@
       "request": {
         "method": "GET",
         "target": "/callback?error={state}&state={state}"
+      },
+      "expect": {
+        "status": 200,
+        "outcome": "failed",
+        "error": null
+      }
+    },
+    {
+      "name": "an error that contains the state is not kept",
+      "request": {
+        "method": "GET",
+        "target": "/callback?error=denied-{state}-again&state={state}"
       },
       "expect": {
         "status": 200,

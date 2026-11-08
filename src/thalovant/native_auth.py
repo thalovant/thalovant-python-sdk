@@ -30,8 +30,11 @@ live here, so that each can be checked against the shared vectors on its own:
 ``loopback_redirect_uri`` the redirect it comes back to, ``new_state`` the
 value that ties the two together, ``NativeSignInConfig`` reads where the API
 says to send the browser, and ``can_open_browser`` says whether this machine
-has a browser to send. A loopback redirect cannot be relayed: the browser that
-approves hands the code to its own computer, never to whoever sent the link.
+has a browser to send. The browser that approves hands the code to its own
+computer's ``127.0.0.1``, so a sign-in link sent to somebody on another computer
+delivers nothing to the sender. That is all it promises: a forwarded callback
+port (``ssh -L``, a port-forwarding tool) or another user of the same computer
+can still complete a sign-in.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ from __future__ import annotations
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
 from hashlib import sha256
+import ipaddress
 import os
 import re
 import secrets
@@ -222,10 +226,41 @@ def can_open_browser(environ: Mapping[str, str] | None = None, platform: str | N
 
 
 _CLIENT_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+#: A ``%`` that is not followed by two hexadecimal digits.
+_BROKEN_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+#: One DNS label as a URL host carries it: letters, digits and inner hyphens.
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _real_host(host: str, bracketed: bool) -> bool:
+    """Whether *host* (lowercased, brackets off) names something a browser can reach.
+
+    An IP address -- IPv6 only between brackets, IPv4 whenever the last label
+    is a number, as a browser reads it -- or a DNS name: ASCII labels of
+    letters, digits and inner hyphens (an international name in its ``xn--``
+    form), at most 253 characters. ``%``, ``_``, an empty label and anything
+    else that will not parse to a hostname make the address unusable.
+    """
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if bracketed:
+        return address is not None and address.version == 6
+    if address is not None:
+        return address.version == 4
+    labels = host.split(".")
+    if labels[-1].isdigit():
+        return False  # numeric like an IPv4 address, and not one
+    return len(host) <= 253 and all(_HOST_LABEL.fullmatch(label) for label in labels)
 
 
 def _usable_authorization_endpoint(value: Any) -> bool:
-    """https, or http on a loopback host while developing; a host; no
+    """https, or http on a loopback host while developing; a host that parses
+    to a real hostname or IP address; a port a browser can open; no
     credentials, query, fragment, whitespace or control characters."""
 
     if not isinstance(value, str) or not value:
@@ -235,18 +270,22 @@ def _usable_authorization_endpoint(value: Any) -> bool:
     try:
         parts = urlsplit(value)
         host = (parts.hostname or "").lower()
-        parts.port  # noqa: B018 - raises ValueError for a port no browser can open
+        # Raises ValueError above 65535; 0 parses, and no browser can open it either.
+        if parts.port == 0:
+            return False
     except ValueError:
         return False
     if not host or "@" in parts.netloc or parts.query or parts.fragment or "?" in value or "#" in value:
+        return False
+    if not _real_host(host, "[" in parts.netloc):
         return False
     scheme = parts.scheme.lower()
     return scheme == "https" or (scheme == "http" and host in {"localhost", "127.0.0.1", "::1"})
 
 
 def _usable_token_endpoint(value: Any) -> bool:
-    """A path on the API: one leading slash, and no colon, query, fragment,
-    backslash or whitespace.
+    """A path on the API: one leading slash, every ``%`` followed by two hex
+    digits, and no colon, query, fragment, backslash or whitespace.
 
     No colon, because a URL joiner can read what follows the slash as a URL of
     its own: ``/https://collector.example/token`` and
@@ -255,6 +294,10 @@ def _usable_token_endpoint(value: Any) -> bool:
     """
 
     if not isinstance(value, str) or not value.startswith("/") or value.startswith("//"):
+        return False
+    if _BROKEN_ESCAPE.search(value):
+        # "/v1/%zz" cannot be sent as written; better found out now, while a
+        # device login can still stand in, than after somebody approved.
         return False
     return not any(
         char in ":?#\\" or char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in value
@@ -283,7 +326,8 @@ class NativeSignInConfig:
 
         Unusable (``ValueError``): an ``authorization_endpoint`` that is not
         https (or http on a loopback host), carries credentials, a query or a
-        fragment; a ``token_endpoint`` that is not a path on the API (a colon
+        fragment, names port 0 or one above 65535, or has a host that does not
+        parse to a real hostname or IP address; a ``token_endpoint`` that is not a path on the API (a colon
         anywhere in it included); a missing
         ``sdk_client_id``; or ``code_challenge_methods_supported`` without
         ``S256``. Other members are ignored.

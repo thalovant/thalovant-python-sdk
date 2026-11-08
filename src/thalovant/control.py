@@ -768,14 +768,9 @@ class AsyncThalovantControlPlane:
         """
 
         self._require_secure_token_exchange()
-        # Where _send will send it, worked out the same way. The configuration
-        # already refuses a token endpoint that could leave the API; this is
-        # the last word before the code and the verifier go on the wire.
-        target = urljoin(self.api_url, config.token_endpoint.lstrip("/"))
-        if _origin(target) != _origin(self.api_url):
-            raise ThalovantAPIError(
-                "Refusing to send an authorization code to a token endpoint off the Thalovant API's origin."
-            )
+        # The configuration already refuses a token endpoint that could leave
+        # the API, and _send refuses any request off the API's origin: the
+        # code and the verifier go nowhere else.
         payload = _native_token_request(code, verifier, config.sdk_client_id, redirect_uri)
         response = await self._send("POST", config.token_endpoint, json=payload, auth=False)
         if not 200 <= response.status_code < 300:
@@ -804,9 +799,10 @@ class AsyncThalovantControlPlane:
         opens the browser at the dashboard's consent page (read from ``GET
         /v1/auth/native/config``), and waits for the browser to come back to
         ``http://127.0.0.1:<port>/callback``. The browser that approves hands
-        the code to its own computer, so a sign-in link sent to somebody else
-        delivers nothing to the sender -- which a device code, read off one
-        screen and typed into another, cannot promise.
+        the code to its own computer, so a sign-in link sent to somebody on
+        another computer delivers nothing to the sender -- which a device code,
+        read off one screen and typed in anywhere, cannot promise. A forwarded
+        callback port or another user of the same computer is another matter.
 
         The URL is always printed as well as opened (``Opening your browser
         to sign in to Thalovant. If it does not open, visit:`` and the URL);
@@ -2735,6 +2731,13 @@ class AsyncThalovantControlPlane:
             request_headers["authorization"] = f"Bearer {self.access_token}"
 
         url = urljoin(self.api_url, path.lstrip("/"))
+        if _origin(url) != _origin(self.api_url):
+            # A path is joined to the API's address with its leading slashes
+            # taken off, so "/https://elsewhere/x" -- or "/elsewhere:443/x",
+            # whose first segment reads as a scheme -- would become a URL of
+            # its own. Every request this client makes, and the token on it,
+            # stays on the API's origin.
+            raise ThalovantAPIError("Refusing a request off the Thalovant API's origin.")
         parsed = urlsplit(url)
         if parsed.username or parsed.password:
             raise ThalovantAPIError("Control-plane URLs must not include embedded credentials.")

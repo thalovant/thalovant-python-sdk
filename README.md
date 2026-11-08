@@ -92,8 +92,10 @@ api.interactive_login()  # the browser here, or a device code where there is non
 `interactive_login()` opens your browser at the Thalovant consent page and
 listens on `127.0.0.1` for the answer (OAuth with PKCE on a loopback redirect,
 RFC 8252). It always prints the address too, in case the browser does not
-open. Only the browser on this computer can complete the sign-in, so a sign-in
-link that reaches somebody else gives them nothing.
+open. The browser that approves hands the answer to its own computer, so a
+sign-in link sent to somebody on another computer delivers nothing to you or to
+them. (A forwarded port, such as `ssh -L`, or another user of the same computer
+can still complete it.)
 
 On a machine that cannot show a browser, it prints a code to enter at
 `thalovant.com/activate` from any browser instead: over SSH, in CI, or on Linux

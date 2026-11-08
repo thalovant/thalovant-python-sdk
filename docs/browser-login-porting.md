@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: CodeRabbit review of #113: token endpoint origin rule, RFC 6749 error allow-list, HEAD without a body, the tab waits for the end, empty device name, redact before formatting, the Go rune slice; digest 50af6731e276. -->
+<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Final producer revision for #113 (CodeRabbit, and the Node and Go ports): every request stays on the API origin, token_endpoint and authorization_endpoint rules, the RFC 6749 error allow-list, the tab's wait, HEAD, empty device name, redaction; the host rule and the relay wording; digest 6dfb3bb31ac7. -->
 
 # Porting browser sign-in (`browser-login`)
 
@@ -8,9 +8,12 @@ machine with a browser signs its user in through that browser. Device login stay
 as it is, and it is the fallback for a machine with no browser.
 
 Why it matters: anybody can relay a device code. Somebody reads the code off one
-screen and types it in anywhere (device-code phishing). A loopback redirect cannot
-be relayed, because the browser that approves delivers the code to its own
-computer. A sign-in link sent to somebody else delivers nothing to the sender.
+screen and types it in anywhere (device-code phishing). With a loopback redirect,
+the browser that approves delivers the code to its own computer's `127.0.0.1`. So
+**a link or code sent to someone on another computer delivers nothing to the
+sender**. Use that sentence, and do not claim more. A forwarded callback port
+(`ssh -L`, a port-forwarding tool) or another user of the same computer can still
+complete a sign-in.
 
 The behaviour is written down in `contracts/conformance/browser-login-vectors.json`.
 Every SDK that `contracts/sdk-parity.json` marks `required` implements it, runs the
@@ -18,7 +21,7 @@ vectors, records its results, and acknowledges the reference.
 
 | Capability | Vectors | Required in | Not applicable in |
 |---|---|---|---|
-| `browser-login` | `browser-login-vectors.json` (106 cases) | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
+| `browser-login` | `browser-login-vectors.json` (119 cases) | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
 
 The scope matrix is `device-login`'s. embedded-c is a caller-buffer wire library
 with no control-plane HTTP client. Its caller owns every request it would make and
@@ -101,12 +104,27 @@ something like this:
     or `::1`.
   - `authorization_endpoint` has no host, carries credentials, a query (or a bare
     `?`), a fragment, whitespace or control characters, or a port no browser can
-    open.
-  - `token_endpoint` is not a path on the API: one leading `/`, not `//`, and no
-    `:`, `?`, `#`, `\` or whitespace. A colon is refused anywhere because a URL
-    joiner can read what follows the slash as a URL of its own:
-    `/https://collector.example/token` and `/collector.example:443/token` leave
-    the API in Python's `urljoin` once the slash is stripped.
+    open: 0, or above 65535.
+  - `authorization_endpoint`'s host, **as written**, is not one of these:
+    - an IPv6 address between brackets;
+    - an IPv4 address (whenever the last label is a number, it must be one, as a
+      browser reads it);
+    - a DNS name of ASCII labels, each of letters, digits and inner hyphens and
+      1-63 characters long, at most 253 characters in all.
+
+    So `%`, `_`, an empty label, a trailing dot and a non-ASCII host make the
+    configuration unusable; an international name is written in its `xn--` form.
+    Check the string you were given: Node's `URL` turns a Unicode host into
+    `xn--` before you can see it, and .NET's `Uri.Host` may give it back in
+    Unicode.
+  - `token_endpoint` is not a path on the API: one leading `/`, not `//`, every `%`
+    followed by two hex digits, and no `:`, `?`, `#`, `\` or whitespace.
+    - A colon is refused anywhere because a URL joiner can read what follows the
+      slash as a URL of its own: `/https://collector.example/token` and
+      `/collector.example:443/token` leave the API in Python's `urljoin` once the
+      slash is stripped.
+    - A broken escape (`/v1/%zz`) is caught here, while device login can still
+      stand in, rather than at the exchange, after somebody approved.
   - `sdk_client_id` is not 1-64 characters of `[A-Za-z0-9._-]`.
   - `code_challenge_methods_supported` is not a list that contains `S256`.
 
@@ -179,6 +197,15 @@ something like this:
   listening, give the accepted tab its page (Python waits at most 1 second for it),
   and close every other connection **without waiting for it**. Browsers open
   connections they never send anything on, and the sign-in must not wait on them.
+- **Drain before closing.** After every answer the listener writes (the 400 for an
+  oversized or unreadable head, a 404, a 400 for a wrong state, the accepted tab's
+  page), shut your write side and read and drop whatever the browser still sends
+  until it closes its side. Do this for at most 2 seconds and 1 MiB, then close.
+  A socket closed with bytes still unread answers them with a TCP reset, and macOS
+  then discards the answer the browser had not read yet. Linux keeps the answer
+  readable but reports `ECONNRESET`. Rust found this on macOS. Python shows it on
+  Linux from a 200 KB head, and drains in `_answer` (`_loopback.py`, `DRAIN_TIMEOUT`
+  and `DRAIN_LIMIT`).
 - **Logging**: never log a request line, because it carries the code and the state.
   Turn off your server framework's access log.
 
@@ -243,8 +270,8 @@ string the URL carried, and `client_id` is the configuration's.
 
 Before sending, resolve the URL the way your HTTP client will, and refuse it, with an
 error with no status, unless its origin is the API's. An origin is the scheme, the
-host and the port. The configuration rule already refuses such an endpoint; this is
-the last word before the code and the verifier go on the wire.
+host and the port. Do this in your request layer, for **every** request, not only
+this one; the configuration rule already refuses such an endpoint.
 
 | Answer | Outcome |
 |---|---|
@@ -255,6 +282,13 @@ the last word before the code and the verifier go on the wire.
 The API gives the same answer for every way an exchange can fail. A code is
 single-use and lives 60 seconds, so **never retry an exchange**: presenting a code
 twice revokes the token the first exchange minted (RFC 9700).
+
+Check your transport for retries of its own. Go's HTTP/2 transport can replay a
+written request body after a server reset, so Go sends the exchange in a way that
+writes it at most once. Look for anything that resends a POST in your HTTP client
+or a library under it, and turn it off for this request. Python's aiohttp (HTTP/1.1)
+never resends one. A caller's own requests session would resend it only if it
+mounted a retry policy that allows POST.
 
 ### 6. Timeout
 
@@ -335,9 +369,9 @@ The cases are in eight sections. Record each one under **`<section>/<name>`**:
 | `pkce` (3) | your challenge function. The first case is RFC 7636 Appendix B. | `{"challenge"}` |
 | `redirect_uris` (6) | your redirect builder | `{"redirect_uri"}` or `{"error": "invalid_port"}` |
 | `authorization_urls` (9) | your URL builder, with the case's fixed `code_challenge` and `state` | `{"url"}`, compared as an exact string |
-| `config` (18) | your configuration parser | `{"usable": false}` or `{"usable": true, "authorization_endpoint", "token_endpoint", "sdk_client_id"}` |
+| `config` (30) | your configuration parser | `{"usable": false}` or `{"usable": true, "authorization_endpoint", "token_endpoint", "sdk_client_id"}` |
 | `environment` (13) | your browser rule, with the case's `platform` and `env` | `{"browser": bool}` |
-| `callbacks` (26) | your callback classifier, with the case's target and `{state}` replaced by a fixed state | `{"status", "outcome": "ignored"}`, `{"status": 200, "outcome": "code", "code"}`, `{"status": 200, "outcome": "denied"}` or `{"status": 200, "outcome": "failed", "error"}`. Python also runs every case through a real listener. |
+| `callbacks` (27) | your callback classifier, with the case's target and `{state}` replaced by a fixed state | `{"status", "outcome": "ignored"}`, `{"status": 200, "outcome": "code", "code"}`, `{"status": 200, "outcome": "denied"}` or `{"status": 200, "outcome": "failed", "error"}`. Python also runs every case through a real listener. |
 | `sign_ins` (18) | `browser_login`, for real (below) | `{"authorization_url", "browser", "closed", "exchange", "result"}`. The first four are present only when the SDK got that far. |
 | `chooser` (13) | `interactive_login`, for real, on the case's `platform` and `env` | `{"method": "browser" or "device", "result"}` |
 
@@ -396,17 +430,39 @@ Durations in the cases are whole milliseconds (`timeout_ms`). The expired cases 
 
 ## What changed since `49744ee385bf`
 
-A port of the PR's first head (accepted as `49744ee385bf…`) needs these changes. The
-vectors file changed, so re-vendor it (98 to 106 cases) and re-record.
+A port of the PR's first head (accepted as `49744ee385bf…`) needs every change below.
+The vectors file changed, so re-vendor it (98 to 119 cases) and re-record. The 98
+earlier cases still produce exactly the results they did; the 21 new ones are listed
+with their change. Everything else in this brief is as it was.
 
-| Change | Vector cases |
-|---|---|
-| A `token_endpoint` with a `:` anywhere is unusable, and the exchange refuses a URL off the API's origin | `config/a token endpoint that is another URL behind its slash is unusable`, `config/a token endpoint with a colon anywhere is unusable`, `sign_ins/a token endpoint that would leave the API is refused before anything is opened` |
-| Only RFC 6749's error codes are kept from a callback; anything else is `null` | `callbacks/an error outside RFC 6749's codes fails the sign-in and is not kept`, `callbacks/the state repeated as the error is not kept`, `sign_ins/an error that repeats the state never reaches the error` |
-| Only a missing `device_name` gets the default. An empty one is left out of the URL, and the device login sends no `client_name`. | `sign_ins/an empty device name keeps the hostname off the consent page`, `chooser/an empty device name is not sent to a device login either` |
-| A `HEAD` answer carries no body | none (Python: `test_a_head_request_gets_the_headers_and_no_body`) |
-| The accepted tab waits until the sign-in ends, with no separate deadline | none (`test_the_accepted_tab_waits_as_long_as_the_sign_in_takes`) |
-| The exchange's answer is redacted before its message is built, and the error raised is a new one with no cause or context | none (`test_a_message_cut_to_length_keeps_no_part_of_a_secret`, `test_a_transport_failure_during_the_exchange_carries_nothing_of_the_request`) |
+| # | Change | Vector cases (`<section>/<name>`) or Python test |
+|---|---|---|
+| 1 | **No request leaves the API's origin.** Every request is resolved against the API's address and refused, with an error with no status, when the result's origin (scheme, host, port) is not the API's. This applies to every request, not only the exchange. Python joins with `urljoin(api, path.lstrip("/"))`, so `/https://elsewhere/x` or `/elsewhere:443/x` would otherwise become a URL of its own. | `sign_ins/a token endpoint that would leave the API is refused before anything is opened`; `test_no_request_leaves_the_api_origin`, `test_the_exchange_never_leaves_the_api_origin` |
+| 2 | **`token_endpoint`: no colon anywhere, and every `%` followed by two hex digits.** Either fault makes the configuration unusable, so `auto` falls back to device login before the consent page rather than failing after the person approved. | `config/a token endpoint that is another URL behind its slash is unusable`, `config/a token endpoint with a colon anywhere is unusable`, `config/a token endpoint with a broken percent-escape is unusable`, `config/a token endpoint with a percent sign at its end is unusable`, `config/a token endpoint with whole percent-escapes is usable` |
+| 3 | **`authorization_endpoint` must be openable.** Port 0 is unusable, as is one above 65535. So is a host that does not parse to an IP address or a real hostname: `%`, `_`, an empty label, a non-ASCII host (use `xn--`), or a numeric last label that is not IPv4. | `config/a dashboard address on port 0 is unusable`, `config/a dashboard host that is not a hostname is unusable`, `config/a dashboard host with an empty label is unusable`, `config/a dashboard host with an underscore is unusable`, `config/an international dashboard host must be written in its xn-- form`, `config/a dashboard host that is numeric like IPv4 and not an address is unusable`, `config/an international dashboard host in its xn-- form is usable`, `config/a dashboard on an IPv4 address is usable`, `config/a loopback dashboard on IPv6 over http is usable while developing` |
+| 4 | **Only RFC 6749's error codes are kept from a callback.** Anything else is `null`: an `error` that is, or contains, the state or a code is never repeated in a message or a `code`. | `callbacks/an error outside RFC 6749's codes fails the sign-in and is not kept`, `callbacks/the state repeated as the error is not kept`, `callbacks/an error that contains the state is not kept`, `sign_ins/an error that repeats the state never reaches the error` |
+| 5 | **Only a missing `device_name` gets the default.** An empty one is left out of the URL, and the chooser's device login then sends no `client_name`. | `sign_ins/an empty device name keeps the hostname off the consent page`, `chooser/an empty device name is not sent to a device login either` |
+| 6 | **Drop the accepted tab's 60-second bound.** The first brief said "Python waits 60 seconds". That rule is gone: the tab now waits until the sign-in ends, however long the exchange takes. A separate shorter deadline would report "Sign-in was not completed." for a sign-in that then succeeds. The wait stays bounded by the exchange's own HTTP timeout and by closing the listener, which always happens and answers the tab at once (not completed, unless it was told signed in). | `test_the_accepted_tab_waits_as_long_as_the_sign_in_takes`, `test_closing_the_listener_answers_a_tab_that_is_still_waiting` |
+| 7 | **A `HEAD` answer carries headers and no body.** Its `Content-Length` is what the page would have been. | `test_a_head_request_gets_the_headers_and_no_body` |
+| 8 | **Redact the exchange's answer before building its message, and raise a new error.** Redact first, so that a message cut to length keeps no part of a secret. Scrub in one pass, longest value first, never inside an existing `[redacted]`. The new error has no cause or context: a transport exception can carry the request body. | `test_a_message_cut_to_length_keeps_no_part_of_a_secret`, `test_scrubbing_is_one_pass_longest_first_and_leaves_its_marker_alone`, `test_a_transport_failure_during_the_exchange_carries_nothing_of_the_request` |
+| 9 | **Drain before closing.** After any answer, shut the write side, then read and drop what the browser still sends (at most 2 s / 1 MiB) before closing. Closing with bytes unread resets the connection, and macOS loses the answer (the oversized head's 400, a 404 left with an unread body). | `test_an_early_answer_is_not_lost_to_a_reset` (oversized head, unread body), `test_draining_a_connection_is_bounded` |
+
+Wording, for every port's README and docs: say that **a link or code sent to someone
+on another computer delivers nothing to the sender**, not that a loopback sign-in
+"cannot be relayed". A forwarded callback port (`ssh -L`, a port-forwarding tool) or
+another user of the same computer can still complete one.
+
+Decided and **not** changed in this round:
+
+- **A loopback listener that cannot start still raises**, in `auto` too, rather than
+  falling back to device login. Binding `127.0.0.1:0` on a machine that has a browser
+  essentially never fails. When it does, the loopback stack is broken, and a silent
+  device login would hide that. A fallback would also need every port to inject a
+  bind failure into its vectors.
+- **`interactive_login` has no `prompt`.** One callback would have to carry a URL for
+  the browser and a code for the device login, so it needs a design decision first.
+  Callers that present the sign-in themselves call `browser_login(prompt=…)` or the
+  device-login steps directly.
 
 ## Parity acceptance
 
@@ -415,8 +471,11 @@ The reference digest moves.
 | Reference | Digest |
 |---|---|
 | Current (`main`, 0.10.0) | `57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9` |
-| Candidate (this change, after the review) | `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c` |
-| Superseded, never published | `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (the PR's first head; replace it) |
+| Candidate (this change, final) | `6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df` |
+| Superseded, never published | `49744ee385bfce57439dadbef1e20e6116f72a6817649843adba7a450d2fc56b` (the PR's first head; replace it)
+| Superseded, never published | `50af6731e276caf72d0eac51681466579f4ce9fff2596714035663c2693f4c9c` (after the first review round; replace it) |
+| Superseded, never published | `0bb293e236860ff91c98827b4ccaf224132772e7f5e5bedf61e63709a975843b` (between the ports' rounds; replace it) |
+| Superseded, never published | `1374f68fee6cc57400039710ea2befd239e3de869ed1b23c79571ca4f5fda473` (before the drain fix; replace it) | |
 
 The candidate is the digest of `python scripts/check-sdk-parity.py --snapshot` on the
 Python PR's head. It moves again if that PR changes anything under `src/` or
