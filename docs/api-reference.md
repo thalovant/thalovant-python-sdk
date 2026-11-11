@@ -518,6 +518,24 @@ contain only Vault-backed secret references on normal resources. One-time
 identity responses include MQTT broker credentials on `identity.mqtt` when the
 hub exposes MQTT.
 
+### Intercom
+
+Announce-only text spoken aloud on a hub's speakers (see the
+[Intercom guide](guides/intercom.md)). **Not a certified safety system.** The names say
+`announce` and `intercom_*` because the HiveMind mesh already has an `intercom` frame.
+Reads need `intercom:read`, `announce` needs `intercom:send`, and changing settings or a
+speaker needs `hubs:write`. The text is never stored by the platform.
+
+- `get_intercom_settings(hub_id) -> IntercomSettings` — `GET /v1/hubs/{id}/intercom/settings`: `enabled`, `plan_allowed`, `unavailable_reason` (`plan`, `kid_hub`, `public_hub`).
+- `set_intercom_settings(hub_id, enabled) -> IntercomSettings` — `PUT .../settings`.
+- `list_intercom_speakers(hub_id) -> IntercomSpeakerList` — `GET .../speakers`.
+- `update_intercom_speaker(hub_id, client_id, *, receive=UNSET, room=UNSET, groups=UNSET, dnd=UNSET) -> IntercomSpeaker` — `PATCH .../speakers/{client_id}`; only what is passed is sent, `room=None` clears it.
+- `announce(hub_id, text, targets, *, priority="normal", repeat=None, lang=None, idempotency_key=None, wait=False, wait_timeout=None, poll_interval=2.0) -> Announcement` — `POST .../announce` (`Idempotency-Key` only when given).
+- `get_announcement(hub_id, announcement_id) -> Announcement`, `list_announcements(hub_id, *, limit=None, cursor=None) -> AnnouncementList` — newest first.
+
+Errors: `ThalovantIntercomDisabledError`, `ThalovantHubUnreachableError`,
+`ThalovantRateLimitedError`, `ThalovantPlanError`.
+
 ### Chat apps
 
 A hub can answer in Telegram, Discord, Matrix, Mattermost or Twitch through a

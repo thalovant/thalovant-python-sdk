@@ -1,6 +1,12 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in questions (0.11.0).
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
 
 # FAQ: thalovant (Python SDK)
+
+**Why is there no `intercom()` method, and is intercom a safety system?**
+The HiveMind mesh already has an `intercom` frame (hub-routed messages between clients), so the HTTP calls are `announce`, `get_announcement`, `list_announcements` and `*_intercom_*`. Intercom is announce-only text spoken by each speaker's own TTS; it is **not a certified safety system** and does not replace smoke or CO alarms, medical alert devices or emergency services. The platform never stores the text.
+
+**Why was nobody spoken to?**
+A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` means the hub's switch is off or it is a kid or public hub.
 
 **How do I sign in without a password?**
 `api.interactive_login()`. On a machine with a browser it opens the Thalovant consent page and waits for the browser to come back to `127.0.0.1` (browser sign-in, `browser_login()`). Elsewhere it prints a device code to approve from any browser (`login_with_browser()`).

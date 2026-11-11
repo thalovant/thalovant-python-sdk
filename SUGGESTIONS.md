@@ -1,6 +1,12 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Follow-ups from browser sign-in (0.11.0): ai_disclosure on ApiToken, a CLI sign-in with a credential store, a typed browser-unavailable error.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
 
 # Suggestions: thalovant (Python SDK)
+
+## Shared intercom vectors
+
+- **Problem:** the `intercom` capability has no conformance vectors; each SDK proves it with its own loopback tests, so text rules (control characters, trimming) can drift.
+- **Proposal:** a `intercom-vectors.json` of text/target/repeat validation cases and the error-kind mapping, claimed by the capability.
+- **Impact:** low effort; adds one file to every consumer's obligations.
 
 ## Carry `ai_disclosure` on `ApiToken`
 

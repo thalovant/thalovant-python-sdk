@@ -3,6 +3,23 @@
 from ._version import __version__ as __version__
 from .agent import AsyncThalovantAgent, ThalovantAgent
 from .client import AsyncThalovantClient, ThalovantClient
+from .intercom import (
+    Announcement,
+    AnnouncementList,
+    AnnouncementStatus,
+    DeliveryStatus,
+    IntercomDelivery,
+    IntercomDnd,
+    IntercomPolicy,
+    IntercomPriority,
+    IntercomQuietHours,
+    IntercomRepeat,
+    IntercomSettings,
+    IntercomSpeaker,
+    IntercomSpeakerList,
+    IntercomTargets,
+    IntercomUnavailableReason,
+)
 from .inventory import (
     Intent,
     Inventory,
@@ -108,7 +125,10 @@ from .errors import (
     ThalovantClientKeyRejectedError,
     ThalovantHubKeyChangedError,
     ThalovantHubRefusedError,
+    ThalovantHubUnreachableError,
+    ThalovantIntercomDisabledError,
     ThalovantPlanError,
+    ThalovantRateLimitedError,
     ThalovantUnsupportedConnectionTypeError,
     ThalovantIdentityError,
     ThalovantPolicyDeniedError,
@@ -180,6 +200,24 @@ from .subscriptions import ThalovantSubscription
 from .transport import HiveMindMQTTTransport, MqttTopicSet, mqtt_topics_for_identity
 
 __all__ = [
+    "Announcement",
+    "AnnouncementList",
+    "AnnouncementStatus",
+    "DeliveryStatus",
+    "IntercomDelivery",
+    "IntercomDnd",
+    "IntercomPolicy",
+    "IntercomPriority",
+    "IntercomQuietHours",
+    "IntercomRepeat",
+    "IntercomSettings",
+    "IntercomSpeaker",
+    "IntercomSpeakerList",
+    "IntercomTargets",
+    "IntercomUnavailableReason",
+    "ThalovantHubUnreachableError",
+    "ThalovantIntercomDisabledError",
+    "ThalovantRateLimitedError",
     "ApiToken",
     "AsyncHubSession",
     "AsyncThalovantControlPlane",

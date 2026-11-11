@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign in with interactive_login() (browser sign-in, 0.11.0). -->
+<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane. -->
 
 # Thalovant Python SDK
 

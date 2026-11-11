@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign-in section for browser sign-in (0.11.0); the quick start signs in with interactive_login(). -->
+<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane. -->
 
 <p align="center">
   <picture>
@@ -165,6 +165,25 @@ print(api.get_bridge(telegram.id).status.reason)  # Setup, Starting, Connected, 
 A refusal is a `ThalovantAPIError` with `code` and `fields` (the settings or
 secrets it names); see the [chat apps guide](docs/guides/chat-apps.md) for the
 status words, holds and every code.
+
+## Intercom
+
+Say a short text aloud on a hub's speakers (the [intercom guide](docs/guides/intercom.md)).
+Off by default at every level, announce-only, and **not a certified safety system**: it does
+not replace smoke or CO alarms, medical alert devices or emergency services. The platform
+never stores the text. (The names are `announce` and `*_intercom_*`: the HiveMind mesh
+already has an `intercom` frame, which is a different thing.)
+
+```python
+from thalovant import IntercomRepeat, IntercomTargets
+
+api.set_intercom_settings(hub_id, True)                        # hubs:write
+api.update_intercom_speaker(hub_id, "kitchen", receive=True, room="kitchen")
+api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"))   # intercom:send
+urgent = api.announce(hub_id, "Please answer", IntercomTargets.everyone(), priority="urgent",
+                      repeat=IntercomRepeat(times=3, interval_seconds=20), wait=True)
+print(urgent.status, urgent.acked_by)
+```
 
 ## Documentation
 

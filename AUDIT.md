@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): review and consumer-port fixes (origin, endpoint rules, secrets, HEAD, drain before close); the loopback flow's known limits remain.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
 
 # Audit
 
@@ -7,6 +7,10 @@ Known issues, technical debt and security findings for `thalovant` (the Python S
 Test run behind this file: `python -m pytest -q` on Python 3.12, 1621 passed, 1 skipped (branch `feat/browser-sign-in`, final producer revision, 2026-11-08). `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
 
 ## Open: known limitations
+
+### Intercom: the announcement text is held in memory and in the request body
+
+`announce_body()` (`src/thalovant/intercom.py`) builds the request body, which holds the text, and `AsyncThalovantControlPlane.announce()` (`src/thalovant/control.py`) sends it. Nothing in the SDK logs or raises it, and `Announcement` never carries it (`tests/test_intercom.py::test_announce_normal_sends_the_contract_body_and_reads_deliveries`). It is not redacted from an error the API echoes it in: `ThalovantAPIError.problem` keeps the whole body, so a server that echoed the text in a refusal would put it there. The contract says the API never does. Also unverified against a live API: the announcement-list shape (`items` and `next_cursor`) is read from the contract's description, with `data` and `cursor` accepted as well.
 
 ### A blocking handler on MQTT or a custom transport holds up that transport's receive worker
 

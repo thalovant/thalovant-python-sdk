@@ -388,6 +388,31 @@ class ThalovantPlanError(ThalovantAPIError):
     """
 
 
+class ThalovantIntercomDisabledError(ThalovantAPIError):
+    """Raised when intercom is off for the hub, or never allowed on it.
+
+    Code ``intercom_disabled``: the hub's feature flag is off, or the hub is a
+    kid or public hub. Turn it on with ``set_intercom_settings`` (needs
+    ``hubs:write`` and a plan with intercom); on a kid or public hub it cannot
+    be turned on.
+    """
+
+
+class ThalovantHubUnreachableError(ThalovantAPIError):
+    """Raised when the API could not reach the hub to speak (502 ``hub_unreachable``).
+
+    Nothing was said aloud. It is safe to try again.
+    """
+
+
+class ThalovantRateLimitedError(ThalovantAPIError):
+    """Raised on a 429: too many requests. ``retry_after_seconds`` says how long to wait.
+
+    Intercom limits a hub to 20 normal announcements a minute and 10 urgent
+    ones an hour.
+    """
+
+
 class ThalovantAlreadyLinkedError(ThalovantAPIError):
     """Raised when a hub already has the one connection of this kind it allows.
 

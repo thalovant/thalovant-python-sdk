@@ -1,11 +1,11 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0), final producer revision of #113: digest 6dfb3bb31ac7, 119 vector cases.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
 
 # Quick facts: thalovant (Python SDK)
 
 | Fact | Value |
 | :--- | :--- |
 | Package | `thalovant` on PyPI |
-| Version | 0.11.0 (`pyproject.toml`, `src/thalovant/_version.py`) |
+| Version | 0.12.0 (`pyproject.toml`, `src/thalovant/_version.py`) |
 | Python | 3.10+ |
 | Role | Reference implementation for the SDK parity contract (`contracts/sdk-parity.json`) |
 | Entry points | console script `thalovant` (`thalovant.cli:main`); import `thalovant` |
@@ -13,7 +13,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0), fina
 | Control plane | `ThalovantControlPlane`, `AsyncThalovantControlPlane` (`src/thalovant/control.py`) |
 | Errors | `ThalovantAPIError` (`status_code`, `code`, `detail`, `problem`, `fields`), `ThalovantPlanError`, `ThalovantAuthError` (`src/thalovant/errors.py`) |
 | Release | merge to `main` with a new version -> `auto-release.yml` tags and dispatches `publish.yml` (PyPI trusted publishing) |
-| Parity reference digest | `6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df` (0.11.0 candidate; `57c7e71f6456...` on 0.10.0) |
+| Parity reference digest | `690784dbb9af67d32523958808442d2b6ec5ea2f09ab881e56940b35333952a3` (0.12.0 candidate; `6dfb3bb31ac7...` on 0.11.0) |
 
 ## Sign-in (0.11.0)
 
@@ -50,3 +50,16 @@ Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0), fina
 | `delete_bridge(bridge_id)` | `DELETE /v1/bridges/{id}` |
 
 Models and `SecretValue` live in `src/thalovant/chat_apps.py`; the guide is `docs/guides/chat-apps.md`.
+
+### Intercom (0.12.0; scopes `intercom:read`, `intercom:send`, `hubs:write`)
+
+| Call | Endpoint |
+|---|---|
+| `get_intercom_settings(hub_id)` | `GET /v1/hubs/{id}/intercom/settings` |
+| `set_intercom_settings(hub_id, enabled)` | `PUT /v1/hubs/{id}/intercom/settings` |
+| `list_intercom_speakers(hub_id)` | `GET /v1/hubs/{id}/intercom/speakers` |
+| `update_intercom_speaker(hub_id, client_id, *, receive, room, groups, dnd)` | `PATCH /v1/hubs/{id}/intercom/speakers/{client_id}` |
+| `announce(hub_id, text, targets, *, priority, repeat, lang, idempotency_key, wait)` | `POST /v1/hubs/{id}/intercom/announce` |
+| `get_announcement(hub_id, id)` / `list_announcements(hub_id, *, limit, cursor)` | `GET /v1/hubs/{id}/intercom/announcements[/{id}]` |
+
+Models in `src/thalovant/intercom.py`; guide `docs/guides/intercom.md`. Announce-only, not a certified safety system; the text is never stored by the platform.

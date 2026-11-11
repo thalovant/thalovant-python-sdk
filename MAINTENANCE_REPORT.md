@@ -1,6 +1,12 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Final producer revision of #113 from the Node, Go, .NET and Rust ports: request-layer origin, endpoint rules, drain before close, relay wording; digest 6dfb3bb31ac7.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
 
 # Maintenance Report
+
+## 2026-11-11: Intercom (0.12.0)
+
+Added `thalovant.intercom` and seven control-plane methods (sync and async) against section B of the intercom contract, three typed errors, the `intercom` parity capability, docs (`docs/guides/intercom.md`, `docs/reference/intercom.md`, `docs/intercom-porting.md`, api-reference, README, QUICK_FACTS, FAQ, CHANGELOG). Verification: `tests/test_intercom.py` (loopback fake API), the full suite, and `scripts/check-sdk-parity.py` (see SDK_NOTES for totals). The API was built in parallel: the announcement-list shape (`items`/`next_cursor`) is an assumption, accepted with `data`/`cursor` too.
+
+Transparency Report: AI model Claude Sonnet 5.5; actions: wrote the module, methods, tests, docs and parity record from the contract; oversight: none yet, review pending.
 
 ## 2026-11-08: Final producer revision of #113, from the consumer ports
 
