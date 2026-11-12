@@ -16,21 +16,34 @@ from thalovant import (
     Announcement,
     AsyncThalovantControlPlane,
     IntercomDnd,
+    IntercomProblemCode,
     IntercomQuietHours,
     IntercomRepeat,
     IntercomTargets,
     ThalovantAPIError,
     ThalovantAuthError,
     ThalovantControlPlane,
+    ThalovantHubLockedError,
     ThalovantHubUnreachableError,
     ThalovantAPIUnreachableError,
+    ThalovantImpersonationNotAllowedError,
     ThalovantIntercomDisabledError,
+    ThalovantIntercomNotConfiguredError,
+    ThalovantIntercomPlatformDisabledError,
+    ThalovantIntercomUnavailableError,
+    ThalovantManagedClientError,
+    ThalovantNotASpeakerError,
     ThalovantNotCancellableError,
     ThalovantPlanError,
     ThalovantRateLimitedError,
+    ThalovantReservedNameError,
+    ThalovantSkillNotInstalledError,
+    ThalovantTooManyTargetsError,
+    ThalovantUrgentBusyError,
+    ThalovantUrgentScopeRequiredError,
 )
 from thalovant.control import INTERCOM_ANNOUNCE_MIN_TIMEOUT
-from thalovant.intercom import UNSET, announce_body, intercom_id, speaker_update_body
+from thalovant.intercom import UNSET, announce_body, announcement_text, idempotency_key, intercom_id, speaker_update_body
 
 HUB = "0f8a7c3e-2b1d-4c5e-9a6f-1d2c3b4a5e6f"
 ANN = "7a1d6c1e-6f0b-4f43-9d7e-3f4f0d9a7c11"
@@ -408,10 +421,12 @@ def test_an_invalid_dnd_enabled_is_refused_never_turned_into_false(api, control,
 
 
 def test_dnd_with_a_real_boolean_is_sent_as_given():
-    assert speaker_update_body(dnd={"enabled": True})["dnd"] == {"enabled": True}
     assert speaker_update_body(dnd={"enabled": False})["dnd"] == {"enabled": False}
-    body = speaker_update_body(dnd={"enabled": True, "quiet_hours": {"start": "21:00", "end": "06:30"}})
-    assert body["dnd"] == {"enabled": True, "quiet_hours": {"start": "21:00", "end": "06:30", "timezone": None}}
+    body = speaker_update_body(dnd={"enabled": True, "quiet_hours": {"start": "21:00", "end": "06:30", "timezone": "America/Toronto"}})
+    assert body["dnd"] == {"enabled": True, "quiet_hours": {"start": "21:00", "end": "06:30", "timezone": "America/Toronto"}}
+    # Switched off, a window and a null zone are fine (the API stores them as they are).
+    body = speaker_update_body(dnd={"enabled": False, "quiet_hours": {"start": "21:00", "end": "06:30"}})
+    assert body["dnd"] == {"enabled": False, "quiet_hours": {"start": "21:00", "end": "06:30", "timezone": None}}
 
 
 def test_groups_must_be_a_list_not_a_scalar():
@@ -636,3 +651,372 @@ def test_the_intercom_docs_do_not_over_promise():
     for phrase in ("nothing listens", "never listens", "spoken once", "stops every announcement at once", "retry with the same"):
         assert phrase not in lowered
     assert "uuid" in lowered and "idempotency-replayed" in lowered and "cancel_announcement" in lowered
+
+
+# --------------------------------------------------------------------------------------------------
+# The final API (platform security review): scope, speaker model, problem codes, one validation rule.
+# --------------------------------------------------------------------------------------------------
+
+SPEAKER_DND = {"enabled": False, "quiet_hours": {"start": "22:00", "end": "07:00", "timezone": None}}
+
+
+def speaker_row(**extra):
+    row = {"client_id": "d8d4", "slug": "kitchen-speaker", "name": "Kitchen Speaker", "kind": "voice_satellite",
+           "can_play": True, "online": False, "last_seen_at": None,
+           "intercom": {"receive": True, "room": "kitchen", "groups": [], "dnd": SPEAKER_DND}}
+    row.update(extra)
+    return row
+
+
+def test_the_speaker_list_reads_kind_can_play_and_policy_synced(api, control):
+    api.reply("GET", f"{BASE}/speakers", 200, {
+        "items": [speaker_row(), speaker_row(client_id="996f", slug="home-link", name="Home link", kind="home_assistant",
+                                             can_play=False, intercom={"receive": False, "room": None, "groups": [], "dnd": SPEAKER_DND})],
+        "unavailable_reason": None, "policy_synced": False})
+    listed = control.list_intercom_speakers(HUB)
+    assert listed.policy_synced is False and listed.unavailable_reason is None
+    kitchen, link = listed.items
+    assert (kitchen.kind, kitchen.can_play, kitchen.policy_synced) == ("voice_satellite", True, None)
+    assert (link.kind, link.can_play) == ("home_assistant", False)
+    assert listed.as_dict()["items"][1]["can_play"] is False and listed.as_dict()["policy_synced"] is False
+
+
+def test_a_speaker_without_the_new_fields_keeps_the_apis_defaults(api, control):
+    api.reply("GET", f"{BASE}/speakers", 200, {"items": [{"client_id": "c1"}]})
+    only = control.list_intercom_speakers(HUB)
+    assert only.items[0].kind == "voice_satellite" and only.items[0].can_play is True
+    assert only.policy_synced is None and only.unavailable_reason is None
+    # garbage is not trusted: only an explicit false says "cannot play"
+    api.reply("GET", f"{BASE}/speakers", 200, {"items": [{"client_id": "c1", "kind": 7, "can_play": "no", "policy_synced": "yes"}]})
+    odd = control.list_intercom_speakers(HUB).items[0]
+    assert (odd.kind, odd.can_play, odd.policy_synced) == ("voice_satellite", True, None)
+
+
+def test_the_speaker_patch_answer_carries_its_own_policy_synced(api, control):
+    api.reply("PATCH", f"{BASE}/speakers/d8d4", 200, speaker_row(policy_synced=False))
+    assert control.update_intercom_speaker(HUB, "d8d4", receive=True).policy_synced is False
+    api.reply("PATCH", f"{BASE}/speakers/d8d4", 200, speaker_row(policy_synced=True))
+    assert control.update_intercom_speaker(HUB, "d8d4", room="kitchen").policy_synced is True
+
+
+def test_the_platform_reason_is_an_unavailable_reason(api, control):
+    api.reply("GET", f"{BASE}/settings", 200, {"enabled": False, "plan_allowed": True, "unavailable_reason": "platform"})
+    api.reply("GET", f"{BASE}/speakers", 200, {"items": [], "unavailable_reason": "platform", "policy_synced": True})
+    assert control.get_intercom_settings(HUB).unavailable_reason == "platform"
+    assert control.list_intercom_speakers(HUB).unavailable_reason == "platform"
+    from typing import get_args
+
+    from thalovant import IntercomUnavailableReason
+
+    assert set(get_args(IntercomUnavailableReason)) == {"platform", "plan", "kid_hub", "public_hub"}
+
+
+def test_a_delivery_keeps_its_detail_code():
+    body = announcement(deliveries=[
+        {"client_id": "c1", "slug": "k", "name": "K", "status": "failed", "detail": "hub_no_response", "at": None},
+        {"client_id": "c2", "slug": "d", "name": "D", "status": "delivered", "detail": None, "at": None},
+        {"client_id": "c3", "slug": "e", "name": "E", "status": "failed", "detail": "a_code_from_the_future", "at": None},
+    ])
+    parsed = Announcement.from_dict(body)
+    assert [d.detail for d in parsed.deliveries] == ["hub_no_response", None, "a_code_from_the_future"]
+    from thalovant.intercom import DELIVERY_DETAIL_CODES
+
+    assert "hub_no_response" in DELIVERY_DETAIL_CODES and "a_code_from_the_future" not in DELIVERY_DETAIL_CODES
+    assert parsed.as_dict()["deliveries"][0]["detail"] == "hub_no_response"
+
+
+def test_the_scope_names_are_constants():
+    from thalovant.intercom import INTERCOM_READ_SCOPE, INTERCOM_SEND_SCOPE, INTERCOM_URGENT_SCOPE
+
+    assert (INTERCOM_READ_SCOPE, INTERCOM_SEND_SCOPE, INTERCOM_URGENT_SCOPE) == (
+        "intercom:read", "intercom:send", "intercom:urgent")
+
+
+# -- announce: replayed -----------------------------------------------------------------------
+
+
+def test_a_replayed_announcement_says_so_and_a_first_answer_does_not(api, control):
+    api.reply("POST", f"{BASE}/announce", 200, announcement())
+    first = control.announce(HUB, "Dinner", {"all": True}, idempotency_key="k-1")
+    assert first.replayed is False and first.as_dict()["replayed"] is False
+    api.reply("POST", f"{BASE}/announce", 200, announcement(), {"Idempotency-Replayed": "true"})
+    again = control.announce(HUB, "Dinner", {"all": True}, idempotency_key="k-1")
+    assert again.replayed is True and again.status == "completed" and again.as_dict()["replayed"] is True
+
+
+def test_the_replayed_header_is_read_in_any_case_and_only_when_true(api, control):
+    for header, expected in ((("idempotency-replayed", "TRUE"), True), (("Idempotency-Replayed", "false"), False),
+                             (("Idempotency-Replayed", "1"), False)):
+        api.reply("POST", f"{BASE}/announce", 200, announcement(), {header[0]: header[1]})
+        assert control.announce(HUB, "Dinner", {"all": True}).replayed is expected
+
+
+def test_a_replayed_sending_announcement_is_202_and_stays_replayed_after_wait(api, control):
+    api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"), {"Idempotency-Replayed": "true"})
+    api.reply("GET", f"{BASE}/announcements/{ANN}", 200, announcement("completed", priority="urgent"))
+    result = control.announce(HUB, "Wake up", {"all": True}, priority="urgent", repeat=IntercomRepeat(2, 5),
+                              idempotency_key="k-2", wait=True, poll_interval=0.01)
+    assert result.status == "completed" and result.replayed is True
+
+
+def test_reads_and_cancel_are_never_replayed(api, control):
+    api.reply("GET", f"{BASE}/announcements/{ANN}", 200, announcement(), {"Idempotency-Replayed": "true"})
+    assert control.get_announcement(HUB, ANN).replayed is False
+
+
+def test_an_idempotency_key_is_at_most_128_printable_ascii_characters(api, control):
+    api.reply("POST", f"{BASE}/announce", 200, announcement())
+    control.announce(HUB, "hi", {"all": True}, idempotency_key="k" * 128)
+    assert len(api.requests[-1]["headers"]["idempotency-key"]) == 128
+    sent = len(api.requests)
+    for bad in ("k" * 129, "caf\u00e9", "a\r\nb", "", "   ", 7):
+        with pytest.raises(ValueError):
+            control.announce(HUB, "hi", {"all": True}, idempotency_key=bad)
+    assert len(api.requests) == sent
+    assert idempotency_key("0f8a7c3e-2b1d-4c5e-9a6f-1d2c3b4a5e6f").startswith("0f8a")
+
+
+# -- the one text rule --------------------------------------------------------------------------
+
+REFUSED_TEXT = [
+    "a<b", "a>b", "<prosody>x</prosody>", "line\nbreak", "tab\there", "nul\x00 x", "bell\x07 x", "c1 \x85 next", "del\x7f x",
+    "bidi \u202e override", "isolate \u2066 x", "zero width \u200b space", "bom \ufeff x", "word joiner \u2060 x",
+    "tag \U000e0041 x", "private \ue000 x", "line \u2028 sep", "para \u2029 sep", "lone \ud800 surrogate",
+]
+
+
+@pytest.mark.parametrize("text", REFUSED_TEXT)
+def test_a_text_the_api_would_refuse_is_refused_first_and_never_echoed(api, control, text):
+    with pytest.raises(ValueError) as caught:
+        control.announce(HUB, text, {"all": True})
+    assert api.requests == []
+    assert text not in str(caught.value) and text.strip() not in str(caught.value)
+
+
+@pytest.mark.parametrize("text", [
+    "Dinner is ready", "Caf\u00e9 cr\u00e8me", "\u00ab bonjour \u00bb", "family \U0001F468\u200d\U0001F469\u200d\U0001F467",
+    "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", "no\u00a0break space inside", "a & b, c; d: e", "x" * 280,
+])
+def test_a_text_the_api_accepts_is_sent(api, control, text):
+    api.reply("POST", f"{BASE}/announce", 200, announcement())
+    control.announce(HUB, text, {"all": True})
+    assert api.requests[-1]["body"]["text"] == text
+
+
+def test_the_text_is_nfc_normalised_trimmed_and_counted_after_that():
+    decomposed = "e\u0301" * 200  # 400 code points, 200 once composed
+    assert announcement_text(decomposed) == "\u00e9" * 200
+    assert announcement_text("  \u00a0 hi \u3000 ") == "hi"
+    assert len(announcement_text("\u00e9" * 280)) == 280
+    with pytest.raises(ValueError, match="at most 280"):
+        announcement_text("\u00e9" * 281)
+    with pytest.raises(ValueError, match="empty"):
+        announcement_text(" \u00a0 ")
+    with pytest.raises(ValueError, match="string"):
+        announcement_text(b"bytes")  # type: ignore[arg-type]
+
+
+def test_lang_is_a_language_tag(api, control):
+    api.reply("POST", f"{BASE}/announce", 200, announcement())
+    for good in ("en", "en-US", "fr-CA", "zho-Hant"):
+        control.announce(HUB, "hi", {"all": True}, lang=good)
+    sent = len(api.requests)
+    for bad in ("", "e", "en_US", "english", "en-", "en-US-x-private-use-long", 5):
+        with pytest.raises(ValueError):
+            control.announce(HUB, "hi", {"all": True}, lang=bad)  # type: ignore[arg-type]
+    assert len(api.requests) == sent
+
+
+# -- targets --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["speakers", "rooms", "groups"])
+def test_a_target_list_holds_at_most_50_names_of_at_most_64_characters(api, control, kind):
+    api.reply("POST", f"{BASE}/announce", 200, announcement())
+    control.announce(HUB, "hi", {kind: [f"n{i}" for i in range(50)]})
+    control.announce(HUB, "hi", {kind: ["n" * 64]})
+    sent = len(api.requests)
+    with pytest.raises(ValueError, match="at most 50"):
+        control.announce(HUB, "hi", {kind: [f"n{i}" for i in range(51)]})
+    with pytest.raises(ValueError, match="at most 64"):
+        control.announce(HUB, "hi", {kind: ["n" * 65]})
+    assert len(api.requests) == sent
+
+
+# -- do not disturb -------------------------------------------------------------------------------
+
+
+def quiet(zone, start="22:00", end="07:00"):
+    return {"enabled": True, "quiet_hours": {"start": start, "end": end, "timezone": zone}}
+
+
+@pytest.mark.parametrize("dnd", [
+    {"enabled": True},                                                  # no window
+    {"enabled": True, "quiet_hours": None},
+    quiet(None),                                                        # no zone: UTC would be a guess
+    quiet("Mars/Phobos"), quiet("europe/paris"), quiet("Europe/Paris "), quiet(" Europe/Paris"), quiet(""), quiet("Europe/" + "x" * 60),
+    quiet("Europe/Paris", "22:00", "22:00"),                            # an empty window is a mistake
+    {"enabled": False, "quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "Mars/Phobos"}},  # any given zone is checked
+    {"enabled": True, "quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "Europe/Paris", "extra": 1}},
+    {"enabled": True, "quiet_hours": quiet("Europe/Paris")["quiet_hours"], "notify": True},
+    {"enabled": True, "quiet_hours": "22:00-07:00"},
+])
+def test_an_unusable_do_not_disturb_is_refused_before_anything_is_sent(api, control, dnd):
+    with pytest.raises(ValueError):
+        control.update_intercom_speaker(HUB, "c1", dnd=dnd)
+    assert api.requests == []
+
+
+def test_a_valid_do_not_disturb_is_sent_and_objects_follow_the_same_rule(api, control):
+    api.reply("PATCH", f"{BASE}/speakers/c1", 200, speaker_row())
+    for zone in ("Europe/Paris", "America/Argentina/Buenos_Aires", "UTC"):
+        control.update_intercom_speaker(HUB, "c1", dnd=quiet(zone))
+        assert api.requests[-1]["body"]["dnd"]["quiet_hours"]["timezone"] == zone
+    control.update_intercom_speaker(HUB, "c1", dnd=IntercomDnd(True, IntercomQuietHours("23:00", "06:00", "Europe/Paris")))
+    with pytest.raises(ValueError):
+        control.update_intercom_speaker(HUB, "c1", dnd=IntercomDnd(True, IntercomQuietHours("23:00", "06:00")))
+    with pytest.raises(ValueError):
+        control.update_intercom_speaker(HUB, "c1", dnd=IntercomDnd(True))
+    with pytest.raises(ValueError):
+        control.update_intercom_speaker(HUB, "c1", dnd=IntercomDnd(True, IntercomQuietHours("23:00", "23:00", "Europe/Paris")))
+    control.update_intercom_speaker(HUB, "c1", dnd=IntercomDnd(False))
+    assert api.requests[-1]["body"]["dnd"] == {"enabled": False}
+
+
+def test_the_zone_shape_is_the_fallback_only_where_there_is_no_timezone_database(monkeypatch):
+    from thalovant import intercom as module
+
+    def no_database(name):
+        raise module.ZoneInfoNotFoundError(name)
+
+    monkeypatch.setattr(module, "ZoneInfo", no_database)
+    module._timezone("Europe/Paris", "zone")        # unknown to this machine, well formed: the API decides
+    module._timezone("Etc/GMT+5", "zone")
+    for bad in ("Europe Paris", "Europe/Paris/..", "/x", "x/", ""):
+        with pytest.raises(ValueError):
+            module._timezone(bad, "zone")
+
+
+def test_the_speaker_update_takes_only_the_documented_fields():
+    import inspect
+
+    params = set(inspect.signature(ControlPlaneForSignature.update_intercom_speaker).parameters)
+    assert params == {"self", "hub_id", "client_id", "receive", "room", "groups", "dnd"}
+    with pytest.raises(TypeError):
+        ControlPlaneForSignature(access_token="t").update_intercom_speaker(HUB, "c1", label="x")  # type: ignore[call-arg]
+
+
+ControlPlaneForSignature = ThalovantControlPlane
+
+
+# -- the new problem codes ---------------------------------------------------------------------
+
+
+def problem(status, code, message, **extra):
+    return {"status": status, "code": code, "message": message, **extra}
+
+
+CASES = [
+    # (http status, code, class, extra members, attribute checks)
+    (403, "urgent_scope_required", ThalovantUrgentScopeRequiredError, {}, {}),
+    (429, "intercom_urgent_busy", ThalovantUrgentBusyError, {"scope": "hub", "retry_after_seconds": 30}, {"scope": "hub"}),
+    (409, "skill_not_installed", ThalovantSkillNotInstalledError, {}, {}),
+    (422, "not_a_speaker", ThalovantNotASpeakerError, {"kind": "home_assistant"}, {"kind": "home_assistant", "not_speakers": ()}),
+    (422, "not_a_speaker", ThalovantNotASpeakerError, {"not_speakers": ["home-link", "other"]}, {"kind": None, "not_speakers": ("home-link", "other")}),
+    (422, "reserved_name", ThalovantReservedNameError, {}, {}),
+    (403, "hub_locked", ThalovantHubLockedError, {}, {}),
+    (403, "impersonation_not_allowed", ThalovantImpersonationNotAllowedError, {}, {}),
+    (422, "too_many_targets", ThalovantTooManyTargetsError, {"matched": 51}, {"matched": 51}),
+    (422, "intercom_unavailable", ThalovantIntercomUnavailableError, {"reason": "kid_hub"}, {"reason": "kid_hub"}),
+    (503, "intercom_disabled_platform", ThalovantIntercomPlatformDisabledError, {}, {}),
+    (503, "intercom_not_configured", ThalovantIntercomNotConfiguredError, {}, {}),
+    (403, "managed_client", ThalovantManagedClientError, {"refused_client_refs": ["client-1"]}, {"refused_client_refs": ("client-1",)}),
+    (409, "not_cancellable", ThalovantNotCancellableError, {"announcement_status": "cancelled"}, {"announcement_status": "cancelled"}),
+    (502, "hub_unreachable", ThalovantHubUnreachableError, {"announcement_id": ANN}, {"announcement_id": ANN}),
+]
+
+
+@pytest.mark.parametrize(("status", "code", "kind", "extra", "attrs"), CASES)
+def test_each_new_problem_code_is_its_own_typed_error(api, control, status, code, kind, extra, attrs):
+    api.reply("POST", f"{BASE}/announce", status, problem(status, code, "A sentence from the API.", **extra))
+    with pytest.raises(kind) as caught:
+        control.announce(HUB, "Dinner", {"all": True})
+    error = caught.value
+    assert type(error) is kind and error.status_code == status and error.code == code
+    assert error.problem[code if False else "code"] == code
+    for name, expected in attrs.items():
+        assert getattr(error, name) == expected, name
+
+
+@pytest.mark.parametrize(("status", "code", "kind", "extra", "attrs"), CASES)
+def test_the_same_problems_inside_a_detail_object_are_read_too(api, control, status, code, kind, extra, attrs):
+    api.reply("POST", f"{BASE}/announce", status, {"detail": {"code": code, "message": "A sentence.", **extra}})
+    with pytest.raises(kind) as caught:
+        control.announce(HUB, "Dinner", {"all": True})
+    for name, expected in attrs.items():
+        assert getattr(caught.value, name) == expected, name
+
+
+def test_the_typed_errors_keep_their_places_in_the_hierarchy():
+    assert issubclass(ThalovantUrgentScopeRequiredError, ThalovantAuthError)          # sign in again with the scope
+    assert issubclass(ThalovantUrgentBusyError, ThalovantRateLimitedError)            # still "a 429"
+    assert issubclass(ThalovantIntercomUnavailableError, ThalovantIntercomDisabledError)
+    assert issubclass(ThalovantIntercomPlatformDisabledError, ThalovantIntercomDisabledError)
+    for kind in (ThalovantIntercomNotConfiguredError, ThalovantHubLockedError, ThalovantManagedClientError, ThalovantNotASpeakerError):
+        assert issubclass(kind, ThalovantAPIError)
+
+
+def test_the_urgent_busy_error_carries_the_retry_after(api, control):
+    api.reply("POST", f"{BASE}/announce", 429,
+              problem(429, "intercom_urgent_busy", "busy", scope="platform", retry_after_seconds=30), {"Retry-After": "30"})
+    with pytest.raises(ThalovantUrgentBusyError) as caught:
+        control.announce(HUB, "Wake", {"all": True}, priority="urgent", repeat=IntercomRepeat(5, 30))
+    assert caught.value.retry_after_seconds == 30 and caught.value.scope == "platform"
+
+
+def test_a_not_a_speaker_refusal_on_the_patch(api, control):
+    api.reply("PATCH", f"{BASE}/speakers/996f", 422, problem(422, "not_a_speaker", "cannot play", kind="home_assistant"))
+    with pytest.raises(ThalovantNotASpeakerError) as caught:
+        control.update_intercom_speaker(HUB, "996f", receive=True)
+    assert caught.value.kind == "home_assistant"
+
+
+def test_a_problem_without_its_extra_members_has_none_of_them(api, control):
+    api.reply("POST", f"{BASE}/announce", 422, problem(422, "too_many_targets", "too many", matched="51"))
+    with pytest.raises(ThalovantTooManyTargetsError) as caught:
+        control.announce(HUB, "hi", {"all": True})
+    assert caught.value.matched is None                       # a string is not a count
+    assert ThalovantIntercomUnavailableError("x").reason is None
+    assert ThalovantNotASpeakerError("x").not_speakers == () and ThalovantNotCancellableError("x").announcement_status is None
+    assert ThalovantUrgentBusyError("x").scope is None and ThalovantManagedClientError("x").refused_client_refs == ()
+
+
+def test_the_problem_codes_are_constants_and_each_has_a_typed_error():
+    codes = {v for k, v in vars(IntercomProblemCode).items() if k.isupper()}
+    assert codes == {code for _, code, *_ in CASES} | {"intercom_disabled"}
+    assert IntercomProblemCode.URGENT_SCOPE_REQUIRED == "urgent_scope_required"
+
+
+def test_a_plain_403_insufficient_scopes_is_still_the_auth_error(api, control):
+    api.reply("POST", f"{BASE}/announce", 403, {"detail": "Insufficient scopes"})
+    with pytest.raises(ThalovantAuthError) as caught:
+        control.announce(HUB, "hi", {"all": True})
+    assert not isinstance(caught.value, ThalovantUrgentScopeRequiredError)
+
+
+def test_the_cancel_409_names_the_current_status(api, control):
+    api.reply("POST", f"{BASE}/announcements/{ANN}/cancel", 409,
+              problem(409, "not_cancellable", "Only an announcement that is still sending can be cancelled.",
+                      announcement_status="completed"))
+    with pytest.raises(ThalovantNotCancellableError) as caught:
+        control.cancel_announcement(HUB, ANN)
+    assert caught.value.announcement_status == "completed"
+
+
+def test_the_guides_name_the_urgent_scope_and_the_new_errors():
+    text = (ROOT / "docs/guides/intercom.md").read_text(encoding="utf-8") if (ROOT / "docs/guides/intercom.md").is_file() else None
+    if text is None:
+        pytest.skip("the docs are not shipped with this install")
+    for needle in ("intercom:urgent", "ThalovantUrgentScopeRequiredError", "policy_synced", "can_play", "replayed",
+                   "ThalovantNotASpeakerError", "ThalovantTooManyTargetsError", "not_cancellable"):
+        assert needle in text, needle

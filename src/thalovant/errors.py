@@ -388,14 +388,227 @@ class ThalovantPlanError(ThalovantAPIError):
     """
 
 
-class ThalovantIntercomDisabledError(ThalovantAPIError):
-    """Raised when intercom is off for the hub, or never allowed on it.
+class IntercomProblemCode:
+    """The ``code`` of every refusal the intercom routes (and the connection routes beside them) add.
 
-    Code ``intercom_disabled``: the hub's feature flag is off, or the hub is a
-    kid or public hub. Turn it on with ``set_intercom_settings`` (needs
-    ``hubs:write`` and a plan with intercom); on a kid or public hub it cannot
-    be turned on.
+    The API's answers are ``application/problem+json``: read ``code`` first. The
+    typed error for each code is named in its comment; any code not listed here
+    arrives as a plain :class:`ThalovantAPIError` with ``code`` and ``problem``.
     """
+
+    #: 403: ``priority="urgent"`` (and so every ``repeat``) needs ``intercom:urgent`` as well as ``intercom:send``.
+    URGENT_SCOPE_REQUIRED = "urgent_scope_required"
+    #: 429: the hub (or the platform) already has its urgent announcements repeating; ``scope`` says which.
+    URGENT_BUSY = "intercom_urgent_busy"
+    #: 409: an urgent announcement on a hub whose runtime has no active Intercom skill.
+    SKILL_NOT_INSTALLED = "skill_not_installed"
+    #: 422: ``receive: true``, or a ``speakers`` target, on a connection that cannot play speech.
+    NOT_A_SPEAKER = "not_a_speaker"
+    #: 422: a connection named like the platform's own Intercom client.
+    RESERVED_NAME = "reserved_name"
+    #: 403: the hub is locked; nothing was changed.
+    HUB_LOCKED = "hub_locked"
+    #: 403: an impersonated session cannot send announcements.
+    IMPERSONATION_NOT_ALLOWED = "impersonation_not_allowed"
+    #: 422: ``all``, a room or a group resolved to more than 50 speakers.
+    TOO_MANY_TARGETS = "too_many_targets"
+    #: 422: intercom is never available on this hub (a kid hub or a public hub); ``reason`` says which.
+    UNAVAILABLE = "intercom_unavailable"
+    #: 503: intercom is switched off for the whole platform; nothing was sent.
+    DISABLED_PLATFORM = "intercom_disabled_platform"
+    #: 503: the operator has not configured intercom yet; nothing was sent.
+    NOT_CONFIGURED = "intercom_not_configured"
+    #: 403: the platform-managed Intercom client cannot be managed or given credentials.
+    MANAGED_CLIENT = "managed_client"
+    #: 409: only an announcement that is still ``sending`` can be cancelled; ``announcement_status`` is its current status.
+    NOT_CANCELLABLE = "not_cancellable"
+    #: 502: the hub did not take the announcement; ``announcement_id`` names the failed record.
+    HUB_UNREACHABLE = "hub_unreachable"
+    #: 403 or 422 (any status): the hub's switch is off.
+    DISABLED = "intercom_disabled"
+
+
+def _problem_member(problem: Mapping[str, Any] | None, key: str) -> Any:
+    """A member of a problem body, at its top or inside an object ``detail`` (FastAPI's envelope)."""
+    if not isinstance(problem, Mapping):
+        return None
+    nested = problem.get("detail")
+    for source in (problem, nested if isinstance(nested, Mapping) else {}):
+        if key in source:
+            return source[key]
+    return None
+
+
+def _problem_str(problem: Mapping[str, Any] | None, key: str) -> str | None:
+    value = _problem_member(problem, key)
+    return value if isinstance(value, str) and value else None
+
+
+def _problem_strs(problem: Mapping[str, Any] | None, key: str) -> tuple[str, ...]:
+    value = _problem_member(problem, key)
+    return tuple(item for item in value if isinstance(item, str) and item) if isinstance(value, list) else ()
+
+
+class ThalovantIntercomDisabledError(ThalovantAPIError):
+    """Raised when intercom is off for the hub (code ``intercom_disabled``), or cannot run on it at all.
+
+    The hub's feature flag is off: turn it on with ``set_intercom_settings``
+    (needs ``hubs:write`` and a plan with intercom). The subclasses say the
+    stronger cases, which turning the hub's switch on cannot change:
+    :class:`ThalovantIntercomUnavailableError` (a kid hub or a public hub) and
+    :class:`ThalovantIntercomPlatformDisabledError` (the platform's own switch).
+    """
+
+
+class ThalovantIntercomUnavailableError(ThalovantIntercomDisabledError):
+    """Raised when intercom is never available on the hub (422 ``intercom_unavailable``).
+
+    :attr:`reason` is ``kid_hub`` or ``public_hub``: intercom cannot be turned
+    on there for any plan. Not retryable.
+    """
+
+    @property
+    def reason(self) -> str | None:
+        """Why: ``kid_hub`` or ``public_hub`` (an open value), or ``None`` when the body did not say."""
+        return _problem_str(self.problem, "reason")
+
+
+class ThalovantIntercomPlatformDisabledError(ThalovantIntercomDisabledError):
+    """Raised when intercom is switched off for the whole platform (503 ``intercom_disabled_platform``).
+
+    Nothing was written, sent or spent. Show an explanation, not an error toast:
+    only the platform operator can turn it on, and no hub setting changes that.
+    Reads (speakers, history) and ``cancel_announcement`` still work.
+    """
+
+
+class ThalovantIntercomNotConfiguredError(ThalovantAPIError):
+    """Raised when intercom is not configured on this platform yet (503 ``intercom_not_configured``).
+
+    The operator has not finished setting it up. Nothing was sent. Disabling,
+    reads and cancelling are unaffected. Say "Intercom is not available yet".
+    """
+
+
+class ThalovantUrgentScopeRequiredError(ThalovantAuthError):
+    """Raised when an urgent announcement is sent without ``intercom:urgent`` (403 ``urgent_scope_required``).
+
+    ``priority="urgent"`` (and so every ``repeat``) needs ``intercom:urgent`` IN
+    ADDITION to ``intercom:send``; nothing implies it. It is checked before the
+    idempotency lookup, the rate limit and the hub: nothing was spent. Sign in
+    again asking for the scope (the plan must allow it), or send a normal
+    announcement.
+    """
+
+
+class ThalovantRateLimitedError(ThalovantAPIError):
+    """Raised on a 429: too many requests. ``retry_after_seconds`` says how long to wait.
+
+    Intercom limits a hub to 20 normal announcements a minute and 10 urgent
+    ones an hour. A full urgent pool is the subclass
+    :class:`ThalovantUrgentBusyError`.
+    """
+
+
+class ThalovantUrgentBusyError(ThalovantRateLimitedError):
+    """Raised when the urgent pool is full (429 ``intercom_urgent_busy``).
+
+    A hub may have 2 urgent announcements repeating at once, and the platform
+    a fixed number per API replica; :attr:`scope` says which one is full
+    (``hub`` or ``platform``). ``retry_after_seconds`` says when to ask again.
+    Nothing was stored and no rate token was spent; cancel one that is running
+    (``cancel_announcement``) or wait. A non-repeating urgent announcement and
+    a normal one are not subject to it.
+    """
+
+    @property
+    def scope(self) -> str | None:
+        """``hub`` or ``platform`` (an open value), or ``None`` when the body did not say."""
+        return _problem_str(self.problem, "scope")
+
+
+class ThalovantSkillNotInstalledError(ThalovantAPIError):
+    """Raised when the hub has no Intercom skill yet (409 ``skill_not_installed``).
+
+    An urgent announcement needs the skill active on the hub's runtime. Nothing
+    was sent. Switch intercom on for the hub (``set_intercom_settings``), wait
+    for the skill to install, and try again.
+    """
+
+
+class ThalovantNotASpeakerError(ThalovantAPIError):
+    """Raised when a connection that cannot play speech is asked to receive (422 ``not_a_speaker``).
+
+    Two cases. ``update_intercom_speaker(receive=True)`` on a connection whose
+    effective ``can_play`` is false: :attr:`kind` is its connection kind. An
+    announcement that names such connections in ``targets.speakers``:
+    :attr:`not_speakers` lists them. Its owner declares ``can_play`` on the
+    connection (``spec.intercom.can_play``), never on the speaker.
+    """
+
+    @property
+    def kind(self) -> str | None:
+        """The connection kind of a refused ``receive`` (``home_assistant``, ``developer``, ``embedded``...), or ``None``."""
+        return _problem_str(self.problem, "kind")
+
+    @property
+    def not_speakers(self) -> tuple[str, ...]:
+        """The named connections that cannot play speech, for a refused announcement; empty otherwise."""
+        return _problem_strs(self.problem, "not_speakers")
+
+
+class ThalovantReservedNameError(ThalovantAPIError):
+    """Raised when a connection is created or renamed onto a name the platform reserves (422 ``reserved_name``).
+
+    The name ``thalovant-intercom-...`` and the slug ``thalovant-intercom``
+    belong to the platform's own Intercom client. Choose another name.
+    """
+
+
+class ThalovantHubLockedError(ThalovantAPIError):
+    """Raised when the hub is locked (403 ``hub_locked``): nothing was changed or sent.
+
+    An announcement, a switch or a speaker change is refused on a locked hub;
+    ``set_intercom_settings(hub, False)`` (by a platform administrator) and
+    ``cancel_announcement`` still work. Not retryable until the hub is unlocked.
+    """
+
+
+class ThalovantImpersonationNotAllowedError(ThalovantAPIError):
+    """Raised when an impersonated session sends an announcement (403 ``impersonation_not_allowed``).
+
+    A staff member looking through somebody's session cannot enable intercom,
+    change a speaker or announce. Switching it off and cancelling stay open.
+    """
+
+
+class ThalovantTooManyTargetsError(ThalovantAPIError):
+    """Raised when ``all``, a room or a group resolves to more than 50 speakers (422 ``too_many_targets``).
+
+    :attr:`matched` is how many it resolved to. Name a room or a group.
+    """
+
+    @property
+    def matched(self) -> int | None:
+        """How many speakers the targets resolved to, or ``None`` when the body did not say."""
+        value = _problem_member(self.problem, "matched")
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+class ThalovantManagedClientError(ThalovantAPIError):
+    """Raised on a connection the platform manages (403 ``managed_client``).
+
+    The platform's own Intercom client cannot be edited, paused, deleted,
+    given credentials or named in an access policy by anybody; switch Intercom
+    off and on for the hub to repair it. It is identified by
+    ``spec.intercomApi == "platform"``. :attr:`refused_client_refs` lists the
+    managed connections an access policy named, when it was one. Not retryable.
+    """
+
+    @property
+    def refused_client_refs(self) -> tuple[str, ...]:
+        """The managed connections an access policy named; empty otherwise."""
+        return _problem_strs(self.problem, "refused_client_refs")
 
 
 class ThalovantHubUnreachableError(ThalovantAPIError):
@@ -415,32 +628,22 @@ class ThalovantHubUnreachableError(ThalovantAPIError):
     @property
     def announcement_id(self) -> str | None:
         """The announcement the API recorded for the failed attempt (``announcement_id`` in the problem), or ``None``."""
-        problem = self.problem
-        if problem is None:
-            return None
-        nested = problem.get("detail")
-        for source in (problem, nested if isinstance(nested, Mapping) else {}):
-            value = source.get("announcement_id")
-            if isinstance(value, str) and value:
-                return value
-        return None
+        return _problem_str(self.problem, "announcement_id")
 
 
 class ThalovantNotCancellableError(ThalovantAPIError):
     """Raised when an announcement cannot be cancelled (409 ``not_cancellable``).
 
     Only an announcement that is still ``sending`` can be cancelled; one that
-    has completed, failed or been cancelled already cannot. Read it with
-    ``get_announcement`` to see what became of it.
+    has completed, failed or been cancelled already cannot. :attr:`announcement_status`
+    is its current status: refresh the result (``get_announcement``) instead of
+    showing an error.
     """
 
-
-class ThalovantRateLimitedError(ThalovantAPIError):
-    """Raised on a 429: too many requests. ``retry_after_seconds`` says how long to wait.
-
-    Intercom limits a hub to 20 normal announcements a minute and 10 urgent
-    ones an hour.
-    """
+    @property
+    def announcement_status(self) -> str | None:
+        """The announcement's current status (``completed``, ``partial``, ``failed`` or ``cancelled``), or ``None``."""
+        return _problem_str(self.problem, "announcement_status")
 
 
 class ThalovantAlreadyLinkedError(ThalovantAPIError):

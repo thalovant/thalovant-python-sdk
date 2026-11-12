@@ -1,10 +1,10 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom amendment 2 (security review): cancel, key replay, announce timeout, id validation; open items L5, L6 and a replayed flag.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom final API: L6 and the replayed flag are fixed; new open items (timezone database, Unicode versions, a replayed `wait`, `detail` vs `message`).
 
 # Audit
 
 Known issues, technical debt and security findings for `thalovant` (the Python SDK and the parity reference). Each entry cites the code and the test that show it. Line numbers are at `main` 51069339 (2026-11-03).
 
-Test run behind this file: `python -m pytest -q` on Python 3.12, 1621 passed, 1 skipped (branch `feat/browser-sign-in`, final producer revision, 2026-11-08). `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
+Test run behind this file: `python -m pytest -q` on Python 3.12, 1828 passed, 1 skipped (branch `feature/intercom-v1`, final-API round, 2026-11-11). `ruff`, `mypy` and `scripts/check-sdk-parity.py` also pass. (The 0.11.0 round before it: 1621 passed, 1 skipped.)
 
 ## Open: known limitations
 
@@ -12,13 +12,20 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1621 passed, 1 
 
 `_api_error()` (`src/thalovant/control.py`) hands the parsed error body to `ThalovantAPIError.problem` as it is. The API strips `input` and `ctx` from `/intercom/` validation errors (`app/middleware/errors.py`), so the text does not reach it today; a regression there would put the text into the exception. Not changed: the contract's section J does not ask for it. Proposed in `SUGGESTIONS.md`.
 
-### Intercom: no client-side cap on rooms and groups, none on the key length (security review L6)
+### Intercom: the timezone and Unicode checks use this machine's databases
 
-`IntercomTargets.as_dict()` caps speakers at 50 but not rooms or groups (the API caps them at 50), and `announce` does not check `idempotency_key` against the API's 128 characters; the API answers 422. Not changed (not in section J).
+`_timezone()` (`src/thalovant/intercom.py`) asks `zoneinfo`, so a name is valid when this machine's tz database knows it; the API asks its own (case-sensitive on Linux). Where no database exists (Windows without the `tzdata` package) only the shape is checked and the API decides (`tests/test_intercom.py::test_the_zone_shape_is_the_fallback_only_where_there_is_no_timezone_database`). `announcement_text()` uses `unicodedata`, whose version follows the Python build: a character assigned in a newer Unicode than the SDK's (or the API's) can pass here and be refused there, or the reverse. The API's answer stays authoritative; the 422 is the fallback.
 
-### Intercom: a replayed announcement is not marked as replayed
+### Intercom: `ThalovantAPIError.detail` does not read `message`
 
-The API answers a replay with `Idempotency-Replayed: true`; `Announcement` does not carry it, so a caller that reuses a key cannot tell a replay from a first send except by reading the status. The docs say what replay means (`docs/guides/intercom.md`, "Idempotency keys"). Proposed in `SUGGESTIONS.md`.
+The final intercom problems carry their sentence in `message`; `_problem_fields()` (`src/thalovant/errors.py`) reads `detail` only, so `error.detail` is `None` for them (the sentence is in `problem["message"]` and in the exception message). Changing it moves the shared api-error behaviour in every SDK; proposed in `SUGGESTIONS.md`.
+
+### Fixed in this round (final API)
+
+- **Rooms, groups and the key length** (was L6): `IntercomTargets.as_dict()` caps every list at 50 names of 64 characters and `idempotency_key()` caps the key at 128 printable ASCII characters (`tests/test_intercom.py::test_a_target_list_holds_at_most_50_names_of_at_most_64_characters`, `::test_an_idempotency_key_is_at_most_128_printable_ascii_characters`).
+- **A replayed announcement is marked** (`Announcement.replayed`, from `Idempotency-Replayed: true`; `::test_a_replayed_announcement_says_so_and_a_first_answer_does_not`, `::test_a_replayed_sending_announcement_is_202_and_stays_replayed_after_wait`).
+- **The text rule is the API's** (was: 1-280 and control characters only): `<` `>`, format characters, bidi controls, lone surrogates, private use and separators are refused first (`::test_a_text_the_api_would_refuse_is_refused_first_and_never_echoed`).
+- **Quiet hours** that are on need a real IANA zone and `start != end`; unknown `dnd` keys are refused (`::test_an_unusable_do_not_disturb_is_refused_before_anything_is_sent`).
 
 ### Intercom: a poll that fails after the POST leaves an accepted announcement
 

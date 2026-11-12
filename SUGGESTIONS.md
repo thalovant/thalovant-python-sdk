@@ -1,23 +1,23 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom amendment 2: a replayed flag, client-side problem scrubbing and list caps.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom final API: `replayed` and the list caps are done; shared vectors now matter more (text rule, DND zone, error kinds); `message` in `detail`.
 
 # Suggestions: thalovant (Python SDK)
-
-## A `replayed` flag on `Announcement`
-
-- **Problem:** the API answers a reused `Idempotency-Key` with the stored announcement and `Idempotency-Replayed: true`, and `Announcement` does not carry it, so a caller cannot tell a replay from a first send (security review H3).
-- **Proposal:** read the header in `_request` for the intercom routes and expose `Announcement.replayed: bool`; the same on every SDK, with the header in the loopback tests.
-- **Impact:** low effort; touches the reference digest and the four consumers.
 
 ## Scrub `input` and `ctx` from `ThalovantAPIError.problem` on intercom calls
 
 - **Problem:** `.problem` keeps the whole API body; a regression in the API's error middleware would put the announcement text there (review L5).
-- **Proposal:** in `announce`, drop `input` and `ctx` from `.problem` before raising; check `idempotency_key` length (128) and rooms/groups counts (50) client-side (L6).
+- **Proposal:** in `announce`, drop `input` and `ctx` from `.problem` before raising.
 - **Impact:** low; defence in depth for a text that is spoken aloud in a home.
+
+## `ThalovantAPIError.detail` does not read `message`
+
+- **Problem:** the final intercom problems carry their sentence in `message` (`urgent_scope_required`, `intercom_urgent_busy`, ...), while `detail` is read only from the body's `detail` member, so `error.detail` is `None` for them and the sentence is only in the bounded exception message and in `problem["message"]`.
+- **Proposal:** fall back to `message` when `detail` is absent, in every SDK at once, with a case in `api-error-vectors.json` (it changes the shared vectors, so it is a coordinated round).
+- **Impact:** low effort; touches every consumer's error type.
 
 ## Shared intercom vectors
 
-- **Problem:** the `intercom` capability has no conformance vectors; each SDK proves it with its own loopback tests, so text rules (control characters, trimming) can drift.
-- **Proposal:** a `intercom-vectors.json` of text/target/repeat validation cases and the error-kind mapping, claimed by the capability.
+- **Problem:** the `intercom` capability has no conformance vectors; each SDK proves it with its own loopback tests, so the text rule (NFC, 1-280, `<` `>`, control/bidi/format characters, lone surrogates), the do-not-disturb rule (valid IANA zone, `start != end`) and the problem-code to error-kind mapping can drift between five implementations that each use a different Unicode and timezone database.
+- **Proposal:** a `intercom-vectors.json` of text, target, DND and repeat validation cases and the error-kind mapping, claimed by the capability.
 - **Impact:** low effort; adds one file to every consumer's obligations.
 
 ## Carry `ai_disclosure` on `ApiToken`

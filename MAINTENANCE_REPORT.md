@@ -1,6 +1,16 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom amendment 2 (contract section J): cancel, key replay docs, announce timeout, id validation, wording; new parity digest.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom final API (platform security review): urgent scope, speaker kind/can_play/policy_synced, typed errors, one text rule, DND timezone, replayed; new parity digest.
 
 # Maintenance Report
+
+## 2026-11-11: Intercom final API (platform security review)
+
+Aligned the Python reference with the final Intercom API (`thalovant-api` `feature/intercom-console`, `CONSOLE_API_NOTES.md` section 9, contract sections I and J). **Models** (`src/thalovant/intercom.py`): `IntercomSpeaker` gains `kind`, `can_play` and `policy_synced`; `IntercomSpeakerList` gains `policy_synced` and `unavailable_reason` (now also `platform`); `IntercomDelivery` gains `detail`; `Announcement` gains `replayed`. **Scope** `intercom:urgent` is documented everywhere the scopes are listed (guide, API reference, README, QUICK_FACTS, FAQ, porting brief) with constants `INTERCOM_READ_SCOPE`, `INTERCOM_SEND_SCOPE`, `INTERCOM_URGENT_SCOPE`. **Errors** (`src/thalovant/errors.py`, `_INTERCOM_ERROR_KINDS` in `src/thalovant/control.py`): `IntercomProblemCode` and a typed error for each of `urgent_scope_required`, `intercom_urgent_busy`, `skill_not_installed`, `not_a_speaker`, `reserved_name`, `hub_locked`, `impersonation_not_allowed`, `too_many_targets`, `intercom_unavailable`, `intercom_disabled_platform`, `intercom_not_configured`, `managed_client`; `ThalovantNotCancellableError.announcement_status`; the code decides the kind whatever the status. **Validation**: `announcement_text()` now applies the API's rule (NFC, trimmed, 1-280, no `<` `>`, Cc/Cf/Cs/Co/Zl/Zp refused except the two joiners); quiet hours on need a valid IANA timezone and `start != end` (`_timezone()`, `IntercomDnd.as_dict()`); unknown `dnd` keys are refused; target lists are capped at 50 names of 64 characters; `lang` is checked; `idempotency_key()` caps the key at 128 printable ASCII characters. **`announce`** reads the `Idempotency-Replayed` header through the new `_request_with_headers` and keeps `replayed` after `wait`.
+
+Verification: `python -m pytest -q` on Python 3.12, 1828 passed, 1 skipped (the earlier 1730 plus 98 new, all in `tests/test_intercom.py`; one earlier run under heavy machine load failed 6 timing tests that pass alone and in the clean run); `ruff check src tests scripts` and `mypy` clean; `scripts/check-sdk-parity.py` verifies the reference. The reference digest is `69badc4fb072703e675ce50ae3a09765bf49cbf65efcc2fef5befb46f2b32a8c`; Node, Go, Rust, MCP, Swift, Kotlin, .NET and embedded-c acknowledge it in their own parity files.
+
+Not verified against a live API: the loopback fake API is built from the producer's notes and the API source (`app/schemas/intercom.py`, `app/routes/intercom.py`).
+
+Transparency Report: AI model Claude Sonnet 5.5; actions: implemented the final API for the Python SDK (code, tests, docs, parity reference); oversight: none yet, review pending.
 
 ## 2026-11-11: Intercom amendment 2 (client-side security review, contract section J)
 

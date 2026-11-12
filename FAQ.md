@@ -1,4 +1,4 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): wait scope and retry questions after the PR 114 review.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): wait scope and retry questions after the PR 114 review; final API questions (urgent scope, can_play, replayed, platform switch).
 
 # FAQ: thalovant (Python SDK)
 
@@ -23,8 +23,20 @@ The API waits up to 10 seconds for the hub, so `announce` never uses a request t
 **Why is `get_announcement(hub, "..")` a `ValueError`?**
 An id that is `.`, `..`, empty, or holds `/`, `?`, `#`, a backslash or a control character is refused before any request: a dot segment would change the route.
 
+**Why does an urgent `announce` raise `ThalovantUrgentScopeRequiredError`?**
+`priority="urgent"` (and so every `repeat`) needs the scope `intercom:urgent` in addition to `intercom:send`. Nothing implies it. Nothing was spent: no rate token, no hub call. Sign in again with the scope (a paid plan), or send a normal announcement.
+
+**Why is a Home Assistant link in the speaker list but `receive=True` fails with `ThalovantNotASpeakerError`?**
+A connection that cannot play speech (`can_play` false: `home_assistant`, `developer` and `embedded` unless its owner declared `spec.intercom.can_play: true` on the connection) is listed so it can be greyed out, but it cannot receive and is never part of `all`, a room or a group.
+
+**What does `announcement.replayed` mean?**
+The API answered with `Idempotency-Replayed: true`: this is the stored announcement for your key, nothing new was sent, whatever its status. Do not tell the person it was sent anew.
+
+**Why does everything raise `ThalovantIntercomPlatformDisabledError`?**
+Intercom ships dark: until the platform operator turns it on, `get_intercom_settings` reads `unavailable_reason="platform"` for every hub and every write and announcement is a 503 `intercom_disabled_platform`. Reads and `cancel_announcement` still work.
+
 **Why was nobody spoken to?**
-A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` means the hub's switch is off or it is a kid or public hub.
+A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` means the hub's switch is off; `ThalovantIntercomUnavailableError` (a kind of it) means a kid or public hub. `delivered` is not "heard": there is no playback receipt.
 
 **How do I sign in without a password?**
 `api.interactive_login()`. On a machine with a browser it opens the Thalovant consent page and waits for the browser to come back to `127.0.0.1` (browser sign-in, `browser_login()`). Elsewhere it prints a device code to approve from any browser (`login_with_browser()`).

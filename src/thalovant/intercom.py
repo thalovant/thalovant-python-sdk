@@ -21,8 +21,11 @@ the platform's control.) These are the typed answers of the routes under
 has an ``intercom`` frame (:mod:`thalovant.client`), which is a different thing.
 
 Scopes: ``intercom:read`` for the reads, ``intercom:send`` for ``announce`` and
-``cancel_announcement``, and ``hubs:write`` (owner or admin of the hub) to
-change settings or a speaker's policy.
+``cancel_announcement``, ``intercom:urgent`` **in addition to** ``intercom:send``
+for an urgent announcement (``priority="urgent"``, and so every ``repeat``), and
+``hubs:write`` (owner or admin of the hub) to change settings or a speaker's
+policy. A token without ``intercom:urgent`` is refused before anything is
+spent (403 ``urgent_scope_required``, :class:`~thalovant.errors.ThalovantUrgentScopeRequiredError`).
 
 Idempotency: pass a fresh unique ``idempotency_key`` (a ``uuid4``) for each
 announcement you mean to send. The same key replays the stored answer
@@ -39,11 +42,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import re
 from typing import Any, Literal, Mapping, Sequence, Union
+import unicodedata
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .errors import ThalovantAPIError
 
-#: Why intercom cannot be switched on for a hub: its plan, a kid hub, or a public hub.
-IntercomUnavailableReason = Literal["plan", "kid_hub", "public_hub"]
+#: Why intercom cannot run on a hub: the platform's own switch is off (``platform``,
+#: which wins over every other reason), the owner's plan, a kid hub, or a public hub.
+IntercomUnavailableReason = Literal["platform", "plan", "kid_hub", "public_hub"]
 #: ``normal`` waits for the hub's answer; ``urgent`` may repeat until acknowledged.
 IntercomPriority = Literal["normal", "urgent"]
 #: ``sending`` while an urgent announcement is still repeating; ``cancelled`` after ``cancel_announcement``.
@@ -65,8 +71,41 @@ MAX_REPEAT_INTERVAL_SECONDS = 120
 MAX_ROOM_LENGTH = 64
 MAX_GROUP_LENGTH = 32
 MAX_GROUPS = 8
+#: Longest name in a ``speakers``, ``rooms`` or ``groups`` target, and most names in one list.
+MAX_TARGET_NAME_LENGTH = 64
+MAX_TARGET_NAMES = 50
+#: Longest ``Idempotency-Key`` the API takes.
+MAX_IDEMPOTENCY_KEY_LENGTH = 128
+#: Longest IANA timezone name the API takes.
+MAX_TIMEZONE_LENGTH = 64
 
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+#: The scopes of the intercom routes. ``intercom:urgent`` is needed IN ADDITION to
+#: ``intercom:send`` for an urgent announcement; it is not implied by anything and
+#: implies nothing. Changing settings or a speaker needs ``hubs:write``.
+INTERCOM_READ_SCOPE = "intercom:read"
+INTERCOM_SEND_SCOPE = "intercom:send"
+INTERCOM_URGENT_SCOPE = "intercom:urgent"
+
+#: What a delivery's ``detail`` can be (a fixed code, never free text). Treat a value
+#: that is not in this set as opaque: it is kept as sent.
+DELIVERY_DETAIL_CODES = frozenset({
+    "disabled", "sender_not_allowed", "rate_limited", "invalid_text", "text_too_long", "invalid_priority",
+    "too_many_targets", "no_targets", "internal_error", "duplicate_id", "busy", "not_running", "invalid_id",
+    "policy_changed", "dnd_unreadable", "cancelled", "intercom_disabled", "intercom_disabled_platform",
+    "no_result", "unknown_status", "no_matching_speakers", "hub_no_response", "hub_unreachable", "hub_not_ready",
+    "hub_transport_error", "skill_not_installed", "stopped",
+})
+
+#: Unicode categories an announcement may not hold: controls (Cc), format characters
+#: (Cf: bidirectional overrides and isolates, zero-width spaces, tag characters), lone
+#: surrogates (Cs), private use (Co), and line and paragraph separators (Zl, Zp).
+_REFUSED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Zl", "Zp"})
+#: The two format characters scripts and emoji sequences need: allowed, as the API allows them.
+_JOINERS = frozenset("\u200c\u200d")
+_MARKUP = frozenset("<>")
+_LANG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
+#: The shape of an IANA timezone name, used only where this machine has no timezone database.
+_ZONE_SHAPE = re.compile(r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$")
 #: Characters an id may not hold: they would change a request path.
 _ID_UNSAFE = re.compile(r"[/?#\\\x00-\x1f\x7f-\x9f]")
 _CLOCK = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
@@ -94,8 +133,10 @@ class IntercomSettings:
     """A hub's intercom switch (``GET .../intercom/settings``).
 
     ``plan_allowed`` is false on a plan without intercom;
-    ``unavailable_reason`` says why it cannot be enabled (``plan``,
-    ``kid_hub``, ``public_hub``) and is ``None`` when it can.
+    ``unavailable_reason`` says why it cannot run (``platform``: the platform's
+    own switch is off, which wins over the others; ``plan``; ``kid_hub``;
+    ``public_hub``) and is ``None`` when it can. ``enabled`` is true only when
+    the hub's switch is on AND ``unavailable_reason`` is ``None``.
     """
 
     enabled: bool
@@ -118,7 +159,12 @@ class IntercomSettings:
 
 @dataclass(frozen=True)
 class IntercomQuietHours:
-    """Local quiet hours: ``HH:MM`` start and end, in an IANA ``timezone`` (UTC when ``None``)."""
+    """Local quiet hours: ``HH:MM`` start and end, in an IANA ``timezone``.
+
+    Quiet hours that are switched on (``IntercomDnd(enabled=True)``) need a real
+    ``timezone`` and a ``start`` that differs from the ``end``: the API refuses a
+    window it would have to guess the zone of (422), so the SDK refuses it first.
+    """
 
     start: str
     end: str
@@ -136,6 +182,8 @@ class IntercomQuietHours:
     def as_dict(self) -> dict[str, Any]:
         _clock(self.start, "quiet_hours.start")
         _clock(self.end, "quiet_hours.end")
+        if self.timezone is not None:
+            _timezone(self.timezone, "quiet_hours.timezone")
         return {"start": self.start, "end": self.end, "timezone": self.timezone}
 
 
@@ -160,6 +208,14 @@ class IntercomDnd:
         out: dict[str, Any] = {"enabled": self.enabled}
         if self.quiet_hours is not None:
             out["quiet_hours"] = self.quiet_hours.as_dict()
+        if self.enabled:
+            # The API refuses an enabled window with no zone (UTC would put a
+            # Toronto bedroom's night in the afternoon) or with start == end.
+            hours = self.quiet_hours
+            if hours is None or hours.timezone is None:
+                raise ValueError("dnd.quiet_hours with a timezone is required when dnd is enabled.")
+            if hours.start == hours.end:
+                raise ValueError("dnd.quiet_hours start and end must differ when dnd is enabled.")
         return out
 
 
@@ -191,7 +247,27 @@ class IntercomPolicy:
 
 @dataclass(frozen=True)
 class IntercomSpeaker:
-    """A client of the hub that may be spoken to, with its policy and presence."""
+    """A connection of the hub that may be spoken to, with its policy and presence.
+
+    ``kind`` is the connection kind (``voice_satellite``, ``web_chat``,
+    ``developer``, ``embedded``, ``home_assistant``; any other reads
+    ``voice_satellite``, the API's own rule). ``can_play`` is the EFFECTIVE
+    answer to "can this connection play speech at all": true by default for a
+    ``voice_satellite`` and ``web_chat``, false for ``home_assistant``,
+    ``developer`` and ``embedded`` unless its owner declared
+    ``spec.intercom.can_play: true`` on the connection. One that cannot is listed
+    (grey it out) but cannot be given ``receive=True`` (422 ``not_a_speaker``),
+    is never part of ``all``, a room or a group, and naming it in an
+    announcement is refused. ``can_play`` is declared on the connection
+    (``PATCH /v1/clients/{id}``), never on the speaker.
+
+    ``policy_synced`` is set on the answer to
+    :meth:`~thalovant.control.AsyncThalovantControlPlane.update_intercom_speaker`:
+    ``False`` while the hub may hold an out-of-date consent map (the push failed
+    and is retried in the background), so show "Changes may take a moment to reach
+    the home". ``None`` when the API did not say (a list item: the list carries
+    its own, see :attr:`IntercomSpeakerList.policy_synced`).
+    """
 
     client_id: str
     slug: str | None = None
@@ -199,10 +275,15 @@ class IntercomSpeaker:
     online: bool = False
     last_seen_at: str | None = None
     intercom: IntercomPolicy = field(default_factory=IntercomPolicy)
+    kind: str = "voice_satellite"
+    can_play: bool = True
+    policy_synced: bool | None = None
 
     @classmethod
     def from_dict(cls, payload: Any) -> IntercomSpeaker:
         body = _mapping(payload, "intercom speaker")
+        kind = body.get("kind")
+        synced = body.get("policy_synced")
         return cls(
             client_id=_required(body, "client_id", "intercom speaker"),
             slug=_str_or_none(body.get("slug")),
@@ -210,6 +291,10 @@ class IntercomSpeaker:
             online=body.get("online") is True,
             last_seen_at=_str_or_none(body.get("last_seen_at")),
             intercom=IntercomPolicy.from_dict(body.get("intercom")),
+            kind=kind if isinstance(kind, str) and kind else "voice_satellite",
+            # The API's own default is true; only an explicit false says "cannot play".
+            can_play=body.get("can_play") is not False,
+            policy_synced=synced if isinstance(synced, bool) else None,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -217,21 +302,33 @@ class IntercomSpeaker:
             "client_id": self.client_id,
             "slug": self.slug,
             "name": self.name,
+            "kind": self.kind,
+            "can_play": self.can_play,
             "online": self.online,
             "last_seen_at": self.last_seen_at,
             "intercom": self.intercom.as_dict(),
+            "policy_synced": self.policy_synced,
         }
 
 
 @dataclass(frozen=True)
 class IntercomDelivery:
-    """What happened for one speaker. ``status`` keeps a value this SDK does not know."""
+    """What happened for one speaker. ``status`` keeps a value this SDK does not know.
+
+    ``delivered`` means the hub handed the speech to that speaker's connection;
+    there is no playback receipt, so it does not prove the sound came out or that
+    anybody heard it. Only ``acked`` (an urgent announcement somebody answered)
+    is a person's answer, and ``failed`` is not proof that nothing was spoken.
+    ``detail`` is one of :data:`DELIVERY_DETAIL_CODES` or ``None``: a fixed code,
+    never free text; a value not in the set is kept as sent.
+    """
 
     client_id: str | None = None
     slug: str | None = None
     name: str | None = None
     status: DeliveryStatus | str = "failed"
     at: str | None = None
+    detail: str | None = None
 
     @classmethod
     def from_dict(cls, payload: Any) -> IntercomDelivery:
@@ -242,6 +339,7 @@ class IntercomDelivery:
             name=_str_or_none(body.get("name")),
             status=_required(body, "status", "intercom delivery"),
             at=_str_or_none(body.get("at")),
+            detail=_str_or_none(body.get("detail")),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -256,6 +354,13 @@ class Announcement:
     the hub could not confirm the cancel (the record is ``cancelled`` anyway),
     so speech already queued on the hub may still play. ``None`` when the API
     did not say, as on every other answer.
+
+    ``replayed`` is ``True`` when this answer is the STORED announcement for an
+    ``idempotency_key`` the hub had seen before (the API's response header
+    ``Idempotency-Replayed: true``): nothing new was sent, whatever its status. It is
+    ``False`` on a first answer and on every read. Do not clear the text a person typed,
+    or say "sent", on a replayed answer without saying nothing new was sent.
+    ``acked_by`` is the display name of a client of the hub, or ``"unknown"``.
     """
 
     id: str
@@ -265,6 +370,7 @@ class Announcement:
     deliveries: tuple[IntercomDelivery, ...] = ()
     acked_by: str | None = None
     hub_confirmed: bool | None = None
+    replayed: bool = False
 
     @property
     def sending(self) -> bool:
@@ -297,6 +403,7 @@ class Announcement:
             "deliveries": [d.as_dict() for d in self.deliveries],
             "acked_by": self.acked_by,
             "hub_confirmed": self.hub_confirmed,
+            "replayed": self.replayed,
         }
 
 
@@ -325,9 +432,21 @@ class AnnouncementList:
 
 @dataclass(frozen=True)
 class IntercomSpeakerList:
-    """Every client of the hub, as speakers."""
+    """Every connection of the hub, as speakers (the platform's own Intercom client is not listed).
+
+    ``policy_synced`` is ``False`` while the hub may hold an out-of-date consent
+    map (a push failed and is retried in the background): a speaker whose
+    ``receive`` was just turned off can still be spoken to by a routine until it
+    clears. Show a quiet "Changes may take a moment to reach the home". ``True``
+    when nothing is pending, and while intercom is off; ``None`` when the API did
+    not say. ``unavailable_reason`` is the same value as
+    :attr:`IntercomSettings.unavailable_reason` (a list read while intercom is
+    off platform-wide says ``platform``).
+    """
 
     items: tuple[IntercomSpeaker, ...] = ()
+    policy_synced: bool | None = None
+    unavailable_reason: IntercomUnavailableReason | str | None = None
 
     @classmethod
     def from_dict(cls, payload: Any) -> IntercomSpeakerList:
@@ -335,10 +454,19 @@ class IntercomSpeakerList:
         rows = body.get("items")
         if not isinstance(rows, list):
             raise ThalovantAPIError("Thalovant API returned an unexpected intercom speaker listing shape.")
-        return cls(items=tuple(IntercomSpeaker.from_dict(row) for row in rows))
+        synced = body.get("policy_synced")
+        return cls(
+            items=tuple(IntercomSpeaker.from_dict(row) for row in rows),
+            policy_synced=synced if isinstance(synced, bool) else None,
+            unavailable_reason=_str_or_none(body.get("unavailable_reason")),
+        )
 
     def as_dict(self) -> dict[str, Any]:
-        return {"items": [s.as_dict() for s in self.items]}
+        return {
+            "items": [s.as_dict() for s in self.items],
+            "policy_synced": self.policy_synced,
+            "unavailable_reason": self.unavailable_reason,
+        }
 
 
 @dataclass(frozen=True)
@@ -401,8 +529,11 @@ class IntercomTargets:
         items = names[name]
         for item in items:
             _require_text(item, f"a {name[:-1]} target")
-        if name == "speakers" and len(items) > MAX_ANNOUNCEMENT_SPEAKERS:
-            raise ValueError(f"An announcement names at most {MAX_ANNOUNCEMENT_SPEAKERS} speakers.")
+            if len(item) > MAX_TARGET_NAME_LENGTH:
+                raise ValueError(f"A {name[:-1]} target is at most {MAX_TARGET_NAME_LENGTH} characters.")
+        if len(items) > MAX_TARGET_NAMES:
+            # 50 names of any kind; "at most 50 speakers" is the API's rule for explicit speakers.
+            raise ValueError(f"An announcement names at most {MAX_TARGET_NAMES} {name}.")
         return {name: list(items)}
 
 
@@ -415,17 +546,50 @@ DndInput = Union[IntercomDnd, Mapping[str, Any]]
 
 
 def announcement_text(text: str) -> str:
-    """The text as it is sent: trimmed, 1-280 characters, no control characters."""
+    """The text as it is sent: NFC-normalised, trimmed, 1-280 characters, or ``ValueError`` before any request.
+
+    The API's own rule, applied before anything is sent (one rule everywhere): no
+    ``<`` or ``>`` (a speaker's text-to-speech may read them as markup), no
+    control characters (a newline or a tab included), no bidirectional overrides
+    or isolates or other invisible format characters (the zero-width joiner and
+    non-joiner, which scripts and emoji need, are allowed), no lone surrogates,
+    no private-use characters and no line or paragraph separators. The text is
+    refused rather than rewritten, and an error never echoes it.
+    """
     if not isinstance(text, str):
         raise ValueError("An announcement's text must be a string.")
-    trimmed = text.strip()
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("An announcement's text must be valid Unicode (no lone surrogates).") from None
+    trimmed = unicodedata.normalize("NFC", text).strip()
     if not trimmed:
         raise ValueError("An announcement's text must not be empty.")
     if len(trimmed) > MAX_ANNOUNCEMENT_TEXT:
         raise ValueError(f"An announcement's text is at most {MAX_ANNOUNCEMENT_TEXT} characters.")
-    if _CONTROL.search(trimmed):
-        raise ValueError("An announcement's text must not contain control characters.")
+    for char in trimmed:
+        if char in _MARKUP:
+            raise ValueError("An announcement's text must not contain markup characters (< or >).")
+        if char not in _JOINERS and unicodedata.category(char) in _REFUSED_CATEGORIES:
+            raise ValueError(
+                "An announcement's text must not contain control, bidirectional, format or private-use characters."
+            )
     return trimmed
+
+
+def idempotency_key(value: Any) -> str:
+    """An ``Idempotency-Key`` fit to send: a string of 1-128 printable ASCII characters, or ``ValueError``.
+
+    Use a fresh unique key (a ``uuid4``) for each announcement you mean to send:
+    the same key replays the stored answer and never sends again.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("idempotency_key must be a non-empty string when given.")
+    if len(value) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise ValueError(f"idempotency_key is at most {MAX_IDEMPOTENCY_KEY_LENGTH} characters.")
+    if not all(" " <= char <= "~" for char in value):
+        raise ValueError("idempotency_key must be printable ASCII.")
+    return value
 
 
 def intercom_id(value: Any, name: str) -> str:
@@ -463,7 +627,8 @@ def announce_body(
             times=repeat.get("times"), interval_seconds=repeat.get("interval_seconds")  # type: ignore[arg-type]
         ).as_dict()
     if lang is not None:
-        _require_text(lang, "lang")
+        if not isinstance(lang, str) or not _LANG.match(lang):
+            raise ValueError('lang must be a language tag such as "en-US" or "fr".')
         body["lang"] = lang
     return body
 
@@ -542,11 +707,17 @@ def _dnd(dnd: DndInput) -> dict[str, Any]:
         return dnd.as_dict()
     if not isinstance(dnd, Mapping):
         raise ValueError("dnd must be IntercomDnd or a mapping.")
+    unknown = sorted(str(key) for key in set(dnd) - {"enabled", "quiet_hours"})
+    if unknown:
+        raise ValueError(f"Unknown dnd field: {unknown[0]}.")
     hours = dnd.get("quiet_hours")
     parsed = None
     if hours is not None:
         if not isinstance(hours, Mapping):
             raise ValueError("quiet_hours must be a mapping.")
+        unknown = sorted(str(key) for key in set(hours) - {"start", "end", "timezone"})
+        if unknown:
+            raise ValueError(f"Unknown quiet_hours field: {unknown[0]}.")
         zone = hours.get("timezone")
         if zone is not None and not isinstance(zone, str):
             raise ValueError("quiet_hours.timezone must be an IANA name or null.")
@@ -567,6 +738,28 @@ def _flag(value: Any, name: str) -> None:
 def _clock(value: Any, name: str) -> None:
     if not isinstance(value, str) or not _CLOCK.match(value):
         raise ValueError(f"{name} must be HH:MM.")
+
+
+def _timezone(value: Any, name: str) -> None:
+    """An IANA timezone name the API will accept: at most 64 characters, untrimmed, and one the tz database knows.
+
+    Where this machine has no timezone database at all (Windows without the
+    ``tzdata`` package) every name would look unknown, so only the shape is checked
+    and the API decides.
+    """
+    if not isinstance(value, str) or not value or len(value) > MAX_TIMEZONE_LENGTH or value != value.strip():
+        raise ValueError(f"{name} must be an IANA timezone name.")
+    try:
+        ZoneInfo(value)
+        return
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        pass
+    try:
+        ZoneInfo("UTC")
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        if _ZONE_SHAPE.match(value):
+            return  # no timezone database here: the shape is all that can be checked
+    raise ValueError(f"{name} must be an IANA timezone name.")
 
 
 def _require_text(value: Any, name: str) -> None:
@@ -592,13 +785,21 @@ def _str_or_none(value: Any) -> str | None:
 
 
 __all__ = [
+    "DELIVERY_DETAIL_CODES",
+    "INTERCOM_READ_SCOPE",
+    "INTERCOM_SEND_SCOPE",
+    "INTERCOM_URGENT_SCOPE",
     "MAX_ANNOUNCEMENT_SPEAKERS",
     "MAX_ANNOUNCEMENT_TEXT",
     "MAX_GROUPS",
     "MAX_GROUP_LENGTH",
+    "MAX_IDEMPOTENCY_KEY_LENGTH",
     "MAX_REPEAT_INTERVAL_SECONDS",
     "MAX_REPEAT_TIMES",
     "MAX_ROOM_LENGTH",
+    "MAX_TARGET_NAMES",
+    "MAX_TARGET_NAME_LENGTH",
+    "MAX_TIMEZONE_LENGTH",
     "MIN_REPEAT_INTERVAL_SECONDS",
     "UNSET",
     "Announcement",
@@ -621,6 +822,7 @@ __all__ = [
     "TargetsInput",
     "announce_body",
     "announcement_text",
+    "idempotency_key",
     "intercom_id",
     "settings_body",
     "speaker_update_body",

@@ -1,4 +1,4 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane; final API (urgent scope, speaker kind/can_play/policy_synced, typed errors, replayed).
 
 # Quick facts: thalovant (Python SDK)
 
@@ -51,17 +51,18 @@ Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce,
 
 Models and `SecretValue` live in `src/thalovant/chat_apps.py`; the guide is `docs/guides/chat-apps.md`.
 
-### Intercom (0.12.0; scopes `intercom:read`, `intercom:send`, `hubs:write`)
+### Intercom (0.12.0; scopes `intercom:read`, `intercom:send`, `intercom:urgent`, `hubs:write`)
 
 | Call | Endpoint |
 |---|---|
 | `get_intercom_settings(hub_id)` | `GET /v1/hubs/{id}/intercom/settings` |
 | `set_intercom_settings(hub_id, enabled)` | `PUT /v1/hubs/{id}/intercom/settings` |
-| `list_intercom_speakers(hub_id)` | `GET /v1/hubs/{id}/intercom/speakers` |
+| `list_intercom_speakers(hub_id)` (speakers have `kind`, `can_play`; the list `policy_synced`) | `GET /v1/hubs/{id}/intercom/speakers` |
 | `update_intercom_speaker(hub_id, client_id, *, receive, room, groups, dnd)` | `PATCH /v1/hubs/{id}/intercom/speakers/{client_id}` |
-| `announce(hub_id, text, targets, *, priority, repeat, lang, idempotency_key, wait)` (use a fresh `uuid4` key per announcement) | `POST /v1/hubs/{id}/intercom/announce` |
+| `announce(hub_id, text, targets, *, priority, repeat, lang, idempotency_key, wait)` (use a fresh `uuid4` key per announcement; urgent needs `intercom:urgent` too; `Announcement.replayed`) | `POST /v1/hubs/{id}/intercom/announce` |
 | `get_announcement(hub_id, id)` / `list_announcements(hub_id, *, limit, cursor)` | `GET /v1/hubs/{id}/intercom/announcements[/{id}]` |
-| `cancel_announcement(hub_id, id)` | `POST /v1/hubs/{id}/intercom/announcements/{id}/cancel` (`intercom:send`; 409 `not_cancellable`) |
+| `cancel_announcement(hub_id, id)` | `POST /v1/hubs/{id}/intercom/announcements/{id}/cancel` (`intercom:send`; 409 `not_cancellable` with `announcement_status`) |
 
+Typed errors (constants in `IntercomProblemCode`): `urgent_scope_required`, `intercom_urgent_busy`, `skill_not_installed`, `not_a_speaker`, `reserved_name`, `hub_locked`, `impersonation_not_allowed`, `too_many_targets`, `intercom_unavailable` (`reason`), `intercom_disabled_platform`, `intercom_not_configured`, `managed_client`, `not_cancellable`, `hub_unreachable` (`announcement_id`). Text rule: NFC, 1-280, no `<` `>`, control, bidi/format characters or lone surrogates; DND on needs a valid IANA timezone and start != end; at most 50 names per target list.
 Models in `src/thalovant/intercom.py`; guide `docs/guides/intercom.md`. Announce-only, not a certified safety system; the API does not store the text (keyed hash and length only).
 `announce` uses a request timeout of at least 25 s (`INTERCOM_ANNOUNCE_MIN_TIMEOUT`). Idempotency: one fresh `uuid4` key per announcement; the same key replays the stored result and never re-sends (a replayed `failed` stays `failed`); after a 502 read `ThalovantHubUnreachableError.announcement_id`. Ids (hub, client, announcement) that are `.`, `..`, empty or hold `/ ? #`, a backslash or a control character are refused before any request.

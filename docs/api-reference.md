@@ -524,17 +524,18 @@ Announce-only text spoken aloud on a hub's speakers (see the
 [Intercom guide](guides/intercom.md)). **Not a certified safety system.** The names say
 `announce` and `intercom_*` because the HiveMind mesh already has an `intercom` frame.
 Reads need `intercom:read`, `announce` needs `intercom:send` (and `intercom:read` as well
-with `wait=True`, which polls `get_announcement`), and changing settings or a speaker needs
-`hubs:write`. The API does not store the text (a keyed hash and the length only). Pass a fresh
+with `wait=True`, which polls `get_announcement`), an **urgent** announcement (and so every
+`repeat`) needs `intercom:urgent` in addition to `intercom:send`, and changing settings or a
+speaker needs `hubs:write`. The API does not store the text (a keyed hash and the length only). Pass a fresh
 `idempotency_key` (a `uuid4`) per announcement: the same key replays the stored result
 (`Idempotency-Replayed: true`), never sends again, and a replayed `failed` announcement stays
 `failed`. With `wait=True` a poll can fail after the announcement was accepted: call again with
 the same key to get the stored announcement and its id.
 
-- `get_intercom_settings(hub_id) -> IntercomSettings` — `GET /v1/hubs/{id}/intercom/settings`: `enabled`, `plan_allowed`, `unavailable_reason` (`plan`, `kid_hub`, `public_hub`).
+- `get_intercom_settings(hub_id) -> IntercomSettings` — `GET /v1/hubs/{id}/intercom/settings`: `enabled`, `plan_allowed`, `unavailable_reason` (`platform`, `plan`, `kid_hub`, `public_hub`; `platform` = the platform's own switch is off and wins over the others).
 - `set_intercom_settings(hub_id, enabled) -> IntercomSettings` — `PUT .../settings`.
-- `list_intercom_speakers(hub_id) -> IntercomSpeakerList` — `GET .../speakers`.
-- `update_intercom_speaker(hub_id, client_id, *, receive=UNSET, room=UNSET, groups=UNSET, dnd=UNSET) -> IntercomSpeaker` — `PATCH .../speakers/{client_id}`; only what is passed is sent, `room=None` clears it.
+- `list_intercom_speakers(hub_id) -> IntercomSpeakerList` — `GET .../speakers`: each `IntercomSpeaker` has `kind`, `can_play` (effective; false for a connection that cannot play speech: listed, never receives) and the list has `policy_synced` and `unavailable_reason`.
+- `update_intercom_speaker(hub_id, client_id, *, receive=UNSET, room=UNSET, groups=UNSET, dnd=UNSET) -> IntercomSpeaker` — `PATCH .../speakers/{client_id}`; only what is passed is sent, `room=None` clears it; only these four fields exist; `dnd` enabled needs quiet hours with a valid IANA `timezone` and `start != end`; the answer's `policy_synced` is `False` while the hub may hold an out-of-date consent map.
 - `announce(hub_id, text, targets, *, priority="normal", repeat=None, lang=None, idempotency_key=None, wait=False, wait_timeout=None, poll_interval=2.0) -> Announcement` — `POST .../announce` (`Idempotency-Key` only when given).
   The request never times out in under 25 s (`INTERCOM_ANNOUNCE_MIN_TIMEOUT`): the API waits up to 10 s for the hub.
 - `get_announcement(hub_id, announcement_id) -> Announcement`, `list_announcements(hub_id, *, limit=None, cursor=None) -> AnnouncementList` — newest first.
@@ -547,7 +548,18 @@ Errors: `ThalovantIntercomDisabledError`, `ThalovantHubUnreachableError` (502; t
 or may not have been spoken; `announcement_id` names the recorded `failed` announcement: read
 it before sending again, and use a new key, because the same key replays the failed record),
 `ThalovantNotCancellableError` (409 `not_cancellable`), `ThalovantRateLimitedError`,
-`ThalovantPlanError` (HTTP 402, or 403 with `plan_limit`).
+`ThalovantPlanError` (HTTP 402, or 403 with `plan_limit`), and the final API's codes (constants in
+`IntercomProblemCode`): `ThalovantUrgentScopeRequiredError` (403 `urgent_scope_required`),
+`ThalovantUrgentBusyError` (429 `intercom_urgent_busy`, `scope`), `ThalovantSkillNotInstalledError`
+(409), `ThalovantNotASpeakerError` (422 `not_a_speaker`, `kind`, `not_speakers`),
+`ThalovantReservedNameError`, `ThalovantHubLockedError`, `ThalovantImpersonationNotAllowedError`,
+`ThalovantTooManyTargetsError` (`matched`), `ThalovantIntercomUnavailableError` (`reason`),
+`ThalovantIntercomPlatformDisabledError`, `ThalovantIntercomNotConfiguredError`,
+`ThalovantManagedClientError`; `ThalovantNotCancellableError.announcement_status`.
+An `Announcement` has `replayed` (true when the answer is the stored one for an
+`idempotency_key`: the `Idempotency-Replayed: true` header) and each delivery a `detail` code.
+The text is checked first with the API's rule (NFC, 1-280, no `<` `>`, control, bidi/format
+characters or lone surrogates); targets hold at most 50 names of at most 64 characters.
 
 ### Chat apps
 

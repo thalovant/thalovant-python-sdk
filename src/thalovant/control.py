@@ -57,6 +57,7 @@ from .intercom import (
     TargetsInput,
     _Unset,
     announce_body,
+    idempotency_key as _idempotency_key,
     intercom_id,
     settings_body,
     speaker_update_body,
@@ -71,14 +72,26 @@ from .errors import (
     ThalovantDeviceLoginDenied,
     ThalovantDeviceLoginExpired,
     ThalovantDeviceLoginPending,
+    ThalovantHubLockedError,
     ThalovantHubUnreachableError,
+    ThalovantImpersonationNotAllowedError,
     ThalovantIntercomDisabledError,
+    ThalovantIntercomNotConfiguredError,
+    ThalovantIntercomPlatformDisabledError,
+    ThalovantIntercomUnavailableError,
+    ThalovantManagedClientError,
+    ThalovantNotASpeakerError,
     ThalovantNotCancellableError,
     ThalovantPlanError,
     ThalovantRateLimitedError,
+    ThalovantReservedNameError,
+    ThalovantSkillNotInstalledError,
     ThalovantTimeoutError,
+    ThalovantTooManyTargetsError,
     ThalovantUnsupportedConnectionTypeError,
     ThalovantUnsupportedProtocolError,
+    ThalovantUrgentBusyError,
+    ThalovantUrgentScopeRequiredError,
 )
 from .identity import ThalovantIdentity
 from .native_auth import (
@@ -2405,8 +2418,10 @@ class AsyncThalovantControlPlane:
         """A hub's intercom switch and whether it can be turned on (``GET /v1/hubs/{id}/intercom/settings``).
 
         Intercom is announce-only and **not a certified safety system**. It is
-        off by default. ``unavailable_reason`` is ``plan``, ``kid_hub`` or
-        ``public_hub`` when it cannot be enabled. Requires ``intercom:read``.
+        off by default. ``unavailable_reason`` is ``platform`` (the platform's own
+        switch is off: every hub reads it, and it wins over the others), ``plan``,
+        ``kid_hub`` or ``public_hub`` when it cannot run; ``enabled`` is true only
+        when the hub's switch is on and there is no reason. Requires ``intercom:read``.
         """
 
         return IntercomSettings.from_dict(await self._request("GET", _intercom_path(hub_id, "settings")))
@@ -2414,10 +2429,17 @@ class AsyncThalovantControlPlane:
     async def set_intercom_settings(self, hub_id: str, enabled: bool) -> IntercomSettings:
         """Turn a hub's intercom on or off (``PUT /v1/hubs/{id}/intercom/settings``).
 
-        Requires ``hubs:write`` (owner or admin of the hub), not
-        ``intercom:send``. A plan without intercom is a
-        :class:`~thalovant.errors.ThalovantPlanError`; a kid or public hub is
-        a 422 :class:`~thalovant.errors.ThalovantAPIError`.
+        Requires ``hubs:write`` (owner, manager or administrator of the hub),
+        not ``intercom:send``, and a session that is not an impersonation
+        (:class:`~thalovant.errors.ThalovantImpersonationNotAllowedError`). A plan
+        without intercom is a :class:`~thalovant.errors.ThalovantPlanError`; a kid
+        or public hub is :class:`~thalovant.errors.ThalovantIntercomUnavailableError`
+        (422 ``intercom_unavailable``, ``reason``); a locked hub is
+        :class:`~thalovant.errors.ThalovantHubLockedError`. While the platform
+        switch is off, even ``enabled=False`` is
+        :class:`~thalovant.errors.ThalovantIntercomPlatformDisabledError` (503
+        ``intercom_disabled_platform``: nothing was changed), and a platform that is
+        not configured is :class:`~thalovant.errors.ThalovantIntercomNotConfiguredError`.
         """
 
         return IntercomSettings.from_dict(
@@ -2425,7 +2447,13 @@ class AsyncThalovantControlPlane:
         )
 
     async def list_intercom_speakers(self, hub_id: str) -> IntercomSpeakerList:
-        """Every client of the hub as a speaker, with presence and policy. Requires ``intercom:read``."""
+        """Every connection of the hub as a speaker, with presence, policy, ``kind`` and ``can_play``. Requires ``intercom:read``.
+
+        The answer's ``policy_synced`` is ``False`` while the hub may hold an
+        out-of-date consent map; ``unavailable_reason`` is the hub's (``platform``
+        when intercom is off platform-wide: reads still work). A connection that
+        cannot play speech (``can_play`` false) is listed so it can be greyed out.
+        """
 
         return IntercomSpeakerList.from_dict(await self._request("GET", _intercom_path(hub_id, "speakers")))
 
@@ -2442,8 +2470,17 @@ class AsyncThalovantControlPlane:
         """Change a speaker's policy (``PATCH .../intercom/speakers/{client_id}``): only what is passed.
 
         A speaker is spoken to only when ``receive`` is true, which it is not
-        until somebody says so. ``room=None`` clears the room. Requires
-        ``hubs:write``.
+        until somebody says so. ``room=None`` clears the room. Only these four
+        fields exist (an unknown key in a ``dnd`` mapping is refused with
+        ``ValueError``); send only what changed. ``dnd`` enabled needs quiet hours
+        with a valid IANA ``timezone`` and a ``start`` that differs from the
+        ``end``, checked before anything is sent. ``receive=True`` on a connection
+        that cannot play speech is
+        :class:`~thalovant.errors.ThalovantNotASpeakerError` (422 ``not_a_speaker``,
+        ``kind``). The answer's ``policy_synced`` is ``False`` while the hub may
+        hold an out-of-date consent map ("changes may take a moment to reach the
+        home"). Requires ``hubs:write`` (owner, manager or administrator; a plain
+        member and an impersonated session are refused).
         """
 
         body = speaker_update_body(receive=receive, room=room, groups=groups, dnd=dnd)
@@ -2466,15 +2503,31 @@ class AsyncThalovantControlPlane:
     ) -> Announcement:
         """Say ``text`` aloud on a hub's speakers (``POST /v1/hubs/{id}/intercom/announce``).
 
-        ``text`` is 1-280 characters, trimmed, with no control characters; it
-        is spoken aloud in a home, and the platform keeps only its hash and
-        length. ``targets`` is :class:`~thalovant.intercom.IntercomTargets`
+        ``text`` is 1-280 characters, NFC-normalised and trimmed, with no ``<``
+        or ``>``, no control, bidirectional or other invisible format characters
+        (the zero-width joiner and non-joiner excepted), no lone surrogates and
+        no private-use characters (the API's own rule, checked first with
+        ``ValueError``); it is spoken aloud in a home, and the platform keeps
+        only a keyed hash and the length. ``targets`` is
+        :class:`~thalovant.intercom.IntercomTargets`
         (or ``{"all": True}``, ``{"speakers": [...]}``, ``{"rooms": [...]}``,
-        ``{"groups": [...]}``). ``priority="urgent"`` may carry ``repeat``
+        ``{"groups": [...]}``; at most 50 names, each 1-64 characters).
+        ``all``, a room or a group that resolves to more than 50 speakers is
+        :class:`~thalovant.errors.ThalovantTooManyTargetsError`, and a named
+        connection that cannot play speech is
+        :class:`~thalovant.errors.ThalovantNotASpeakerError`.
+        ``priority="urgent"`` needs the scope ``intercom:urgent`` **in addition
+        to** ``intercom:send`` (without it:
+        :class:`~thalovant.errors.ThalovantUrgentScopeRequiredError`, before
+        anything is spent) and may carry ``repeat``
         (``times`` 1-10, ``interval_seconds`` 5-120): it is said again until
         somebody acknowledges, and the call returns at once with status
         ``sending``. A normal announcement waits up to ten seconds for the
-        hub and returns its result.
+        hub and returns its result. At most 2 urgent announcements repeat on
+        one hub at a time
+        (:class:`~thalovant.errors.ThalovantUrgentBusyError`, 429, with
+        ``retry_after_seconds``), and an urgent one needs the Intercom skill on
+        the hub (:class:`~thalovant.errors.ThalovantSkillNotInstalledError`).
 
         With ``wait=True`` a ``sending`` announcement is polled with
         :meth:`get_announcement` every ``poll_interval`` seconds until it
@@ -2502,7 +2555,10 @@ class AsyncThalovantControlPlane:
         and lasts 24 hours: the same key replays the stored announcement (the
         response header ``Idempotency-Replayed: true``) and **never sends
         again**, whatever its status; a replayed ``failed`` announcement stays
-        ``failed``. To send the same text again on purpose, use a **new** key.
+        ``failed``. The answer says so: ``announcement.replayed`` is ``True``
+        (do not tell the person it was sent anew). A key is at most 128
+        printable ASCII characters, and the same key with a different request is
+        a 409. To send the same text again on purpose, use a **new** key.
         After :class:`~thalovant.errors.ThalovantHubUnreachableError` (502
         ``hub_unreachable``) read the announcement first
         (``error.announcement_id``, then :meth:`get_announcement`) before
@@ -2516,10 +2572,19 @@ class AsyncThalovantControlPlane:
         still fails with :class:`~thalovant.errors.ThalovantAPIUnreachableError`,
         the outcome is unknown: reuse the same ``idempotency_key`` to find out.
 
-        Requires ``intercom:send``. Intercom off for the hub is
-        :class:`~thalovant.errors.ThalovantIntercomDisabledError`, a hub that
-        did not answer :class:`~thalovant.errors.ThalovantHubUnreachableError`,
-        and a rate limit :class:`~thalovant.errors.ThalovantRateLimitedError`.
+        Requires ``intercom:send`` and the owner, a manager or an administrator
+        acting as themselves (an impersonated session is
+        :class:`~thalovant.errors.ThalovantImpersonationNotAllowedError`, a locked
+        hub :class:`~thalovant.errors.ThalovantHubLockedError`). Intercom off for
+        the hub (or for the platform, or on a kid or public hub) is
+        :class:`~thalovant.errors.ThalovantIntercomDisabledError` and its
+        subclasses, a platform that is not configured
+        :class:`~thalovant.errors.ThalovantIntercomNotConfiguredError`, a hub that
+        did not answer in 5 s :class:`~thalovant.errors.ThalovantHubUnreachableError`
+        (``announcement_id``), and a rate limit
+        :class:`~thalovant.errors.ThalovantRateLimitedError`. ``delivered`` means the hub
+        handed the speech to the speaker's connection: there is no playback
+        receipt, and ``failed`` is not proof that nothing was spoken.
         """
 
         path = _intercom_path(hub_id, "announce")  # an invalid hub id is refused before anything is sent
@@ -2527,17 +2592,15 @@ class AsyncThalovantControlPlane:
         poll_interval = _positive_seconds(poll_interval, "poll_interval")
         if wait_timeout is not None:
             wait_timeout = _wait_seconds(wait_timeout, "wait_timeout")
-        headers = None
-        if idempotency_key is not None:
-            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
-                raise ValueError("idempotency_key must be a non-empty string when given.")
-            headers = {"Idempotency-Key": idempotency_key}
-        announcement = Announcement.from_dict(
-            await self._request(
-                "POST", path, json=body, headers=headers,
-                timeout=max(self.timeout, INTERCOM_ANNOUNCE_MIN_TIMEOUT),
-            )
+        headers = {"Idempotency-Key": _idempotency_key(idempotency_key)} if idempotency_key is not None else None
+        answer, response_headers = await self._request_with_headers(
+            "POST", path, json=body, headers=headers,
+            timeout=max(self.timeout, INTERCOM_ANNOUNCE_MIN_TIMEOUT),
         )
+        announcement = Announcement.from_dict(answer)
+        replayed = _header_is_true(response_headers, "Idempotency-Replayed")
+        if replayed:
+            announcement = replace(announcement, replayed=True)
         if not wait or not announcement.sending:
             return announcement
         if wait_timeout is None:
@@ -2558,7 +2621,7 @@ class AsyncThalovantControlPlane:
                 announcement = await asyncio.wait_for(self.get_announcement(hub_id, announcement.id), remaining)
             except asyncio.TimeoutError:
                 break  # the latest answer, still ``sending``
-        return announcement
+        return replace(announcement, replayed=True) if replayed else announcement
 
     async def get_announcement(self, hub_id: str, announcement_id: str) -> Announcement:
         """One announcement and its deliveries; poll it while ``sending``. Requires ``intercom:read``."""
@@ -2572,13 +2635,16 @@ class AsyncThalovantControlPlane:
         Returns the announcement with status ``cancelled``. Only while it is
         ``sending``: an announcement that already completed, failed or was
         cancelled is :class:`~thalovant.errors.ThalovantNotCancellableError`
-        (409 ``not_cancellable``). The API asks the hub to stop repeating; a
+        (409 ``not_cancellable``; ``announcement_status`` is its current
+        status: read it instead of showing an error). The API asks the hub to stop repeating; a
         hub that cannot confirm still leaves the record ``cancelled`` and the
         answer has ``hub_confirmed=False``: then speech already queued on the
         hub may still play, and the hub's own stop paths (the hub switch, the
         platform kill switch, somebody acknowledging) remain. Requires
         ``intercom:send`` (owner or admin of the hub); a hub-scoped token is
-        honoured. Not a certified safety system.
+        honoured. Stopping speech is never refused: it works while the platform
+        switch is off, while the hub's switch is off, on a plan that lost
+        intercom, and in an impersonated session. Not a certified safety system.
         """
 
         path = _intercom_path(hub_id, "announcements", _intercom_id(announcement_id, "announcement_id"), "cancel")
@@ -2940,11 +3006,29 @@ class AsyncThalovantControlPlane:
         auth: bool = True,
         timeout: float | None = None,
     ) -> dict[str, Any]:
+        body, _ = await self._request_with_headers(
+            method, path, json=json, params=params, headers=headers, auth=auth, timeout=timeout
+        )
+        return body
+
+    async def _request_with_headers(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        auth: bool = True,
+        timeout: float | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        """:meth:`_request`, and the response's headers beside the body (for ``Idempotency-Replayed``)."""
         response = await self._send(method, path, json=json, params=params, headers=headers, auth=auth, timeout=timeout)
         if response.status_code < 200 or response.status_code >= 300:
             raise _api_error(response)
+        response_headers = getattr(response, "headers", None)
         if not response.text.strip():
-            return {}
+            return {}, response_headers
         try:
             body = response.json()
         except ValueError as exc:
@@ -2955,7 +3039,7 @@ class AsyncThalovantControlPlane:
             raise ThalovantAPIError(
                 "Thalovant API returned an unexpected response shape.", status_code=response.status_code
             )
-        return body
+        return body, response_headers
 
     async def _send(
         self,
@@ -4540,15 +4624,43 @@ def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[Tha
         return ThalovantPlanError
     if status_code == 409 and code == "home_assistant_already_linked":
         return ThalovantAlreadyLinkedError
-    if code == "intercom_disabled":
-        return ThalovantIntercomDisabledError
-    if status_code == 502 and code == "hub_unreachable":
-        return ThalovantHubUnreachableError
-    if status_code == 409 and code == "not_cancellable":
-        return ThalovantNotCancellableError
+    intercom_kind = _INTERCOM_ERROR_KINDS.get(code or "")
+    if intercom_kind is not None:
+        return intercom_kind
     if status_code == 429:
         return ThalovantRateLimitedError
     return ThalovantAPIError
+
+
+#: The typed error of each intercom problem ``code``, whatever the status.
+_INTERCOM_ERROR_KINDS: dict[str, type[ThalovantAPIError]] = {
+    "intercom_disabled": ThalovantIntercomDisabledError,
+    "intercom_unavailable": ThalovantIntercomUnavailableError,
+    "intercom_disabled_platform": ThalovantIntercomPlatformDisabledError,
+    "intercom_not_configured": ThalovantIntercomNotConfiguredError,
+    "urgent_scope_required": ThalovantUrgentScopeRequiredError,
+    "intercom_urgent_busy": ThalovantUrgentBusyError,
+    "skill_not_installed": ThalovantSkillNotInstalledError,
+    "not_a_speaker": ThalovantNotASpeakerError,
+    "reserved_name": ThalovantReservedNameError,
+    "hub_locked": ThalovantHubLockedError,
+    "impersonation_not_allowed": ThalovantImpersonationNotAllowedError,
+    "too_many_targets": ThalovantTooManyTargetsError,
+    "managed_client": ThalovantManagedClientError,
+    "hub_unreachable": ThalovantHubUnreachableError,
+    "not_cancellable": ThalovantNotCancellableError,
+}
+
+
+def _header_is_true(headers: Any, name: str) -> bool:
+    """True when the response header ``name`` is ``true`` (any case); a header mapping that cannot be read says no."""
+    if not headers:
+        return False
+    try:
+        value = headers.get(name)
+    except Exception:  # noqa: BLE001 - a header mapping that cannot be read has no answer
+        return False
+    return isinstance(value, str) and value.strip().lower() == "true"
 
 
 def _linked_client_id(problem: Mapping[str, Any] | None) -> str | None:

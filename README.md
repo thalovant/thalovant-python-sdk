@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0), amendment 2: cancel, fresh idempotency keys, 25 s announce timeout, safe ids, wording. -->
+<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0), final API: intercom:urgent, speaker kind/can_play/policy_synced, new typed errors, one text rule, DND timezone, replayed. -->
 
 <p align="center">
   <picture>
@@ -189,10 +189,19 @@ api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"),
              idempotency_key=str(uuid4()))                                # intercom:send
 urgent = api.announce(hub_id, "Please answer", IntercomTargets.everyone(), priority="urgent",
                       repeat=IntercomRepeat(times=3, interval_seconds=20),
-                      idempotency_key=str(uuid4()), wait=True)            # wait also needs intercom:read
+                      idempotency_key=str(uuid4()), wait=True)            # urgent needs intercom:urgent as well; wait also needs intercom:read
 print(urgent.status, urgent.acked_by)
 api.cancel_announcement(hub_id, urgent.id)                                # stop it while "sending"
 ```
+
+Scopes: `intercom:read`, `intercom:send`, `intercom:urgent` (in addition to `intercom:send`, for
+`priority="urgent"` and every `repeat`) and `hubs:write` for settings and speakers. Speakers
+carry `kind`, `can_play` (a connection that cannot play speech is listed but never receives) and
+`policy_synced`; an announcement carries `replayed` when the answer is the stored one for your
+key. The text is checked first with the API's own rule (1-280 characters, no `<` or `>`, no
+control, bidirectional or invisible format characters). `delivered` means the hub handed the
+speech to the speaker's connection, not that anyone heard it. The platform switch is off until
+the operator turns it on: `ThalovantIntercomPlatformDisabledError`.
 
 After a 502 `hub_unreachable`, read the announcement (`error.announcement_id`) before sending
 again: a replayed `failed` announcement stays `failed`, so a deliberate second send needs a
