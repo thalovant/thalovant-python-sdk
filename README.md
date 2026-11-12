@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane. -->
+<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0), amendment 2: cancel, fresh idempotency keys, 25 s announce timeout, safe ids, wording. -->
 
 <p align="center">
   <picture>
@@ -170,22 +170,35 @@ status words, holds and every code.
 
 Say a short text aloud on a hub's speakers (the [intercom guide](docs/guides/intercom.md)).
 Off by default at every level, announce-only, and **not a certified safety system**: it does
-not replace smoke or CO alarms, medical alert devices or emergency services. The platform
-never stores the text. (The names are `announce` and `*_intercom_*`: the HiveMind mesh
-already has an `intercom` frame, which is a different thing.)
+not replace smoke or CO alarms, medical alert devices or emergency services. The API does
+not store the text (it keeps a keyed hash and the length), and intercom does not record or
+store speech. (The names are `announce` and `*_intercom_*`: the HiveMind mesh already has an
+`intercom` frame, which is a different thing.)
 
 ```python
+from uuid import uuid4
+
 from thalovant import IntercomRepeat, IntercomTargets
 
 api.set_intercom_settings(hub_id, True)                        # hubs:write
 speaker = api.list_intercom_speakers(hub_id).items[0]           # intercom:read; use its client_id
 api.update_intercom_speaker(hub_id, speaker.client_id, receive=True, room="kitchen")
-api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"))   # intercom:send
+# A fresh unique key for each announcement you mean to send. The same key replays the stored
+# result (Idempotency-Replayed: true) and never sends again; to send again, use a new key.
+api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"),
+             idempotency_key=str(uuid4()))                                # intercom:send
 urgent = api.announce(hub_id, "Please answer", IntercomTargets.everyone(), priority="urgent",
                       repeat=IntercomRepeat(times=3, interval_seconds=20),
-                      idempotency_key="please-answer-1", wait=True)       # wait also needs intercom:read
+                      idempotency_key=str(uuid4()), wait=True)            # wait also needs intercom:read
 print(urgent.status, urgent.acked_by)
+api.cancel_announcement(hub_id, urgent.id)                                # stop it while "sending"
 ```
+
+After a 502 `hub_unreachable`, read the announcement (`error.announcement_id`) before sending
+again: a replayed `failed` announcement stays `failed`, so a deliberate second send needs a
+new key. `announce` never uses a request timeout below 25 s (the API waits up to 10 s for the
+hub). The hub, client and announcement ids are refused locally when they are `.`, `..`, empty,
+or hold `/`, `?`, `#`, a backslash or a control character.
 
 ## Documentation
 

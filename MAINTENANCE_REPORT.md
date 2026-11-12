@@ -1,6 +1,12 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: CodeRabbit review of PR 114: announce wait validation and deadline, strict targets and DND, docs corrections; new parity digest.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom amendment 2 (contract section J): cancel, key replay docs, announce timeout, id validation, wording; new parity digest.
 
 # Maintenance Report
+
+## 2026-11-11: Intercom amendment 2 (client-side security review, contract section J)
+
+Added `cancel_announcement` (sync and async; `POST .../announcements/{id}/cancel`), `Announcement.hub_confirmed` (optional), the `cancelled` status, `ThalovantNotCancellableError` (409 `not_cancellable`) and `ThalovantHubUnreachableError.announcement_id`. `announce` sends its POST with a timeout of at least 25 s (`INTERCOM_ANNOUNCE_MIN_TIMEOUT`, `_request(timeout=...)`), because the API waits up to 10 s for the hub (review M2). New `thalovant.intercom.intercom_id` refuses `.`, `..`, empty ids and ids holding `/`, `?`, `#`, a backslash or a control character before any request, for hub, client and announcement ids (review L1); `_intercom_path` and `_intercom_id` in `src/thalovant/control.py` use it. Docs: every example uses a fresh `uuid4` key; the guide, README, FAQ, api-reference and porting brief say that the same key replays the stored result and never re-sends, that a replayed `failed` stays `failed`, that a deliberate second send needs a new key, and to read the announcement after a 502 (review H3); the wording no longer says "nothing listens" or "stops every announcement at once" (contract J7). Tests (`tests/test_intercom.py`, 108 now): cancel route/body/scope/409, `hub_confirmed` parsing, 502 `announcement_id`, the timeout floor (a spy on the sender, and a slow loopback reply), unsafe ids on every call (sync and async), a replayed failed announcement, and two doc guards (no literal idempotency key in README or docs; no over-promising phrases). Verification: full suite, `ruff`, `mypy` and `scripts/check-sdk-parity.py`; the reference digest moved, see `contracts/sdk-parity.json`. Not done (not in section J): review L5 and L6, a `replayed` flag (`SUGGESTIONS.md`).
+
+Transparency Report: AI model Claude Sonnet 5.5; actions: implemented contract section J for the Python SDK (code, tests, docs, parity record); oversight: none yet, review pending.
 
 ## 2026-11-11: Intercom review fixes (CodeRabbit, PR 114)
 

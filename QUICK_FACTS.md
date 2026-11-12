@@ -59,7 +59,9 @@ Models and `SecretValue` live in `src/thalovant/chat_apps.py`; the guide is `doc
 | `set_intercom_settings(hub_id, enabled)` | `PUT /v1/hubs/{id}/intercom/settings` |
 | `list_intercom_speakers(hub_id)` | `GET /v1/hubs/{id}/intercom/speakers` |
 | `update_intercom_speaker(hub_id, client_id, *, receive, room, groups, dnd)` | `PATCH /v1/hubs/{id}/intercom/speakers/{client_id}` |
-| `announce(hub_id, text, targets, *, priority, repeat, lang, idempotency_key, wait)` | `POST /v1/hubs/{id}/intercom/announce` |
+| `announce(hub_id, text, targets, *, priority, repeat, lang, idempotency_key, wait)` (use a fresh `uuid4` key per announcement) | `POST /v1/hubs/{id}/intercom/announce` |
 | `get_announcement(hub_id, id)` / `list_announcements(hub_id, *, limit, cursor)` | `GET /v1/hubs/{id}/intercom/announcements[/{id}]` |
+| `cancel_announcement(hub_id, id)` | `POST /v1/hubs/{id}/intercom/announcements/{id}/cancel` (`intercom:send`; 409 `not_cancellable`) |
 
-Models in `src/thalovant/intercom.py`; guide `docs/guides/intercom.md`. Announce-only, not a certified safety system; the text is never stored by the platform.
+Models in `src/thalovant/intercom.py`; guide `docs/guides/intercom.md`. Announce-only, not a certified safety system; the API does not store the text (keyed hash and length only).
+`announce` uses a request timeout of at least 25 s (`INTERCOM_ANNOUNCE_MIN_TIMEOUT`). Idempotency: one fresh `uuid4` key per announcement; the same key replays the stored result and never re-sends (a replayed `failed` stays `failed`); after a 502 read `ThalovantHubUnreachableError.announcement_id`. Ids (hub, client, announcement) that are `.`, `..`, empty or hold `/ ? #`, a backslash or a control character are refused before any request.

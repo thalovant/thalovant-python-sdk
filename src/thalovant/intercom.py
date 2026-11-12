@@ -1,24 +1,34 @@
 """Intercom: say a short text aloud on a household hub's speakers.
 
 An announcement is a text of at most 280 characters, spoken by each chosen
-speaker's own text-to-speech. It is announce-only: there is no two-way audio
-and nothing listens. **It is not a certified safety system** and does not
-replace smoke or CO alarms, medical alert devices or emergency services.
+speaker's own text-to-speech. It is announce-only: there is no two-way audio.
+Intercom does not record or store speech; while an urgent alert sounds, the hub
+only checks whether a reply is an acknowledgement. **It is not a certified
+safety system** and does not replace smoke or CO alarms, medical alert devices
+or emergency services.
 
-The platform never stores the text: the API keeps its SHA-256 and length, the
-targets, each speaker's result and the actor. These are the typed answers of
-the routes under ``/v1/hubs/{hub_id}/intercom``, and the request builders. The
-calls live on :class:`~thalovant.control.AsyncThalovantControlPlane` and
+The API does not store the text: it keeps a keyed hash of it (HMAC-SHA256,
+server-side secret) and its length, the targets, each speaker's result and the
+actor. (The hub's own message bus and each speaker's text-to-speech are outside
+the platform's control.) These are the typed answers of the routes under
+``/v1/hubs/{hub_id}/intercom``, and the request builders. The calls live on
+:class:`~thalovant.control.AsyncThalovantControlPlane` and
 :class:`~thalovant.control.ThalovantControlPlane` (``announce``,
-``get_announcement``, ``list_announcements``, ``list_intercom_speakers``,
-``update_intercom_speaker``, ``get_intercom_settings`` and
-``set_intercom_settings``). The names say *announce* and *intercom_*, never
-plain ``intercom``: the HiveMind mesh already has an ``intercom`` frame
-(:mod:`thalovant.client`), which is a different thing.
+``cancel_announcement``, ``get_announcement``, ``list_announcements``,
+``list_intercom_speakers``, ``update_intercom_speaker``,
+``get_intercom_settings`` and ``set_intercom_settings``). The names say
+*announce* and *intercom_*, never plain ``intercom``: the HiveMind mesh already
+has an ``intercom`` frame (:mod:`thalovant.client`), which is a different thing.
 
-Scopes: ``intercom:read`` for the reads, ``intercom:send`` for ``announce``,
-and ``hubs:write`` (owner or admin of the hub) to change settings or a
-speaker's policy.
+Scopes: ``intercom:read`` for the reads, ``intercom:send`` for ``announce`` and
+``cancel_announcement``, and ``hubs:write`` (owner or admin of the hub) to
+change settings or a speaker's policy.
+
+Idempotency: pass a fresh unique ``idempotency_key`` (a ``uuid4``) for each
+announcement you mean to send. The same key replays the stored answer
+(``Idempotency-Replayed: true``) and **never sends again**, whatever its status;
+a replayed ``failed`` announcement stays ``failed``. To send the same text again
+on purpose, use a new key.
 
 Every status is an open enum: a value this SDK does not know yet is kept as
 the string the API sent, never refused.
@@ -36,8 +46,8 @@ from .errors import ThalovantAPIError
 IntercomUnavailableReason = Literal["plan", "kid_hub", "public_hub"]
 #: ``normal`` waits for the hub's answer; ``urgent`` may repeat until acknowledged.
 IntercomPriority = Literal["normal", "urgent"]
-#: ``sending`` while an urgent announcement is still repeating.
-AnnouncementStatus = Literal["completed", "partial", "failed", "sending"]
+#: ``sending`` while an urgent announcement is still repeating; ``cancelled`` after ``cancel_announcement``.
+AnnouncementStatus = Literal["completed", "partial", "failed", "sending", "cancelled"]
 #: What happened for one speaker.
 DeliveryStatus = Literal[
     "delivered", "acked", "offline", "skipped_dnd", "skipped_not_receiving", "failed"
@@ -57,6 +67,8 @@ MAX_GROUP_LENGTH = 32
 MAX_GROUPS = 8
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+#: Characters an id may not hold: they would change a request path.
+_ID_UNSAFE = re.compile(r"[/?#\\\x00-\x1f\x7f-\x9f]")
 _CLOCK = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
@@ -238,7 +250,13 @@ class IntercomDelivery:
 
 @dataclass(frozen=True)
 class Announcement:
-    """An announcement and its deliveries. The text is never part of it: the platform keeps none."""
+    """An announcement and its deliveries. The text is never part of it: the platform keeps none.
+
+    ``hub_confirmed`` is set only by ``cancel_announcement``: ``False`` means
+    the hub could not confirm the cancel (the record is ``cancelled`` anyway),
+    so speech already queued on the hub may still play. ``None`` when the API
+    did not say, as on every other answer.
+    """
 
     id: str
     status: AnnouncementStatus | str
@@ -246,6 +264,7 @@ class Announcement:
     created_at: str | None = None
     deliveries: tuple[IntercomDelivery, ...] = ()
     acked_by: str | None = None
+    hub_confirmed: bool | None = None
 
     @property
     def sending(self) -> bool:
@@ -258,6 +277,7 @@ class Announcement:
         rows = body.get("deliveries")
         if rows is not None and not isinstance(rows, list):
             raise ThalovantAPIError("Thalovant API returned an announcement with unexpected deliveries.")
+        confirmed = body.get("hub_confirmed")
         return cls(
             id=_required(body, "id", "announcement"),
             status=_required(body, "status", "announcement"),
@@ -265,6 +285,7 @@ class Announcement:
             created_at=_str_or_none(body.get("created_at")),
             deliveries=tuple(IntercomDelivery.from_dict(row) for row in rows or []),
             acked_by=_str_or_none(body.get("acked_by")),
+            hub_confirmed=confirmed if isinstance(confirmed, bool) else None,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -275,6 +296,7 @@ class Announcement:
             "created_at": self.created_at,
             "deliveries": [d.as_dict() for d in self.deliveries],
             "acked_by": self.acked_by,
+            "hub_confirmed": self.hub_confirmed,
         }
 
 
@@ -404,6 +426,22 @@ def announcement_text(text: str) -> str:
     if _CONTROL.search(trimmed):
         raise ValueError("An announcement's text must not contain control characters.")
     return trimmed
+
+
+def intercom_id(value: Any, name: str) -> str:
+    """An id (hub, client or announcement) fit to be one path segment, or ``ValueError`` before any request.
+
+    Refused: anything but a string, an empty or blank one, ``.`` and ``..``
+    (dot segments, which a URL resolver would collapse into another path), and
+    any id holding ``/``, ``?``, ``#``, a backslash or a control character.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string.")
+    if value in (".", "..") or _ID_UNSAFE.search(value):
+        raise ValueError(
+            f"{name} is not a valid id: it is a dot segment or holds '/', '?', '#', a backslash or a control character."
+        )
+    return value
 
 
 def announce_body(
@@ -583,6 +621,7 @@ __all__ = [
     "TargetsInput",
     "announce_body",
     "announcement_text",
+    "intercom_id",
     "settings_body",
     "speaker_update_body",
 ]

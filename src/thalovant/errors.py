@@ -402,9 +402,36 @@ class ThalovantHubUnreachableError(ThalovantAPIError):
     """Raised when the API could not reach the hub to speak (502 ``hub_unreachable``).
 
     Whether the text was spoken is not guaranteed either way: the hub may have
-    spoken it and lost the answer. The API records the attempt. To retry,
-    reuse the same ``idempotency_key`` that ``announce`` was given, so a retry
-    is not said a second time; a call made without one may be said twice.
+    spoken it and lost the answer. The API records the attempt as a ``failed``
+    announcement and names it in :attr:`announcement_id`.
+
+    **Do not resend blindly.** Read the announcement first
+    (``get_announcement(hub_id, error.announcement_id)``). Reusing the same
+    ``idempotency_key`` does *not* retry: the API replays the stored ``failed``
+    record and never sends again. To send the text again on purpose, use a
+    **new** key, once you know nothing was spoken.
+    """
+
+    @property
+    def announcement_id(self) -> str | None:
+        """The announcement the API recorded for the failed attempt (``announcement_id`` in the problem), or ``None``."""
+        problem = self.problem
+        if problem is None:
+            return None
+        nested = problem.get("detail")
+        for source in (problem, nested if isinstance(nested, Mapping) else {}):
+            value = source.get("announcement_id")
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+
+class ThalovantNotCancellableError(ThalovantAPIError):
+    """Raised when an announcement cannot be cancelled (409 ``not_cancellable``).
+
+    Only an announcement that is still ``sending`` can be cancelled; one that
+    has completed, failed or been cancelled already cannot. Read it with
+    ``get_announcement`` to see what became of it.
     """
 
 

@@ -525,19 +525,29 @@ Announce-only text spoken aloud on a hub's speakers (see the
 `announce` and `intercom_*` because the HiveMind mesh already has an `intercom` frame.
 Reads need `intercom:read`, `announce` needs `intercom:send` (and `intercom:read` as well
 with `wait=True`, which polls `get_announcement`), and changing settings or a speaker needs
-`hubs:write`. The text is never stored by the platform. With `wait=True` a poll can fail
-after the announcement was accepted: pass an `idempotency_key` and reuse it to retry.
+`hubs:write`. The API does not store the text (a keyed hash and the length only). Pass a fresh
+`idempotency_key` (a `uuid4`) per announcement: the same key replays the stored result
+(`Idempotency-Replayed: true`), never sends again, and a replayed `failed` announcement stays
+`failed`. With `wait=True` a poll can fail after the announcement was accepted: call again with
+the same key to get the stored announcement and its id.
 
 - `get_intercom_settings(hub_id) -> IntercomSettings` — `GET /v1/hubs/{id}/intercom/settings`: `enabled`, `plan_allowed`, `unavailable_reason` (`plan`, `kid_hub`, `public_hub`).
 - `set_intercom_settings(hub_id, enabled) -> IntercomSettings` — `PUT .../settings`.
 - `list_intercom_speakers(hub_id) -> IntercomSpeakerList` — `GET .../speakers`.
 - `update_intercom_speaker(hub_id, client_id, *, receive=UNSET, room=UNSET, groups=UNSET, dnd=UNSET) -> IntercomSpeaker` — `PATCH .../speakers/{client_id}`; only what is passed is sent, `room=None` clears it.
 - `announce(hub_id, text, targets, *, priority="normal", repeat=None, lang=None, idempotency_key=None, wait=False, wait_timeout=None, poll_interval=2.0) -> Announcement` — `POST .../announce` (`Idempotency-Key` only when given).
+  The request never times out in under 25 s (`INTERCOM_ANNOUNCE_MIN_TIMEOUT`): the API waits up to 10 s for the hub.
 - `get_announcement(hub_id, announcement_id) -> Announcement`, `list_announcements(hub_id, *, limit=None, cursor=None) -> AnnouncementList` — newest first.
+- `cancel_announcement(hub_id, announcement_id) -> Announcement` — `POST .../announcements/{id}/cancel` (`intercom:send`): status `cancelled`, `hub_confirmed` (`False` when the hub could not confirm); only while `sending`, else 409 `not_cancellable`.
+
+Hub, client and announcement ids are refused with `ValueError` before any request when they
+are `.`, `..`, empty, or hold `/`, `?`, `#`, a backslash or a control character.
 
 Errors: `ThalovantIntercomDisabledError`, `ThalovantHubUnreachableError` (502; the text may
-or may not have been spoken: retry with the same `idempotency_key`),
-`ThalovantRateLimitedError`, `ThalovantPlanError` (HTTP 402, or 403 with `plan_limit`).
+or may not have been spoken; `announcement_id` names the recorded `failed` announcement: read
+it before sending again, and use a new key, because the same key replays the failed record),
+`ThalovantNotCancellableError` (409 `not_cancellable`), `ThalovantRateLimitedError`,
+`ThalovantPlanError` (HTTP 402, or 403 with `plan_limit`).
 
 ### Chat apps
 

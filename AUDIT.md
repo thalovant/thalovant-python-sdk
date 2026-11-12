@@ -1,4 +1,4 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: CodeRabbit review of PR 114: a poll can fail after an accepted announcement (documented); strict targets and DND.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom amendment 2 (security review): cancel, key replay, announce timeout, id validation; open items L5, L6 and a replayed flag.
 
 # Audit
 
@@ -8,9 +8,21 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1621 passed, 1 
 
 ## Open: known limitations
 
+### Intercom: the SDK keeps the whole API body in `ThalovantAPIError.problem` (security review L5)
+
+`_api_error()` (`src/thalovant/control.py`) hands the parsed error body to `ThalovantAPIError.problem` as it is. The API strips `input` and `ctx` from `/intercom/` validation errors (`app/middleware/errors.py`), so the text does not reach it today; a regression there would put the text into the exception. Not changed: the contract's section J does not ask for it. Proposed in `SUGGESTIONS.md`.
+
+### Intercom: no client-side cap on rooms and groups, none on the key length (security review L6)
+
+`IntercomTargets.as_dict()` caps speakers at 50 but not rooms or groups (the API caps them at 50), and `announce` does not check `idempotency_key` against the API's 128 characters; the API answers 422. Not changed (not in section J).
+
+### Intercom: a replayed announcement is not marked as replayed
+
+The API answers a replay with `Idempotency-Replayed: true`; `Announcement` does not carry it, so a caller that reuses a key cannot tell a replay from a first send except by reading the status. The docs say what replay means (`docs/guides/intercom.md`, "Idempotency keys"). Proposed in `SUGGESTIONS.md`.
+
 ### Intercom: a poll that fails after the POST leaves an accepted announcement
 
-`AsyncThalovantControlPlane.announce(wait=True)` (`src/thalovant/control.py`) sends the POST, then polls `get_announcement`, which needs `intercom:read`. A token with only `intercom:send`, a 429 or a network error fails the first poll after the announcement was accepted, and the exception carries no announcement id (`tests/test_intercom.py::test_a_failed_poll_surfaces_after_the_post_was_accepted`). The callers' answer is the `idempotency_key`: reuse it to retry. Not fixed in the SDK because an exception cannot also return the accepted announcement; the docs say so (`docs/guides/intercom.md`).
+`AsyncThalovantControlPlane.announce(wait=True)` (`src/thalovant/control.py`) sends the POST, then polls `get_announcement`, which needs `intercom:read`. A token with only `intercom:send`, a 429 or a network error fails the first poll after the announcement was accepted, and the exception carries no announcement id (`tests/test_intercom.py::test_a_failed_poll_surfaces_after_the_post_was_accepted`). The callers' answer is a fresh `idempotency_key`: calling again with the same key replays the stored announcement (with its id) and does not send again. Not fixed in the SDK because an exception cannot also return the accepted announcement; the docs say so (`docs/guides/intercom.md`).
 
 ### Intercom: the announcement text is held in memory and in the request body
 

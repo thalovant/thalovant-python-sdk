@@ -3,10 +3,25 @@ Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): wait scop
 # FAQ: thalovant (Python SDK)
 
 **Why is there no `intercom()` method, and is intercom a safety system?**
-The HiveMind mesh already has an `intercom` frame (hub-routed messages between clients), so the HTTP calls are `announce`, `get_announcement`, `list_announcements` and `*_intercom_*`. Intercom is announce-only text spoken by each speaker's own TTS; it is **not a certified safety system** and does not replace smoke or CO alarms, medical alert devices or emergency services. The platform never stores the text.
+The HiveMind mesh already has an `intercom` frame (hub-routed messages between clients), so the HTTP calls are `announce`, `get_announcement`, `list_announcements` and `*_intercom_*`. Intercom is announce-only text spoken by each speaker's own TTS; it is **not a certified safety system** and does not replace smoke or CO alarms, medical alert devices or emergency services. The API does not store the text (a keyed hash and the length only), and intercom does not record or store speech; while an alert sounds it only checks whether a reply is an acknowledgement.
 
 **Why did `announce(wait=True)` raise after the announcement was accepted?**
-`wait=True` polls `get_announcement`, which needs `intercom:read` as well as `intercom:send`; a poll can also fail on a 429 or the network. The announcement exists and the exception has no id. Pass an `idempotency_key` and reuse it to retry, so the text is not said twice.
+`wait=True` polls `get_announcement`, which needs `intercom:read` as well as `intercom:send`; a poll can also fail on a 429 or the network. The announcement exists and the exception has no id. Pass a fresh `idempotency_key` (`str(uuid4())`) and call again with that same key: the API replays the stored announcement, with its id, and does not say it twice.
+
+**Why did my second announcement say nothing, and the result is the first one?**
+The same `idempotency_key` replays the stored announcement (`Idempotency-Replayed: true`) for 24 hours and never sends again, whatever its status. You reused a key (or a constant like `"dinner"`). Use a fresh `str(uuid4())` per announcement you mean to send; to send the same text again on purpose, use a new key.
+
+**`announce` raised `ThalovantHubUnreachableError`. Can I send again with the same key?**
+Not to send again: a replayed `failed` announcement stays `failed`. The hub may have spoken it. Read `get_announcement(hub, error.announcement_id)`, and only if nothing was spoken use a new key.
+
+**How do I stop an urgent announcement that is repeating?**
+`cancel_announcement(hub_id, announcement_id)` (`intercom:send`): status `cancelled`, `hub_confirmed=False` when the hub could not confirm. Only while `sending`, else `ThalovantNotCancellableError` (409). Other controls: the hub's switch, the platform kill switch, a speaker's `receive`, and somebody acknowledging by voice.
+
+**Why does `announce` wait longer than my client's `timeout`?**
+The API waits up to 10 seconds for the hub, so `announce` never uses a request timeout under 25 s (`INTERCOM_ANNOUNCE_MIN_TIMEOUT`); a longer client `timeout` is kept.
+
+**Why is `get_announcement(hub, "..")` a `ValueError`?**
+An id that is `.`, `..`, empty, or holds `/`, `?`, `#`, a backslash or a control character is refused before any request: a dot segment would change the route.
 
 **Why was nobody spoken to?**
 A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` means the hub's switch is off or it is a kid or public hub.
