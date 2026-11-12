@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0), final API: intercom:urgent, speaker kind/can_play/policy_synced, new typed errors, one text rule, DND timezone, replayed. -->
+<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions. -->
 
 <p align="center">
   <picture>
@@ -181,7 +181,10 @@ from uuid import uuid4
 from thalovant import IntercomRepeat, IntercomTargets
 
 api.set_intercom_settings(hub_id, True)                        # hubs:write
-speaker = api.list_intercom_speakers(hub_id).items[0]           # intercom:read; use its client_id
+speakers = api.list_intercom_speakers(hub_id).items              # intercom:read; use a client_id
+speaker = next((s for s in speakers if s.can_play), None)       # can_play=False is listed but never receives
+if speaker is None:
+    raise SystemExit("This hub has no connection that can play speech.")
 api.update_intercom_speaker(hub_id, speaker.client_id, receive=True, room="kitchen")
 # A fresh unique key for each announcement you mean to send. The same key replays the stored
 # result (Idempotency-Replayed: true) and never sends again; to send again, use a new key.
@@ -189,9 +192,10 @@ api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"),
              idempotency_key=str(uuid4()))                                # intercom:send
 urgent = api.announce(hub_id, "Please answer", IntercomTargets.everyone(), priority="urgent",
                       repeat=IntercomRepeat(times=3, interval_seconds=20),
-                      idempotency_key=str(uuid4()), wait=True)            # urgent needs intercom:urgent as well; wait also needs intercom:read
+                      idempotency_key=str(uuid4()), wait=True)            # urgent needs intercom:urgent as well; the polls use intercom:read, which intercom:send implies
 print(urgent.status, urgent.acked_by)
-api.cancel_announcement(hub_id, urgent.id)                                # stop it while "sending"
+if urgent.sending:                                                        # still repeating after the wait
+    api.cancel_announcement(hub_id, urgent.id)                            # stop it; a finished one is a 409
 ```
 
 Scopes: `intercom:read`, `intercom:send`, `intercom:urgent` (in addition to `intercom:send`, for

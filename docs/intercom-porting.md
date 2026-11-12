@@ -1,6 +1,6 @@
 # Porting intercom
 
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: porting brief for the intercom capability (0.12.0), amendment 2 (contract section J) and the final API (security review): urgent scope, speaker kind/can_play/policy_synced, new problem codes, one text rule, DND timezone, replayed.
+Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
 
 The Python SDK 0.12.0 adds the `intercom` capability: announce-only text, spoken aloud
 on a household hub's speakers. Source of truth: `src/thalovant/intercom.py` (models and
@@ -74,10 +74,13 @@ request builders) and the intercom methods of `src/thalovant/control.py`
   BEFORE the POST: a bad value must never surface after the announcement was accepted.
   The deadline bounds the sleep (abortable by the caller's cancellation) and each status
   read: after a sleep, if no time is left, start no read; otherwise bound the read by the
-  time left and, if it runs out, return the last answer. `wait` needs `intercom:read` as
-  well as `intercom:send`; a poll can fail after the POST was accepted, so document that
-  and tell callers to call again with the same `Idempotency-Key`, which replays the stored
-  announcement (with its id) instead of sending again.
+  time left and, if it runs out, return the last answer. The polls are reads (`intercom:read`,
+  which `intercom:send` implies, so `wait` needs no further scope); a poll can fail after the
+  POST was accepted, so document that and tell callers to call again with the same
+  `Idempotency-Key` and `wait=False`: the POST replays the stored announcement (with its id,
+  no status read) instead of sending again. A repeat call with `wait` polls again.
+  Blocking transports: do the read off the event loop (a worker thread) so the deadline can
+  abandon a stalled read.
 - **Targets and do-not-disturb.** A target list must be a sequence of strings: refuse a
   bare string (`{"speakers": "ab"}` must never become `["a", "b"]`) and a non-list. A DND
   `enabled` must be a real boolean and must be present (the API replaces the whole DND

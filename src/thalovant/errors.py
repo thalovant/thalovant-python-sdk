@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 
 class ThalovantError(Exception):
@@ -392,8 +392,11 @@ class IntercomProblemCode:
     """The ``code`` of every refusal the intercom routes (and the connection routes beside them) add.
 
     The API's answers are ``application/problem+json``: read ``code`` first. The
-    typed error for each code is named in its comment; any code not listed here
-    arrives as a plain :class:`ThalovantAPIError` with ``code`` and ``problem``.
+    typed error for each code is named in its comment. A code not listed here
+    follows the ordinary mappings by status (a 401 is
+    :class:`ThalovantAuthError`, a 429 :class:`ThalovantRateLimitedError`, ...)
+    and is otherwise a plain :class:`ThalovantAPIError`, with ``code`` and
+    ``problem`` either way.
     """
 
     #: 403: ``priority="urgent"`` (and so every ``repeat``) needs ``intercom:urgent`` as well as ``intercom:send``.
@@ -428,24 +431,40 @@ class IntercomProblemCode:
     DISABLED = "intercom_disabled"
 
 
-def _problem_member(problem: Mapping[str, Any] | None, key: str) -> Any:
-    """A member of a problem body, at its top or inside an object ``detail`` (FastAPI's envelope)."""
+def _problem_member(
+    problem: Mapping[str, Any] | None, key: str, usable: Callable[[Any], bool] | None = None
+) -> Any:
+    """A member of a problem body, at its top or inside an object ``detail`` (FastAPI's envelope).
+
+    The first usable one wins: a ``null`` at the top (or a value of the wrong
+    type, when ``usable`` says what the member must be) does not hide the one
+    inside ``detail``.
+    """
     if not isinstance(problem, Mapping):
         return None
     nested = problem.get("detail")
     for source in (problem, nested if isinstance(nested, Mapping) else {}):
-        if key in source:
-            return source[key]
+        value = source.get(key)
+        if value is not None and (usable is None or usable(value)):
+            return value
     return None
 
 
+def _is_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _problem_str(problem: Mapping[str, Any] | None, key: str) -> str | None:
-    value = _problem_member(problem, key)
-    return value if isinstance(value, str) and value else None
+    value = _problem_member(problem, key, _is_text)
+    return value if isinstance(value, str) else None
 
 
 def _problem_strs(problem: Mapping[str, Any] | None, key: str) -> tuple[str, ...]:
-    value = _problem_member(problem, key)
+    value = _problem_member(problem, key, lambda item: isinstance(item, list))
     return tuple(item for item in value if isinstance(item, str) and item) if isinstance(value, list) else ()
 
 
@@ -585,14 +604,16 @@ class ThalovantImpersonationNotAllowedError(ThalovantAPIError):
 class ThalovantTooManyTargetsError(ThalovantAPIError):
     """Raised when ``all``, a room or a group resolves to more than 50 speakers (422 ``too_many_targets``).
 
-    :attr:`matched` is how many it resolved to. Name a room or a group.
+    :attr:`matched` is how many it resolved to. Naming that same room or group
+    resolves to the same speakers: choose a narrower target (a smaller room or
+    group) or name at most 50 speakers.
     """
 
     @property
     def matched(self) -> int | None:
         """How many speakers the targets resolved to, or ``None`` when the body did not say."""
-        value = _problem_member(self.problem, "matched")
-        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        value = _problem_member(self.problem, "matched", _is_count)
+        return value if isinstance(value, int) else None
 
 
 class ThalovantManagedClientError(ThalovantAPIError):
@@ -621,8 +642,9 @@ class ThalovantHubUnreachableError(ThalovantAPIError):
     **Do not resend blindly.** Read the announcement first
     (``get_announcement(hub_id, error.announcement_id)``). Reusing the same
     ``idempotency_key`` does *not* retry: the API replays the stored ``failed``
-    record and never sends again. To send the text again on purpose, use a
-    **new** key, once you know nothing was spoken.
+    record and never sends again. A ``failed`` record is not proof that nothing
+    was spoken: weigh the risk of a repeated announcement, and use a **new**
+    key only when you choose to send a second attempt.
     """
 
     @property

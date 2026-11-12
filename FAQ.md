@@ -1,4 +1,4 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): wait scope and retry questions after the PR 114 review; final API questions (urgent scope, can_play, replayed, platform switch).
+Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
 
 # FAQ: thalovant (Python SDK)
 
@@ -6,13 +6,13 @@ Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): wait scop
 The HiveMind mesh already has an `intercom` frame (hub-routed messages between clients), so the HTTP calls are `announce`, `get_announcement`, `list_announcements` and `*_intercom_*`. Intercom is announce-only text spoken by each speaker's own TTS; it is **not a certified safety system** and does not replace smoke or CO alarms, medical alert devices or emergency services. The API does not store the text (a keyed hash and the length only), and intercom does not record or store speech; while an alert sounds it only checks whether a reply is an acknowledgement.
 
 **Why did `announce(wait=True)` raise after the announcement was accepted?**
-`wait=True` polls `get_announcement`, which needs `intercom:read` as well as `intercom:send`; a poll can also fail on a 429 or the network. The announcement exists and the exception has no id. Pass a fresh `idempotency_key` (`str(uuid4())`) and call again with that same key: the API replays the stored announcement, with its id, and does not say it twice.
+`wait=True` polls `get_announcement` (`intercom:read`, which `intercom:send` implies); a poll can still fail on a 429 or the network. The announcement exists and the exception has no id. Create a fresh `idempotency_key` (`str(uuid4())`) **before** the first call and keep that exact key (a new key is a different attempt and can announce twice), then call again with it and `wait=False`: the POST replays the stored announcement, with its id, makes no status read and does not say it twice (with `wait=True` the repeat call polls again and can raise the same error). If the first call had no key, nothing can replay it: find the announcement with `list_announcements(hub, limit=5)` (newest first) before sending again.
 
 **Why did my second announcement say nothing, and the result is the first one?**
 The same `idempotency_key` replays the stored announcement (`Idempotency-Replayed: true`) for 24 hours and never sends again, whatever its status. You reused a key (or a constant like `"dinner"`). Use a fresh `str(uuid4())` per announcement you mean to send; to send the same text again on purpose, use a new key.
 
 **`announce` raised `ThalovantHubUnreachableError`. Can I send again with the same key?**
-Not to send again: a replayed `failed` announcement stays `failed`. The hub may have spoken it. Read `get_announcement(hub, error.announcement_id)`, and only if nothing was spoken use a new key.
+Not to send again: a replayed `failed` announcement stays `failed`. The hub may have spoken it, and a `failed` record is not proof that it did not. Read `get_announcement(hub, error.announcement_id)`, weigh the risk of saying it twice, and use a new key only when you choose to send a second attempt.
 
 **How do I stop an urgent announcement that is repeating?**
 `cancel_announcement(hub_id, announcement_id)` (`intercom:send`): status `cancelled`, `hub_confirmed=False` when the hub could not confirm. Only while `sending`, else `ThalovantNotCancellableError` (409). Other controls: the hub's switch, the platform kill switch, a speaker's `receive`, and somebody acknowledging by voice.
@@ -36,7 +36,7 @@ The API answered with `Idempotency-Replayed: true`: this is the stored announcem
 Intercom ships dark: until the platform operator turns it on, `get_intercom_settings` reads `unavailable_reason="platform"` for every hub and every write and announcement is a 503 `intercom_disabled_platform`. Reads and `cancel_announcement` still work.
 
 **Why was nobody spoken to?**
-A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` means the hub's switch is off; `ThalovantIntercomUnavailableError` (a kind of it) means a kid or public hub. `delivered` is not "heard": there is no playback receipt.
+A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` is the hub's switch being off only when the error is exactly that class: `ThalovantIntercomPlatformDisabledError` and `ThalovantIntercomUnavailableError` (a kid or public hub) are kinds of it, so check them first before telling anybody to change the hub's setting. `delivered` is not "heard": there is no playback receipt.
 
 **How do I sign in without a password?**
 `api.interactive_login()`. On a machine with a browser it opens the Thalovant consent page and waits for the browser to come back to `127.0.0.1` (browser sign-in, `browser_login()`). Elsewhere it prints a device code to approve from any browser (`login_with_browser()`).

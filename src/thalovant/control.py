@@ -2474,7 +2474,9 @@ class AsyncThalovantControlPlane:
         fields exist (an unknown key in a ``dnd`` mapping is refused with
         ``ValueError``); send only what changed. ``dnd`` enabled needs quiet hours
         with a valid IANA ``timezone`` and a ``start`` that differs from the
-        ``end``, checked before anything is sent. ``receive=True`` on a connection
+        ``end``, checked before anything is sent. ``dnd`` replaces the speaker's
+        whole do-not-disturb setting: to change ``enabled`` and keep its quiet
+        hours, send the hours again. ``receive=True`` on a connection
         that cannot play speech is
         :class:`~thalovant.errors.ThalovantNotASpeakerError` (422 ``not_a_speaker``,
         ``kind``). The answer's ``policy_synced`` is ``False`` while the hub may
@@ -2539,14 +2541,16 @@ class AsyncThalovantControlPlane:
         status read too, so a read the API is slow to answer cannot carry the
         wait past it. Not a certified safety system.
 
-        **``wait=True`` needs ``intercom:read`` as well as ``intercom:send``**:
-        the polls are :meth:`get_announcement`. A token with only
-        ``intercom:send`` is accepted by the POST and then refused at the
-        first poll, and a poll can fail for other reasons (a 429, the network):
-        the exception reaches the caller after the announcement was accepted,
-        and the caller then has no announcement id. Pass an
-        ``idempotency_key``: calling again with the same key replays the
-        stored announcement, with its id, and does not announce a second time.
+        **``wait=True`` polls with :meth:`get_announcement`** (``intercom:read``,
+        which ``intercom:send`` implies, so no further scope is needed). A poll
+        can still fail after the announcement was accepted (a 429, the network):
+        the exception reaches the caller and the caller then has no announcement
+        id. Pass an ``idempotency_key``: calling again with the same key and
+        ``wait=False`` returns the stored announcement, with its id, from the
+        POST alone (no status read) and does not announce a second time; poll it
+        with :meth:`get_announcement` afterwards. With ``wait=True`` the repeat
+        call polls again while the announcement is still ``sending`` and can
+        raise the same poll error.
 
         **Idempotency.** An ``idempotency_key``, when given, is sent as
         ``Idempotency-Key``. Use a **fresh unique key** (a ``uuid4``) for each
@@ -2641,7 +2645,8 @@ class AsyncThalovantControlPlane:
         answer has ``hub_confirmed=False``: then speech already queued on the
         hub may still play, and the hub's own stop paths (the hub switch, the
         platform kill switch, somebody acknowledging) remain. Requires
-        ``intercom:send`` (owner or admin of the hub); a hub-scoped token is
+        ``intercom:send`` (the hub's owner, a manager, a plain member of the
+        tenant or an administrator); a hub-scoped token is
         honoured. Stopping speech is never refused: it works while the platform
         switch is off, while the hub's switch is off, on a plan that lost
         intercom, and in an impersonated session. Not a certified safety system.
@@ -4616,15 +4621,19 @@ def _origin(url: str) -> tuple[str, str, int | None]:
 def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[ThalovantAPIError]:
     probe = ThalovantAPIError(problem=problem)
     code, detail = probe.code, probe.detail
-    if status_code in (401, 423) or (status_code == 403 and detail == "Insufficient scopes"):
+    intercom_kind = _INTERCOM_ERROR_KINDS.get(code or "")
+    if status_code in (401, 423) or (
+        status_code == 403 and detail == "Insufficient scopes" and intercom_kind is None
+    ):
         # A token that is unknown, expired or revoked; an account locked; or a
-        # token without the scope: signing in again is the way out of each.
+        # token without the scope: signing in again is the way out of each. A
+        # 403 that names an intercom code (``urgent_scope_required`` is the one
+        # that is a refusal of scope) is that code's own typed error instead.
         return ThalovantAuthError
     if status_code == 402 or (status_code == 403 and code == "plan_limit"):
         return ThalovantPlanError
     if status_code == 409 and code == "home_assistant_already_linked":
         return ThalovantAlreadyLinkedError
-    intercom_kind = _INTERCOM_ERROR_KINDS.get(code or "")
     if intercom_kind is not None:
         return intercom_kind
     if status_code == 429:
@@ -5010,6 +5019,26 @@ class _BlockingSender:
         timeout: float,
         anonymous_plaintext: bool,
         max_bytes: int | None = None,
+    ) -> Any:
+        # A requests-style session blocks until the API answers. Read on a worker
+        # thread so the caller's event loop keeps running and a deadline that
+        # wraps this call (``asyncio.wait_for``, as ``announce(wait=True)`` does)
+        # takes effect at once: a cancelled await abandons the read, which the
+        # session's own ``timeout`` ends.
+        return await asyncio.to_thread(
+            self._send_blocking, method, url, json, params, headers, timeout, anonymous_plaintext, max_bytes
+        )
+
+    def _send_blocking(
+        self,
+        method: str,
+        url: str,
+        json: Mapping[str, Any] | None,
+        params: Mapping[str, Any] | None,
+        headers: Mapping[str, str],
+        timeout: float,
+        anonymous_plaintext: bool,
+        max_bytes: int | None,
     ) -> Any:
         try:
             response = self.session.request(

@@ -29,7 +29,7 @@ speaker's text-to-speech are outside the platform's control.
 | Call | Scope |
 |---|---|
 | `get_intercom_settings`, `list_intercom_speakers`, `get_announcement`, `list_announcements` | `intercom:read` |
-| `announce`, `cancel_announcement` | `intercom:send` (and `intercom:read` too with `announce(wait=True)`, which polls `get_announcement`) |
+| `announce`, `cancel_announcement` | `intercom:send`, which implies `intercom:read`: `announce(wait=True)` polls `get_announcement` with it and needs nothing more |
 | `announce(priority="urgent", ...)` (every `repeat` is urgent) | `intercom:urgent` **in addition to** `intercom:send` |
 | `set_intercom_settings`, `update_intercom_speaker` | `hubs:write` (owner, manager or administrator of the hub) |
 
@@ -76,8 +76,12 @@ speakers = api.list_intercom_speakers(hub).items
 for speaker in speakers:
     print(speaker.name, "online" if speaker.online else "offline", speaker.intercom.receive)
 
-# The speaker is addressed by its client_id (from the list), not by a room or a name.
-api.update_intercom_speaker(hub, speakers[0].client_id, receive=True, room="kitchen", groups=["downstairs"],
+# The speaker is addressed by its client_id (from the list), not by a room or a name. A connection
+# with can_play=False (a Home Assistant link, say) is listed but cannot receive: pick one that can.
+speaker = next((s for s in speakers if s.can_play), None)
+if speaker is None:
+    raise SystemExit("This hub has no connection that can play speech.")
+api.update_intercom_speaker(hub, speaker.client_id, receive=True, room="kitchen", groups=["downstairs"],
                             dnd=IntercomDnd(True, IntercomQuietHours("22:00", "07:00", "Europe/Paris")))
 
 # A fresh unique key for each announcement you mean to send (see "Idempotency keys" below).
@@ -145,7 +149,8 @@ invisible format characters (the zero-width joiner and non-joiner are allowed), 
 no private-use characters and no line or paragraph separators. `lang`, when given, is a language
 tag (`en`, `en-US`). Target lists hold at most 50 names of 1 to 64 characters each; `all`, a room or
 a group that resolves to more than 50 speakers is `ThalovantTooManyTargetsError` (422
-`too_many_targets`, `error.matched`): name a room or a group.
+`too_many_targets`, `error.matched`). Naming the same room or group resolves to the same speakers:
+choose a narrower target or name at most 50 speakers.
 
 ### What an answer means
 
@@ -181,10 +186,11 @@ a key to `(hub, key)` and remembers it for 24 hours:
   retried. The same key with a different request is a 409. A key is at most 128 printable ASCII
   characters. Do not clear what a person typed, or say "sent", on `replayed=True` without saying
   that nothing new was sent.
-- **A constant key silences you.** A literal key such as `"dinner"` sends once; every later
-  announcement with that key, for 24 hours, returns the first one's answer with
-  `completed` and nothing is spoken. Never copy a literal key into real code; never derive
-  the key from the text or the date.
+- **A constant key silences you.** A literal key such as `"dinner"` sends once. For the next 24
+  hours a later announcement with that key and the **same** request replays the first one's stored
+  answer, with the status it stored (`completed`, `failed`, ...), and nothing is spoken; one with a
+  **different** request is a 409. Never copy a literal key into real code; never derive the key from
+  the text or the date.
 - **Reuse a key only for the same attempt**, after a network drop or a timeout: the call then
   returns what the first attempt did (and its id) instead of speaking twice.
 - **To send the same text again on purpose, use a new key.**
@@ -203,15 +209,17 @@ try:
 except ThalovantHubUnreachableError as error:
     recorded = api.get_announcement(hub, error.announcement_id)   # what did the hub do?
     print(recorded.status, [(d.name, d.status) for d in recorded.deliveries])
-    # Only if nothing was spoken and you still want it said: api.announce(..., idempotency_key=str(uuid4()))
+    # The hub may have spoken it. If you still choose to say it again, weigh the risk of a repeat
+    # and use a NEW key on purpose: api.announce(..., idempotency_key=str(uuid4()))
 ```
 
 ### Stopping an announcement
 
 An urgent announcement that repeats can be stopped, and these are the real controls:
 
-- **`cancel_announcement(hub_id, announcement_id)`** (`intercom:send`, owner or admin of the
-  hub) asks the hub to stop repeating and returns the announcement as `cancelled`. It works
+- **`cancel_announcement(hub_id, announcement_id)`** (`intercom:send`; the hub's owner, a manager,
+  a plain member of the tenant or an administrator, and an impersonated session too: stopping
+  speech is not restricted to the people who may announce) asks the hub to stop repeating and returns the announcement as `cancelled`. It works
   only while the status is `sending`; for an announcement that already completed, failed or
   was cancelled the API answers 409 `not_cancellable` (`ThalovantNotCancellableError`). If the
   hub cannot confirm the cancel, the record is still `cancelled` and `hub_confirmed` is
@@ -232,17 +240,21 @@ safety system.
 
 ### Waiting, and what can fail after the send
 
-`wait=True` needs **`intercom:read` as well as `intercom:send`**, because the polls are
-`get_announcement`. `wait_timeout` (finite, not negative) and `poll_interval` (finite,
+`wait=True` polls with `get_announcement` (`intercom:read`), which a token with `intercom:send`
+already holds because `intercom:send` implies `intercom:read`. `wait_timeout` (finite, not negative) and `poll_interval` (finite,
 above zero) are validated before anything is sent, and the deadline bounds each poll as
 well as the sleep between polls: on timeout the latest answer comes back, still
 `sending`.
 
-A poll can fail after the POST was accepted: a token with only `intercom:send` is
-refused at the first poll (403), or a 429 or the network interrupts it. The exception
-then reaches you after the announcement exists, and you have no announcement id. Always
-pass a fresh `idempotency_key` with `wait=True`: calling again with that same key replays
-the stored announcement (with its id) and does not announce a second time.
+A poll can fail after the POST was accepted: a 429 or the network interrupts it. The exception then reaches you after the announcement
+exists, and you have no announcement id. Always pass a fresh `idempotency_key` with
+`wait=True`, create the key **before** the first call and keep that exact key: a new key is a
+different attempt and can announce twice. To get the id back, call again with that same key and
+`wait=False`: the POST
+replays the stored announcement, with its id, makes no status read and does not announce a
+second time; then poll it with `get_announcement` once reads work again. The same call with
+`wait=True` polls again while the announcement is still `sending`, so it can raise the same
+poll error.
 
 ### Timeout
 
@@ -278,7 +290,7 @@ read `code`, then `problem["message"]` (or `detail`); the typed error says which
 
 | Error | When |
 |---|---|
-| `ThalovantIntercomDisabledError` | code `intercom_disabled`: the hub's switch is off |
+| `ThalovantIntercomDisabledError` | code `intercom_disabled`: the hub's switch is off (the two kinds below are subclasses: check them first, since `except ThalovantIntercomDisabledError` catches them too) |
 | `ThalovantIntercomUnavailableError` | 422 `intercom_unavailable`: never available on a kid hub or a public hub; `reason` is `kid_hub` or `public_hub` (a kind of `ThalovantIntercomDisabledError`) |
 | `ThalovantIntercomPlatformDisabledError` | 503 `intercom_disabled_platform`: switched off for the whole platform (a kind of `ThalovantIntercomDisabledError`); nothing was written or sent |
 | `ThalovantIntercomNotConfiguredError` | 503 `intercom_not_configured`: the operator has not finished setting it up |

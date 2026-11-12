@@ -23,7 +23,7 @@ has an ``intercom`` frame (:mod:`thalovant.client`), which is a different thing.
 Scopes: ``intercom:read`` for the reads, ``intercom:send`` for ``announce`` and
 ``cancel_announcement``, ``intercom:urgent`` **in addition to** ``intercom:send``
 for an urgent announcement (``priority="urgent"``, and so every ``repeat``), and
-``hubs:write`` (owner or admin of the hub) to change settings or a speaker's
+``hubs:write`` (owner, manager or administrator of the hub) to change settings or a speaker's
 policy. A token without ``intercom:urgent`` is refused before anything is
 spent (403 ``urgent_scope_required``, :class:`~thalovant.errors.ThalovantUrgentScopeRequiredError`).
 

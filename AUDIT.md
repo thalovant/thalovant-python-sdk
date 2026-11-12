@@ -1,4 +1,4 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom final API: L6 and the replayed flag are fixed; new open items (timezone database, Unicode versions, a replayed `wait`, `detail` vs `message`).
+Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
 
 # Audit
 
@@ -20,6 +20,12 @@ Test run behind this file: `python -m pytest -q` on Python 3.12, 1828 passed, 1 
 
 The final intercom problems carry their sentence in `message`; `_problem_fields()` (`src/thalovant/errors.py`) reads `detail` only, so `error.detail` is `None` for them (the sentence is in `problem["message"]` and in the exception message). Changing it moves the shared api-error behaviour in every SDK; proposed in `SUGGESTIONS.md`.
 
+### Fixed in the review round 2 (PR 114)
+
+- **A requests-style session blocked the event loop** (and so the `announce(wait=True)` deadline): `_BlockingSender.send` (`src/thalovant/control.py`) now reads on a worker thread (`tests/test_intercom.py::test_the_wait_deadline_bounds_a_stalled_read_through_a_requests_style_session`, `::test_a_requests_style_session_is_read_off_the_event_loop_thread`). A cancelled read is abandoned, not interrupted: the thread ends with the session's own `timeout`.
+- **A 403 carrying `urgent_scope_required` and the generic "Insufficient scopes" sentence was a plain `ThalovantAuthError`**, and a top-level `null` hid the nested `announcement_id`, `matched`, `not_speakers`: `_error_kind` and `_problem_member` fixed (`tests/test_intercom.py::test_the_urgent_scope_code_wins_over_the_generic_insufficient_scopes_refusal`, `::test_a_top_level_null_or_wrong_type_does_not_hide_the_member_inside_detail`).
+- **Docs claimed `wait=True` needs `intercom:read` as well, and that cancel is owner/admin only**: both were wrong against the API (`app/auth/utils.py:232`, `app/routes/intercom.py` `cancel_announcement`); corrected in the guide, README, docstrings and porting notes.
+
 ### Fixed in this round (final API)
 
 - **Rooms, groups and the key length** (was L6): `IntercomTargets.as_dict()` caps every list at 50 names of 64 characters and `idempotency_key()` caps the key at 128 printable ASCII characters (`tests/test_intercom.py::test_a_target_list_holds_at_most_50_names_of_at_most_64_characters`, `::test_an_idempotency_key_is_at_most_128_printable_ascii_characters`).
@@ -29,7 +35,7 @@ The final intercom problems carry their sentence in `message`; `_problem_fields(
 
 ### Intercom: a poll that fails after the POST leaves an accepted announcement
 
-`AsyncThalovantControlPlane.announce(wait=True)` (`src/thalovant/control.py`) sends the POST, then polls `get_announcement`, which needs `intercom:read`. A token with only `intercom:send`, a 429 or a network error fails the first poll after the announcement was accepted, and the exception carries no announcement id (`tests/test_intercom.py::test_a_failed_poll_surfaces_after_the_post_was_accepted`). The callers' answer is a fresh `idempotency_key`: calling again with the same key replays the stored announcement (with its id) and does not send again. Not fixed in the SDK because an exception cannot also return the accepted announcement; the docs say so (`docs/guides/intercom.md`).
+`AsyncThalovantControlPlane.announce(wait=True)` (`src/thalovant/control.py`) sends the POST, then polls `get_announcement` (`intercom:read`, which `intercom:send` implies: `app/auth/utils.py` `expand_granted_scopes`). A 429 or a network error fails a poll after the announcement was accepted, and the exception carries no announcement id (`tests/test_intercom.py::test_a_failed_poll_surfaces_after_the_post_was_accepted`). The callers' answer is a fresh `idempotency_key`: calling again with the same key replays the stored announcement (with its id) and does not send again. Not fixed in the SDK because an exception cannot also return the accepted announcement; the docs say so (`docs/guides/intercom.md`).
 
 ### Intercom: the announcement text is held in memory and in the request body
 

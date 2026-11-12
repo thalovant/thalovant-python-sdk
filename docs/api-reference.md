@@ -523,14 +523,14 @@ hub exposes MQTT.
 Announce-only text spoken aloud on a hub's speakers (see the
 [Intercom guide](guides/intercom.md)). **Not a certified safety system.** The names say
 `announce` and `intercom_*` because the HiveMind mesh already has an `intercom` frame.
-Reads need `intercom:read`, `announce` needs `intercom:send` (and `intercom:read` as well
-with `wait=True`, which polls `get_announcement`), an **urgent** announcement (and so every
+Reads need `intercom:read`, `announce` needs `intercom:send` (which implies `intercom:read`, so
+`wait=True`, which polls `get_announcement`, needs no more), an **urgent** announcement (and so every
 `repeat`) needs `intercom:urgent` in addition to `intercom:send`, and changing settings or a
 speaker needs `hubs:write`. The API does not store the text (a keyed hash and the length only). Pass a fresh
 `idempotency_key` (a `uuid4`) per announcement: the same key replays the stored result
 (`Idempotency-Replayed: true`), never sends again, and a replayed `failed` announcement stays
 `failed`. With `wait=True` a poll can fail after the announcement was accepted: call again with
-the same key to get the stored announcement and its id.
+the same key and `wait=False` to get the stored announcement and its id from the POST alone.
 
 - `get_intercom_settings(hub_id) -> IntercomSettings` — `GET /v1/hubs/{id}/intercom/settings`: `enabled`, `plan_allowed`, `unavailable_reason` (`platform`, `plan`, `kid_hub`, `public_hub`; `platform` = the platform's own switch is off and wins over the others).
 - `set_intercom_settings(hub_id, enabled) -> IntercomSettings` — `PUT .../settings`.

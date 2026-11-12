@@ -361,6 +361,50 @@ def test_the_wait_deadline_bounds_a_stalled_status_read(api, control):
     assert time.monotonic() - started < 3.0
 
 
+def test_the_wait_deadline_bounds_a_stalled_read_through_a_requests_style_session(api):
+    # A caller's requests session blocks until the API answers; the read must not hold the
+    # event loop, or asyncio.wait_for could not stop a five-second read at 0.4 s.
+    requests = pytest.importorskip("requests")
+    api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"))
+    api.reply("GET", f"{BASE}/announcements/{ANN}", 200, announcement("completed"))
+    api.delays[("GET", f"{BASE}/announcements/{ANN}")] = 2.5
+    with requests.Session() as session:
+        plane = ThalovantControlPlane(api_url=api.url, access_token="tok", session=session)
+        try:
+            started = time.monotonic()
+            result = plane.announce(HUB, "x", {"all": True}, priority="urgent", repeat=IntercomRepeat(1, 5),
+                                    wait=True, wait_timeout=0.4, poll_interval=0.01)
+            elapsed = time.monotonic() - started
+        finally:
+            plane.close()
+    assert result.sending and result.id == ANN  # the last answer at the deadline, not the completed one
+    assert elapsed < 1.5  # the deadline (0.4 s), not the 2.5 s the read takes
+
+
+def test_a_requests_style_session_is_read_off_the_event_loop_thread(api):
+    requests = pytest.importorskip("requests")
+    api.reply("GET", f"{BASE}/settings", 200, {"enabled": False, "plan_allowed": True, "unavailable_reason": None})
+    seen: list[int] = []
+
+    class Spy(requests.Session):
+        def request(self, *args, **kwargs):
+            seen.append(threading.get_ident())
+            return super().request(*args, **kwargs)
+
+    async def main():
+        with Spy() as session:
+            plane = AsyncThalovantControlPlane(api_url=api.url, access_token="tok", session=session)
+            try:
+                settings = await plane.get_intercom_settings(HUB)
+            finally:
+                await plane.aclose()
+        return threading.get_ident(), settings
+
+    loop_thread, settings = asyncio.run(main())
+    assert settings.enabled is False
+    assert seen and all(ident != loop_thread for ident in seen)
+
+
 def test_no_read_starts_once_the_deadline_passed_during_the_sleep(api, control):
     api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"))
     api.reply("GET", f"{BASE}/announcements/{ANN}", 200, announcement("completed"))
@@ -955,6 +999,35 @@ def test_the_same_problems_inside_a_detail_object_are_read_too(api, control, sta
         control.announce(HUB, "Dinner", {"all": True})
     for name, expected in attrs.items():
         assert getattr(caught.value, name) == expected, name
+
+
+def test_the_urgent_scope_code_wins_over_the_generic_insufficient_scopes_refusal(api, control):
+    # A 403 that carries both the intercom code and the generic sentence is still the typed error
+    # (a kind of ThalovantAuthError, so an existing handler for auth failures catches it too).
+    api.reply("POST", f"{BASE}/announce", 403,
+              {"status": 403, "code": "urgent_scope_required", "detail": "Insufficient scopes"})
+    with pytest.raises(ThalovantUrgentScopeRequiredError) as caught:
+        control.announce(HUB, "Dinner", {"all": True}, priority="urgent")
+    assert isinstance(caught.value, ThalovantAuthError) and caught.value.status_code == 403
+
+
+def test_a_top_level_null_or_wrong_type_does_not_hide_the_member_inside_detail(api, control):
+    nested = {"code": "hub_unreachable", "announcement_id": "a-1"}
+    for masked in (None, 5, ["x"], ""):
+        api.reply("POST", f"{BASE}/announce", 502, {"announcement_id": masked, "detail": nested})
+        with pytest.raises(ThalovantHubUnreachableError) as caught:
+            control.announce(HUB, "Dinner", {"all": True})
+        assert caught.value.announcement_id == "a-1", masked
+    api.reply("POST", f"{BASE}/announce", 422,
+              {"matched": None, "detail": {"code": "too_many_targets", "matched": 51}})
+    with pytest.raises(ThalovantTooManyTargetsError) as many:
+        control.announce(HUB, "Dinner", {"all": True})
+    assert many.value.matched == 51
+    api.reply("POST", f"{BASE}/announce", 422,
+              {"not_speakers": None, "detail": {"code": "not_a_speaker", "not_speakers": ["home-link"]}})
+    with pytest.raises(ThalovantNotASpeakerError) as speakers:
+        control.announce(HUB, "Dinner", {"speakers": ["home-link"]})
+    assert speakers.value.not_speakers == ("home-link",)
 
 
 def test_the_typed_errors_keep_their_places_in_the_hierarchy():
