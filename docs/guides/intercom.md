@@ -26,7 +26,7 @@ each speaker's result, and who sent it.
 | Call | Scope |
 |---|---|
 | `get_intercom_settings`, `list_intercom_speakers`, `get_announcement`, `list_announcements` | `intercom:read` |
-| `announce` | `intercom:send` |
+| `announce` | `intercom:send` (and `intercom:read` too with `wait=True`, which polls `get_announcement`) |
 | `set_intercom_settings`, `update_intercom_speaker` | `hubs:write` (owner or admin of the hub) |
 
 ## Names: `announce_*` and `intercom_*`, not `intercom`
@@ -45,10 +45,12 @@ api = ThalovantControlPlane(access_token="...")
 hub = "<hub id>"
 
 api.set_intercom_settings(hub, True)                                # hubs:write
-for speaker in api.list_intercom_speakers(hub).items:
+speakers = api.list_intercom_speakers(hub).items
+for speaker in speakers:
     print(speaker.name, "online" if speaker.online else "offline", speaker.intercom.receive)
 
-api.update_intercom_speaker(hub, "kitchen", receive=True, room="kitchen", groups=["downstairs"],
+# The speaker is addressed by its client_id (from the list), not by a room or a name.
+api.update_intercom_speaker(hub, speakers[0].client_id, receive=True, room="kitchen", groups=["downstairs"],
                             dnd=IntercomDnd(True, IntercomQuietHours("22:00", "07:00", "Europe/Paris")))
 
 result = api.announce(hub, "Dinner is ready", IntercomTargets.for_rooms("kitchen"))
@@ -66,6 +68,26 @@ A normal announcement waits up to ten seconds for the hub and returns `completed
 once as `sending`; poll `get_announcement`, or pass `wait=True`. Statuses are open: a
 value this SDK does not know is kept as sent.
 
+### Waiting, and what can fail after the send
+
+`wait=True` needs **`intercom:read` as well as `intercom:send`**, because the polls are
+`get_announcement`. `wait_timeout` (finite, not negative) and `poll_interval` (finite,
+above zero) are validated before anything is sent, and the deadline bounds each poll as
+well as the sleep between polls: on timeout the latest answer comes back, still
+`sending`.
+
+A poll can fail after the POST was accepted: a token with only `intercom:send` is
+refused at the first poll (403), or a 429 or the network interrupts it. The exception
+then reaches you after the announcement exists, and you have no announcement id. Always
+pass an `idempotency_key` with `wait=True` and reuse it to retry, so a retry is not
+announced a second time.
+
+Targets and do-not-disturb are checked before anything is sent: `targets` lists must be
+real lists of names (a bare string such as `{"speakers": "ab"}` is refused, never split
+into `a` and `b`), and a speaker's `dnd` needs `enabled` as a real boolean (the API
+replaces the whole do-not-disturb object, so an omitted or non-boolean `enabled` is
+refused rather than stored as `false`).
+
 Do-not-disturb skips normal announcements inside quiet hours; urgent ones bypass it.
 Limits: 280 characters, 50 named speakers, 10 repeats at 5 to 120 seconds, and per hub
 20 normal announcements a minute and 10 urgent ones an hour (a `ThalovantRateLimitedError`
@@ -76,7 +98,7 @@ with `retry_after_seconds`).
 | Error | When |
 |---|---|
 | `ThalovantIntercomDisabledError` | code `intercom_disabled`: the hub's switch is off, or it is a kid or public hub |
-| `ThalovantHubUnreachableError` | 502 `hub_unreachable`: nothing was spoken |
+| `ThalovantHubUnreachableError` | 502 `hub_unreachable`: the hub did not answer; the text may or may not have been spoken, so retry with the same `idempotency_key` |
 | `ThalovantRateLimitedError` | 429 |
-| `ThalovantPlanError` | the plan has no intercom (`plan_limit`) |
+| `ThalovantPlanError` | the plan has no intercom: HTTP 402, or 403 with code `plan_limit` |
 | `ThalovantAuthError` | missing scope or token |

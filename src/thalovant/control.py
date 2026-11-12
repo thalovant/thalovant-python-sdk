@@ -12,6 +12,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
+import math
 import re
 import secrets
 import threading
@@ -218,6 +219,20 @@ def _intercom_path(hub_id: str, *rest: str) -> str:
     if not isinstance(hub_id, str) or not hub_id.strip():
         raise ValueError("hub_id must be a non-empty string.")
     return "/".join([f"/v1/hubs/{quote(hub_id, safe='')}/intercom", *rest])
+
+
+def _positive_seconds(value: Any, name: str) -> float:
+    """A finite number of seconds above zero; a bool, a string, NaN or infinity is refused."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite, positive number of seconds.")
+    return float(value)
+
+
+def _wait_seconds(value: Any, name: str) -> float:
+    """A finite number of seconds, zero or more; a bool, a string, NaN or infinity is refused."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a finite, non-negative number of seconds.")
+    return float(value)
 
 
 def _intercom_id(value: str, name: str) -> str:
@@ -2460,7 +2475,20 @@ class AsyncThalovantControlPlane:
         :meth:`get_announcement` every ``poll_interval`` seconds until it
         completes, or ``wait_timeout`` seconds pass (default: ``times *
         interval_seconds + 15``); on timeout the latest answer is returned,
-        still ``sending``. Not a certified safety system.
+        still ``sending``. ``wait_timeout`` and ``poll_interval`` are checked
+        before anything is sent (finite numbers: ``wait_timeout`` not
+        negative, ``poll_interval`` above zero). The deadline bounds each
+        status read too, so a read the API is slow to answer cannot carry the
+        wait past it. Not a certified safety system.
+
+        **``wait=True`` needs ``intercom:read`` as well as ``intercom:send``**:
+        the polls are :meth:`get_announcement`. A token with only
+        ``intercom:send`` is accepted by the POST and then refused at the
+        first poll, and a poll can fail for other reasons (a 429, the network):
+        the exception reaches the caller after the announcement was accepted,
+        and the caller then has no announcement id. Pass an
+        ``idempotency_key`` and reuse it to retry, so the retry does not
+        announce a second time.
 
         An ``idempotency_key``, when given, is sent as ``Idempotency-Key``;
         keep it to retry after an uncertain outcome without saying it twice.
@@ -2471,8 +2499,9 @@ class AsyncThalovantControlPlane:
         """
 
         body = announce_body(text, targets, priority=priority, repeat=repeat, lang=lang)
-        if isinstance(poll_interval, bool) or not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
-            raise ValueError("poll_interval must be a positive number of seconds.")
+        poll_interval = _positive_seconds(poll_interval, "poll_interval")
+        if wait_timeout is not None:
+            wait_timeout = _wait_seconds(wait_timeout, "wait_timeout")
         headers = None
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not idempotency_key.strip():
@@ -2486,10 +2515,21 @@ class AsyncThalovantControlPlane:
         if wait_timeout is None:
             rep = body.get("repeat") or {"times": 1, "interval_seconds": 0}
             wait_timeout = rep["times"] * rep["interval_seconds"] + 15
-        deadline = time.monotonic() + wait_timeout
-        while announcement.sending and time.monotonic() < deadline:
-            await asyncio.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
-            announcement = await self.get_announcement(hub_id, announcement.id)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout
+        while announcement.sending:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(poll_interval, remaining))
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break  # the deadline passed while sleeping: no read is started
+            try:
+                # Each read is bounded by what is left of the wait.
+                announcement = await asyncio.wait_for(self.get_announcement(hub_id, announcement.id), remaining)
+            except asyncio.TimeoutError:
+                break  # the latest answer, still ``sending``
         return announcement
 
     async def get_announcement(self, hub_id: str, announcement_id: str) -> Announcement:

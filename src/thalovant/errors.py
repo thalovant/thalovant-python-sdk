@@ -401,7 +401,10 @@ class ThalovantIntercomDisabledError(ThalovantAPIError):
 class ThalovantHubUnreachableError(ThalovantAPIError):
     """Raised when the API could not reach the hub to speak (502 ``hub_unreachable``).
 
-    Nothing was said aloud. It is safe to try again.
+    Whether the text was spoken is not guaranteed either way: the hub may have
+    spoken it and lost the answer. The API records the attempt. To retry,
+    reuse the same ``idempotency_key`` that ``announce`` was given, so a retry
+    is not said a second time; a call made without one may be said twice.
     """
 
 

@@ -525,7 +525,7 @@
       }
     },
     "intercom": {
-      "description": "Intercom (announce-only text spoken aloud on a household hub's speakers; not a certified safety system, off by default, the text never stored by the platform): the routes under /v1/hubs/{hub_id}/intercom as announce (POST /announce: text trimmed 1-280 characters with no control characters; targets exactly one of all, speakers (at most 50), rooms or groups; priority normal or urgent; repeat times 1-10 and interval_seconds 5-120 for urgent only; optional lang; Idempotency-Key only when the caller gives one; optional wait that polls a sending announcement until it completes or a timeout of times*interval+15 seconds and then returns the latest answer), get_announcement, list_announcements (limit, cursor; newest first), list_intercom_speakers, update_intercom_speaker (PATCH of only the fields passed; room null clears it; at most 8 groups of 32 characters, room of 64, HH:MM quiet hours), get_intercom_settings and set_intercom_settings (hubs:write), with hub, speaker and announcement ids percent-escaped as one path segment and blank ids refused locally; typed models whose statuses (announcement, delivery, unavailable_reason) are open enumerations; and the errors intercom_disabled, 502 hub_unreachable and 429 (with retry_after_seconds) as kinds of their own. Named announce and intercom_*, never a bare intercom: the HiveMind mesh already has an intercom frame.",
+      "description": "Intercom (announce-only text spoken aloud on a household hub's speakers; not a certified safety system, off by default, the text never stored by the platform): the routes under /v1/hubs/{hub_id}/intercom as announce (POST /announce: text trimmed 1-280 characters with no control characters; targets exactly one of all, speakers (at most 50), rooms or groups; priority normal or urgent; repeat times 1-10 and interval_seconds 5-120 for urgent only; optional lang; Idempotency-Key only when the caller gives one; optional wait that validates wait_timeout (finite, not negative) and the poll interval (finite, above zero) before the POST, then polls a sending announcement until it completes or a timeout of times*interval+15 seconds, bounds each status read by the time left, starts no read once the deadline passed during the sleep, and then returns the latest answer; wait also needs intercom:read), get_announcement, list_announcements (limit, cursor; newest first), list_intercom_speakers, update_intercom_speaker (PATCH of only the fields passed; room null clears it; at most 8 groups of 32 characters, room of 64, HH:MM quiet hours), get_intercom_settings and set_intercom_settings (hubs:write), with hub, speaker and announcement ids percent-escaped as one path segment and blank ids refused locally; target lists that are sequences of strings (a bare string is refused, never split), a do-not-disturb enabled that must be a real boolean (refused, never coerced to false); typed models whose statuses (announcement, delivery, unavailable_reason) are open enumerations; and the errors intercom_disabled, 502 hub_unreachable and 429 (with retry_after_seconds) as kinds of their own. Named announce and intercom_*, never a bare intercom: the HiveMind mesh already has an intercom frame.",
       "files": [
         "src/thalovant/intercom.py",
         "src/thalovant/control.py",
@@ -941,7 +941,7 @@
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "df33e65e4df687fc3d3bd0ece87a2b9615274e53a5b623f69f4458b8f4b7b256",
+      "src/thalovant/control.py": "3ed2223ee88f56b3dd3a720070268c723b62b121538684eb63b14f1c772c043f",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "f05f02be0de6da1bcb05527a30a713ab2ed4abecae4f8aa53a7cbf8224bdaba9",
       "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
@@ -949,7 +949,7 @@
       "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
       "src/thalovant/identity.py": "8e8b34d794f14dca7ef42573642eb6ca37cba87f43a3b8027f9c1ab3525c52a0",
       "src/thalovant/intents.py": "c1635476545bb0e6f9ad251bcfbe8097aa486627403a32d90fcfe29c6280d54d",
-      "src/thalovant/intercom.py": "79998358c80cb9a0edfba467399b51986fd55870ac462dc71356b831be9c264b",
+      "src/thalovant/intercom.py": "93d101c280e8951cfe6d5ec521a73398aec1da8a1bb52103b21e88b047f0f491",
       "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
       "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
       "src/thalovant/models.py": "029daed0271aa321ceb8e3d5f94541c0f43152eaeaf32146f68f053248ae660c",

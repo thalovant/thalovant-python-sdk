@@ -1,6 +1,12 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: CodeRabbit review of PR 114: announce wait validation and deadline, strict targets and DND, docs corrections; new parity digest.
 
 # Maintenance Report
+
+## 2026-11-11: Intercom review fixes (CodeRabbit, PR 114)
+
+`announce(wait=True)` validates `wait_timeout` and `poll_interval` (finite numbers; a bool, string, NaN, infinity or a negative `wait_timeout` is refused) before the POST, and the deadline now bounds each status read (`asyncio.wait_for` on the remaining time) and starts no read once the sleep used up the wait. Target lists must be sequences of names, never a bare string (`{"speakers": "ab"}` is refused, not split), and a speaker's `dnd` needs a real boolean `enabled` (an invalid or missing one raises `ValueError`; the API replaces the whole DND object and stores a missing `enabled` as false). Docs: `wait=True` needs `intercom:read` too and a poll can fail after the POST (reuse the idempotency key), 402 is listed with 403 `plan_limit`, and the 502 `hub_unreachable` docstring no longer says a retry is safe. Tests: `tests/test_intercom.py` asserts status codes separately from optional codes, plus new cases for each change. Verification: the full suite, `ruff`, `mypy` (only the missing PyYAML stubs of this environment remain) and `scripts/check-sdk-parity.py`; the reference digest moved, see `contracts/sdk-parity.json`.
+
+Transparency Report: AI model Claude Sonnet 5.5; actions: fixed the review findings, added tests, refreshed the parity reference; oversight: none yet, review pending.
 
 ## 2026-11-11: Intercom (0.12.0)
 

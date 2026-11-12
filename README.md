@@ -178,10 +178,12 @@ already has an `intercom` frame, which is a different thing.)
 from thalovant import IntercomRepeat, IntercomTargets
 
 api.set_intercom_settings(hub_id, True)                        # hubs:write
-api.update_intercom_speaker(hub_id, "kitchen", receive=True, room="kitchen")
+speaker = api.list_intercom_speakers(hub_id).items[0]           # intercom:read; use its client_id
+api.update_intercom_speaker(hub_id, speaker.client_id, receive=True, room="kitchen")
 api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"))   # intercom:send
 urgent = api.announce(hub_id, "Please answer", IntercomTargets.everyone(), priority="urgent",
-                      repeat=IntercomRepeat(times=3, interval_seconds=20), wait=True)
+                      repeat=IntercomRepeat(times=3, interval_seconds=20),
+                      idempotency_key="please-answer-1", wait=True)       # wait also needs intercom:read
 print(urgent.status, urgent.acked_by)
 ```
 

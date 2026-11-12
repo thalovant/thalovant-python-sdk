@@ -32,12 +32,26 @@ request builders) and the intercom methods of `src/thalovant/control.py`
 - **`Idempotency-Key`** only when the caller gives one. No automatic retry.
 - **Waiting.** `wait` polls `get_announcement` while the status is `sending`, every
   `poll_interval` (default 2 s), until `wait_timeout` (default `times * interval + 15` s);
-  on timeout it returns the last answer, still `sending`; it does not fail.
+  on timeout it returns the last answer, still `sending`; it does not fail. Validate
+  `wait_timeout` (a finite number, not negative) and `poll_interval` (finite, above zero)
+  BEFORE the POST: a bad value must never surface after the announcement was accepted.
+  The deadline bounds the sleep (abortable by the caller's cancellation) and each status
+  read: after a sleep, if no time is left, start no read; otherwise bound the read by the
+  time left and, if it runs out, return the last answer. `wait` needs `intercom:read` as
+  well as `intercom:send`; a poll can fail after the POST was accepted, so document that
+  and tell callers to reuse the same `Idempotency-Key` to retry.
+- **Targets and do-not-disturb.** A target list must be a sequence of strings: refuse a
+  bare string (`{"speakers": "ab"}` must never become `["a", "b"]`) and a non-list. A DND
+  `enabled` must be a real boolean and must be present (the API replaces the whole DND
+  object and stores a missing `enabled` as false): raise a validation error, never
+  coerce it to false.
 - **Open enums.** Announcement status, delivery status, priority and the settings'
   `unavailable_reason` are strings; unknown values survive.
 - **Errors.** `intercom_disabled` (any status), 502 `hub_unreachable`, 429 (with
-  `retry_after_seconds`) have their own kind; 403 `plan_limit` is the plan error; the
-  rest are the usual API error with status, code and detail.
+  `retry_after_seconds`) have their own kind; the plan error is HTTP 402 and also HTTP 403
+  with code `plan_limit`; the rest are the usual API error with status, code and detail.
+  Do not say `hub_unreachable` is safe to retry: whether the text was spoken is not
+  guaranteed, so retry only with the same `Idempotency-Key`.
 - **Shapes.** Speakers `{"items": [...]}`; announcements list `{"items": [...], "next_cursor"}`
   (the contract names `limit` and `cursor`; `data` and `cursor` are accepted too).
 

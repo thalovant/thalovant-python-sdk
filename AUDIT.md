@@ -1,4 +1,4 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: CodeRabbit review of PR 114: a poll can fail after an accepted announcement (documented); strict targets and DND.
 
 # Audit
 
@@ -7,6 +7,10 @@ Known issues, technical debt and security findings for `thalovant` (the Python S
 Test run behind this file: `python -m pytest -q` on Python 3.12, 1621 passed, 1 skipped (branch `feat/browser-sign-in`, final producer revision, 2026-11-08). `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
 
 ## Open: known limitations
+
+### Intercom: a poll that fails after the POST leaves an accepted announcement
+
+`AsyncThalovantControlPlane.announce(wait=True)` (`src/thalovant/control.py`) sends the POST, then polls `get_announcement`, which needs `intercom:read`. A token with only `intercom:send`, a 429 or a network error fails the first poll after the announcement was accepted, and the exception carries no announcement id (`tests/test_intercom.py::test_a_failed_poll_surfaces_after_the_post_was_accepted`). The callers' answer is the `idempotency_key`: reuse it to retry. Not fixed in the SDK because an exception cannot also return the accepted announcement; the docs say so (`docs/guides/intercom.md`).
 
 ### Intercom: the announcement text is held in memory and in the request body
 

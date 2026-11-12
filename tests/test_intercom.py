@@ -6,6 +6,7 @@ import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 
 import pytest
 
@@ -52,6 +53,7 @@ class FakeApi:
     def __init__(self) -> None:
         self.requests: list[dict] = []
         self.responses: dict[tuple[str, str], list[tuple[int, dict, dict]]] = {}
+        self.delays: dict[tuple[str, str], float] = {}
         api = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -67,6 +69,7 @@ class FakeApi:
                     "headers": {k.lower(): v for k, v in self.headers.items()},
                     "body": json.loads(raw) if raw else None,
                 })
+                time.sleep(api.delays.get((self.command, path), 0.0))
                 queue = api.responses.get((self.command, path), [])
                 status, body, headers = queue[0] if len(queue) == 1 else queue.pop(0) if queue else (404, {"detail": "nope"}, {})
                 payload = json.dumps(body).encode()
@@ -82,7 +85,7 @@ class FakeApi:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
 
     def reply(self, method, path, status=200, body=None, headers=None, *, then=()):
         self.responses[(method, path)] = [(status, body or {}, headers or {}), *then]
@@ -201,6 +204,7 @@ def test_the_hub_id_is_escaped(api, control):
         (502, {"code": "hub_unreachable", "detail": "no hub"}, {}, ThalovantHubUnreachableError),
         (429, {"code": "rate_limited", "detail": "slow"}, {"Retry-After": "30"}, ThalovantRateLimitedError),
         (403, {"code": "plan_limit", "detail": "plan"}, {}, ThalovantPlanError),
+        (402, {"detail": "API access requires a paid plan."}, {}, ThalovantPlanError),
         (403, {"detail": "Insufficient scopes"}, {}, ThalovantAuthError),
         (422, {"code": "validation", "detail": "bad"}, {}, ThalovantAPIError),
     ],
@@ -210,7 +214,9 @@ def test_errors_are_typed(api, control, status, body, headers, kind):
     with pytest.raises(kind) as caught:
         control.announce(HUB, "hello", {"all": True})
     assert type(caught.value) is kind
-    assert caught.value.status_code == status and caught.value.code == body["code"] if "code" in body else True
+    assert caught.value.status_code == status
+    if "code" in body:
+        assert caught.value.code == body["code"]
     if status == 429:
         assert caught.value.retry_after_seconds == 30
 
@@ -244,6 +250,112 @@ def test_nothing_is_sent_for_invalid_input(api, control):
     with pytest.raises(ValueError):
         control.set_intercom_settings(HUB, "yes")
     assert api.requests == []
+
+
+@pytest.mark.parametrize("wait_timeout", ["5", True, float("nan"), -1, float("inf"), float("-inf"), [1]])
+def test_a_bad_wait_timeout_is_refused_before_the_post(api, control, wait_timeout):
+    with pytest.raises(ValueError, match="wait_timeout"):
+        control.announce(HUB, "hi", {"all": True}, priority="urgent", repeat=IntercomRepeat(1, 5),
+                         wait=True, wait_timeout=wait_timeout)
+    assert api.requests == []  # nothing was announced
+
+
+@pytest.mark.parametrize("poll_interval", ["2", True, float("nan"), 0, -1, float("inf")])
+def test_a_bad_poll_interval_is_refused_before_the_post(api, control, poll_interval):
+    with pytest.raises(ValueError, match="poll_interval"):
+        control.announce(HUB, "hi", {"all": True}, wait=True, poll_interval=poll_interval)
+    assert api.requests == []
+
+
+def test_a_zero_wait_timeout_returns_the_sending_answer_without_polling(api, control):
+    api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"))
+    result = control.announce(HUB, "x", {"all": True}, priority="urgent", repeat=IntercomRepeat(1, 5),
+                              wait=True, wait_timeout=0)
+    assert result.sending
+    assert [r["method"] for r in api.requests] == ["POST"]
+
+
+def test_the_wait_deadline_bounds_a_stalled_status_read(api, control):
+    api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"))
+    api.reply("GET", f"{BASE}/announcements/{ANN}", 200, announcement("completed"))
+    api.delays[("GET", f"{BASE}/announcements/{ANN}")] = 5.0  # a read that never answers in time
+    started = time.monotonic()
+    result = control.announce(HUB, "x", {"all": True}, priority="urgent", repeat=IntercomRepeat(1, 5),
+                              wait=True, wait_timeout=0.4, poll_interval=0.01)
+    assert result.sending and result.id == ANN  # the latest answer, not an error and not a hang
+    assert time.monotonic() - started < 3.0
+
+
+def test_no_read_starts_once_the_deadline_passed_during_the_sleep(api, control):
+    api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"))
+    api.reply("GET", f"{BASE}/announcements/{ANN}", 200, announcement("completed"))
+    started = time.monotonic()
+    result = control.announce(HUB, "x", {"all": True}, priority="urgent", repeat=IntercomRepeat(1, 5),
+                              wait=True, wait_timeout=0.05, poll_interval=30.0)
+    assert result.sending  # the sleep was cut to the deadline, and no read followed it
+    assert [r["method"] for r in api.requests] == ["POST"]
+    assert time.monotonic() - started < 3.0
+
+
+def test_a_failed_poll_surfaces_after_the_post_was_accepted(api, control):
+    api.reply("POST", f"{BASE}/announce", 202, announcement("sending", priority="urgent"))
+    api.reply("GET", f"{BASE}/announcements/{ANN}", 403, {"detail": "Insufficient scopes"})
+    with pytest.raises(ThalovantAuthError) as caught:
+        control.announce(HUB, "x", {"all": True}, priority="urgent", repeat=IntercomRepeat(1, 5),
+                         idempotency_key="k-1", wait=True, poll_interval=0.01)
+    assert caught.value.status_code == 403
+    assert [r["method"] for r in api.requests] == ["POST", "GET"]  # accepted, then the poll failed
+    assert api.requests[0]["headers"]["idempotency-key"] == "k-1"
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        {"speakers": "ab"}, {"rooms": "kitchen"}, {"groups": "kids"}, {"speakers": b"ab"},
+        {"speakers": 5}, {"speakers": {"a": 1}}, {"speakers": {"a", "b"}}, {"speakers": ["a", 3]},
+        {"all": "yes"}, {"all": 1}, {"all": "true", "speakers": ["a"]},
+        IntercomTargets(speakers="ab"), IntercomTargets(rooms="kitchen"), IntercomTargets(all="yes"),
+    ],
+)
+def test_scalar_or_wrong_typed_targets_are_refused_not_split(api, control, targets):
+    with pytest.raises(ValueError):
+        control.announce(HUB, "hi", targets)
+    assert api.requests == []
+
+
+def test_targets_accept_real_sequences_of_names():
+    assert announce_body("hi", {"speakers": ["ab"]})["targets"] == {"speakers": ["ab"]}
+    assert announce_body("hi", {"rooms": ("a", "b")})["targets"] == {"rooms": ["a", "b"]}
+    assert announce_body("hi", IntercomTargets(groups=["g"]))["targets"] == {"groups": ["g"]}
+    assert announce_body("hi", IntercomTargets.for_speakers("ab"))["targets"] == {"speakers": ["ab"]}
+    assert announce_body("hi", {"all": True})["targets"] == {"all": True}
+
+
+@pytest.mark.parametrize(
+    "dnd",
+    [
+        {"enabled": "true"}, {"enabled": "false"}, {"enabled": 1}, {"enabled": 0}, {"enabled": None},
+        {}, {"quiet_hours": {"start": "22:00", "end": "07:00"}},  # enabled missing: never stored as false
+        IntercomDnd(enabled="true"), IntercomDnd(enabled=1),  # type: ignore[arg-type]
+    ],
+)
+def test_an_invalid_dnd_enabled_is_refused_never_turned_into_false(api, control, dnd):
+    with pytest.raises(ValueError):
+        control.update_intercom_speaker(HUB, "c1", dnd=dnd)
+    assert api.requests == []
+
+
+def test_dnd_with_a_real_boolean_is_sent_as_given():
+    assert speaker_update_body(dnd={"enabled": True})["dnd"] == {"enabled": True}
+    assert speaker_update_body(dnd={"enabled": False})["dnd"] == {"enabled": False}
+    body = speaker_update_body(dnd={"enabled": True, "quiet_hours": {"start": "21:00", "end": "06:30"}})
+    assert body["dnd"] == {"enabled": True, "quiet_hours": {"start": "21:00", "end": "06:30", "timezone": None}}
+
+
+def test_groups_must_be_a_list_not_a_scalar():
+    for groups in ("kids", b"kids", 5):
+        with pytest.raises(ValueError):
+            speaker_update_body(groups=groups)  # type: ignore[arg-type]
 
 
 def test_body_builders_and_unset():

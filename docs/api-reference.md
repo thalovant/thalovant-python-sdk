@@ -523,8 +523,10 @@ hub exposes MQTT.
 Announce-only text spoken aloud on a hub's speakers (see the
 [Intercom guide](guides/intercom.md)). **Not a certified safety system.** The names say
 `announce` and `intercom_*` because the HiveMind mesh already has an `intercom` frame.
-Reads need `intercom:read`, `announce` needs `intercom:send`, and changing settings or a
-speaker needs `hubs:write`. The text is never stored by the platform.
+Reads need `intercom:read`, `announce` needs `intercom:send` (and `intercom:read` as well
+with `wait=True`, which polls `get_announcement`), and changing settings or a speaker needs
+`hubs:write`. The text is never stored by the platform. With `wait=True` a poll can fail
+after the announcement was accepted: pass an `idempotency_key` and reuse it to retry.
 
 - `get_intercom_settings(hub_id) -> IntercomSettings` — `GET /v1/hubs/{id}/intercom/settings`: `enabled`, `plan_allowed`, `unavailable_reason` (`plan`, `kid_hub`, `public_hub`).
 - `set_intercom_settings(hub_id, enabled) -> IntercomSettings` — `PUT .../settings`.
@@ -533,8 +535,9 @@ speaker needs `hubs:write`. The text is never stored by the platform.
 - `announce(hub_id, text, targets, *, priority="normal", repeat=None, lang=None, idempotency_key=None, wait=False, wait_timeout=None, poll_interval=2.0) -> Announcement` — `POST .../announce` (`Idempotency-Key` only when given).
 - `get_announcement(hub_id, announcement_id) -> Announcement`, `list_announcements(hub_id, *, limit=None, cursor=None) -> AnnouncementList` — newest first.
 
-Errors: `ThalovantIntercomDisabledError`, `ThalovantHubUnreachableError`,
-`ThalovantRateLimitedError`, `ThalovantPlanError`.
+Errors: `ThalovantIntercomDisabledError`, `ThalovantHubUnreachableError` (502; the text may
+or may not have been spoken: retry with the same `idempotency_key`),
+`ThalovantRateLimitedError`, `ThalovantPlanError` (HTTP 402, or 403 with `plan_limit`).
 
 ### Chat apps
 

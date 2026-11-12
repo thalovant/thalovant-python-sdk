@@ -1,9 +1,12 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane.
+Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): wait scope and retry questions after the PR 114 review.
 
 # FAQ: thalovant (Python SDK)
 
 **Why is there no `intercom()` method, and is intercom a safety system?**
 The HiveMind mesh already has an `intercom` frame (hub-routed messages between clients), so the HTTP calls are `announce`, `get_announcement`, `list_announcements` and `*_intercom_*`. Intercom is announce-only text spoken by each speaker's own TTS; it is **not a certified safety system** and does not replace smoke or CO alarms, medical alert devices or emergency services. The platform never stores the text.
+
+**Why did `announce(wait=True)` raise after the announcement was accepted?**
+`wait=True` polls `get_announcement`, which needs `intercom:read` as well as `intercom:send`; a poll can also fail on a 429 or the network. The announcement exists and the exception has no id. Pass an `idempotency_key` and reuse it to retry, so the text is not said twice.
 
 **Why was nobody spoken to?**
 A speaker is skipped unless its `receive` is true (`skipped_not_receiving`, even for urgent), a normal announcement is skipped inside quiet hours (`skipped_dnd`; urgent bypasses them), and an offline speaker is `offline`. `ThalovantIntercomDisabledError` means the hub's switch is off or it is a kid or public hub.

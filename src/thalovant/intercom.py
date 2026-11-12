@@ -144,6 +144,7 @@ class IntercomDnd:
         )
 
     def as_dict(self) -> dict[str, Any]:
+        _flag(self.enabled, "dnd.enabled")
         out: dict[str, Any] = {"enabled": self.enabled}
         if self.quiet_hours is not None:
             out["quiet_hours"] = self.quiet_hours.as_dict()
@@ -363,14 +364,19 @@ class IntercomTargets:
         return cls(groups=tuple(groups))
 
     def as_dict(self) -> dict[str, Any]:
-        chosen = [name for name, value in (("all", self.all), ("speakers", self.speakers),
-                                           ("rooms", self.rooms), ("groups", self.groups)) if value]
+        _flag(self.all, "targets.all")
+        names = {
+            "speakers": _target_names(self.speakers, "speakers"),
+            "rooms": _target_names(self.rooms, "rooms"),
+            "groups": _target_names(self.groups, "groups"),
+        }
+        chosen = [name for name, value in (("all", self.all), *names.items()) if value]
         if len(chosen) != 1:
             raise ValueError("Choose exactly one of all, speakers, rooms or groups as targets.")
         if self.all:
             return {"all": True}
         name = chosen[0]
-        items = getattr(self, name)
+        items = names[name]
         for item in items:
             _require_text(item, f"a {name[:-1]} target")
         if name == "speakers" and len(items) > MAX_ANNOUNCEMENT_SPEAKERS:
@@ -444,7 +450,7 @@ def speaker_update_body(
                 raise ValueError(f"room is at most {MAX_ROOM_LENGTH} characters.")
         body["room"] = room
     if not isinstance(groups, _Unset):
-        if isinstance(groups, str) or len(groups) > MAX_GROUPS:
+        if isinstance(groups, (str, bytes, bytearray)) or not isinstance(groups, Sequence) or len(groups) > MAX_GROUPS:
             raise ValueError(f"groups is a list of at most {MAX_GROUPS} names.")
         for group in groups:
             _require_text(group, "a group")
@@ -474,12 +480,23 @@ def _targets(targets: TargetsInput) -> dict[str, Any]:
     unknown = sorted(set(targets) - known)
     if unknown:
         raise ValueError(f"Unknown target kind: {unknown[0]}.")
+    everyone = targets.get("all", False)
+    _flag(everyone, "targets.all")
     return IntercomTargets(
-        all=targets.get("all") is True,
-        speakers=tuple(targets.get("speakers") or ()),
-        rooms=tuple(targets.get("rooms") or ()),
-        groups=tuple(targets.get("groups") or ()),
+        all=everyone,
+        speakers=_target_names(targets.get("speakers"), "speakers"),
+        rooms=_target_names(targets.get("rooms"), "rooms"),
+        groups=_target_names(targets.get("groups"), "groups"),
     ).as_dict()
+
+
+def _target_names(value: Any, kind: str) -> tuple[str, ...]:
+    """A target list as a tuple of names. A bare string is refused, never split into characters."""
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise ValueError(f"targets.{kind} must be a list of names, not a single value.")
+    return tuple(value)
 
 
 def _dnd(dnd: DndInput) -> dict[str, Any]:
@@ -496,7 +513,17 @@ def _dnd(dnd: DndInput) -> dict[str, Any]:
         if zone is not None and not isinstance(zone, str):
             raise ValueError("quiet_hours.timezone must be an IANA name or null.")
         parsed = IntercomQuietHours(start=hours.get("start"), end=hours.get("end"), timezone=zone)  # type: ignore[arg-type]
-    return IntercomDnd(enabled=dnd.get("enabled") is True, quiet_hours=parsed).as_dict()
+    if "enabled" not in dnd:
+        # The API replaces the whole do-not-disturb object, and a missing
+        # ``enabled`` is stored as false: say so rather than switch it off.
+        raise ValueError("dnd.enabled is required: true or false.")
+    return IntercomDnd(enabled=dnd["enabled"], quiet_hours=parsed).as_dict()
+
+
+def _flag(value: Any, name: str) -> None:
+    """Refuse anything but a real boolean: ``"true"`` or ``1`` is never read as a choice."""
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be true or false.")
 
 
 def _clock(value: Any, name: str) -> None:
