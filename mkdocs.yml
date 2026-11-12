@@ -90,6 +90,7 @@ nav:
       - Conversations And Agents: guides/conversations-and-agents.md
       - The Hive: guides/the-hive.md
       - Chat Apps: guides/chat-apps.md
+      - Intercom: guides/intercom.md
       - CLI: cli.md
       - Deployment: deployment.md
   - API:
@@ -106,5 +107,6 @@ nav:
           - Protocols: reference/protocols.md
           - Control Plane: reference/control.md
           - Chat Apps: reference/chat-apps.md
+          - Intercom: reference/intercom.md
           - Models: reference/models.md
           - Errors: reference/errors.md

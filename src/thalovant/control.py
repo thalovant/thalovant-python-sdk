@@ -12,6 +12,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
+import math
 import re
 import secrets
 import threading
@@ -43,6 +44,24 @@ from .chat_apps import (
     bridges_from_payload,
     connectors_from_payload,
 )
+from .intercom import (
+    UNSET,
+    Announcement,
+    AnnouncementList,
+    DndInput,
+    IntercomPriority,
+    IntercomSettings,
+    IntercomSpeaker,
+    IntercomSpeakerList,
+    RepeatInput,
+    TargetsInput,
+    _Unset,
+    announce_body,
+    idempotency_key as _idempotency_key,
+    intercom_id,
+    settings_body,
+    speaker_update_body,
+)
 from .errors import (
     ThalovantAdmissionFailedError,
     ThalovantAdmissionTimeoutError,
@@ -53,10 +72,26 @@ from .errors import (
     ThalovantDeviceLoginDenied,
     ThalovantDeviceLoginExpired,
     ThalovantDeviceLoginPending,
+    ThalovantHubLockedError,
+    ThalovantHubUnreachableError,
+    ThalovantImpersonationNotAllowedError,
+    ThalovantIntercomDisabledError,
+    ThalovantIntercomNotConfiguredError,
+    ThalovantIntercomPlatformDisabledError,
+    ThalovantIntercomUnavailableError,
+    ThalovantManagedClientError,
+    ThalovantNotASpeakerError,
+    ThalovantNotCancellableError,
     ThalovantPlanError,
+    ThalovantRateLimitedError,
+    ThalovantReservedNameError,
+    ThalovantSkillNotInstalledError,
     ThalovantTimeoutError,
+    ThalovantTooManyTargetsError,
     ThalovantUnsupportedConnectionTypeError,
     ThalovantUnsupportedProtocolError,
+    ThalovantUrgentBusyError,
+    ThalovantUrgentScopeRequiredError,
 )
 from .identity import ThalovantIdentity
 from .native_auth import (
@@ -188,11 +223,40 @@ _TERMINAL_OPERATION_STATUSES = frozenset({"ready", "failed", "timed_out"})
 #: The most bridges one ``GET /v1/bridges`` returns; it has no cursor.
 MAX_BRIDGE_LIST_LIMIT = 500
 
+#: The least time, in seconds, ``announce`` gives its POST, whatever ``timeout`` is.
+#: The API waits up to ten seconds for the hub to answer a normal announcement, so a
+#: ten-second client timeout could give up on an announcement that was spoken (the
+#: reply arrives after the client stopped waiting), and a caller that resends without
+#: a key would then say it twice.
+INTERCOM_ANNOUNCE_MIN_TIMEOUT = 25.0
+
 
 def _bridge_path(bridge_id: str, *rest: str) -> str:
     if not isinstance(bridge_id, str) or not bridge_id.strip():
         raise ValueError("bridge_id must be a non-empty string.")
     return "/".join(["/v1/bridges", quote(bridge_id, safe=""), *rest])
+
+
+def _intercom_path(hub_id: str, *rest: str) -> str:
+    return "/".join([f"/v1/hubs/{quote(intercom_id(hub_id, 'hub_id'), safe='')}/intercom", *rest])
+
+
+def _positive_seconds(value: Any, name: str) -> float:
+    """A finite number of seconds above zero; a bool, a string, NaN or infinity is refused."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite, positive number of seconds.")
+    return float(value)
+
+
+def _wait_seconds(value: Any, name: str) -> float:
+    """A finite number of seconds, zero or more; a bool, a string, NaN or infinity is refused."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a finite, non-negative number of seconds.")
+    return float(value)
+
+
+def _intercom_id(value: str, name: str) -> str:
+    return quote(intercom_id(value, name), safe="")
 
 
 def _filter_id(value: str | None, name: str) -> str | None:
@@ -2350,6 +2414,263 @@ class AsyncThalovantControlPlane:
 
         await self._request("DELETE", _bridge_path(bridge_id))
 
+    async def get_intercom_settings(self, hub_id: str) -> IntercomSettings:
+        """A hub's intercom switch and whether it can be turned on (``GET /v1/hubs/{id}/intercom/settings``).
+
+        Intercom is announce-only and **not a certified safety system**. It is
+        off by default. ``unavailable_reason`` is ``platform`` (the platform's own
+        switch is off: every hub reads it, and it wins over the others), ``plan``,
+        ``kid_hub`` or ``public_hub`` when it cannot run; ``enabled`` is true only
+        when the hub's switch is on and there is no reason. Requires ``intercom:read``.
+        """
+
+        return IntercomSettings.from_dict(await self._request("GET", _intercom_path(hub_id, "settings")))
+
+    async def set_intercom_settings(self, hub_id: str, enabled: bool) -> IntercomSettings:
+        """Turn a hub's intercom on or off (``PUT /v1/hubs/{id}/intercom/settings``).
+
+        Requires ``hubs:write`` (owner, manager or administrator of the hub),
+        not ``intercom:send``, and a session that is not an impersonation
+        (:class:`~thalovant.errors.ThalovantImpersonationNotAllowedError`). A plan
+        without intercom is a :class:`~thalovant.errors.ThalovantPlanError`; a kid
+        or public hub is :class:`~thalovant.errors.ThalovantIntercomUnavailableError`
+        (422 ``intercom_unavailable``, ``reason``); a locked hub is
+        :class:`~thalovant.errors.ThalovantHubLockedError`. While the platform
+        switch is off, even ``enabled=False`` is
+        :class:`~thalovant.errors.ThalovantIntercomPlatformDisabledError` (503
+        ``intercom_disabled_platform``: nothing was changed), and a platform that is
+        not configured is :class:`~thalovant.errors.ThalovantIntercomNotConfiguredError`.
+        """
+
+        return IntercomSettings.from_dict(
+            await self._request("PUT", _intercom_path(hub_id, "settings"), json=settings_body(enabled))
+        )
+
+    async def list_intercom_speakers(self, hub_id: str) -> IntercomSpeakerList:
+        """Every connection of the hub as a speaker, with presence, policy, ``kind`` and ``can_play``. Requires ``intercom:read``.
+
+        The answer's ``policy_synced`` is ``False`` while the hub may hold an
+        out-of-date consent map; ``unavailable_reason`` is the hub's (``platform``
+        when intercom is off platform-wide: reads still work). A connection that
+        cannot play speech (``can_play`` false) is listed so it can be greyed out.
+        """
+
+        return IntercomSpeakerList.from_dict(await self._request("GET", _intercom_path(hub_id, "speakers")))
+
+    async def update_intercom_speaker(
+        self,
+        hub_id: str,
+        client_id: str,
+        *,
+        receive: bool | _Unset = UNSET,
+        room: str | None | _Unset = UNSET,
+        groups: Sequence[str] | _Unset = UNSET,
+        dnd: DndInput | _Unset = UNSET,
+    ) -> IntercomSpeaker:
+        """Change a speaker's policy (``PATCH .../intercom/speakers/{client_id}``): only what is passed.
+
+        A speaker is spoken to only when ``receive`` is true, which it is not
+        until somebody says so. ``room=None`` clears the room. Only these four
+        fields exist (an unknown key in a ``dnd`` mapping is refused with
+        ``ValueError``); send only what changed. ``dnd`` enabled needs quiet hours
+        with a valid IANA ``timezone`` and a ``start`` that differs from the
+        ``end``, checked before anything is sent. ``dnd`` replaces the speaker's
+        whole do-not-disturb setting: to change ``enabled`` and keep its quiet
+        hours, send the hours again. ``receive=True`` on a connection
+        that cannot play speech is
+        :class:`~thalovant.errors.ThalovantNotASpeakerError` (422 ``not_a_speaker``,
+        ``kind``). The answer's ``policy_synced`` is ``False`` while the hub may
+        hold an out-of-date consent map ("changes may take a moment to reach the
+        home"). Requires ``hubs:write`` (owner, manager or administrator; a plain
+        member and an impersonated session are refused).
+        """
+
+        body = speaker_update_body(receive=receive, room=room, groups=groups, dnd=dnd)
+        path = _intercom_path(hub_id, "speakers", _intercom_id(client_id, "client_id"))
+        return IntercomSpeaker.from_dict(await self._request("PATCH", path, json=body))
+
+    async def announce(
+        self,
+        hub_id: str,
+        text: str,
+        targets: TargetsInput,
+        *,
+        priority: IntercomPriority = "normal",
+        repeat: RepeatInput | None = None,
+        lang: str | None = None,
+        idempotency_key: str | None = None,
+        wait: bool = False,
+        wait_timeout: float | None = None,
+        poll_interval: float = 2.0,
+    ) -> Announcement:
+        """Say ``text`` aloud on a hub's speakers (``POST /v1/hubs/{id}/intercom/announce``).
+
+        ``text`` is 1-280 characters, NFC-normalised and trimmed, with no ``<``
+        or ``>``, no control, bidirectional or other invisible format characters
+        (the zero-width joiner and non-joiner excepted), no lone surrogates and
+        no private-use characters (the API's own rule, checked first with
+        ``ValueError``); it is spoken aloud in a home, and the platform keeps
+        only a keyed hash and the length. ``targets`` is
+        :class:`~thalovant.intercom.IntercomTargets`
+        (or ``{"all": True}``, ``{"speakers": [...]}``, ``{"rooms": [...]}``,
+        ``{"groups": [...]}``; at most 50 names, each 1-64 characters).
+        ``all``, a room or a group that resolves to more than 50 speakers is
+        :class:`~thalovant.errors.ThalovantTooManyTargetsError`, and a named
+        connection that cannot play speech is
+        :class:`~thalovant.errors.ThalovantNotASpeakerError`.
+        ``priority="urgent"`` needs the scope ``intercom:urgent`` **in addition
+        to** ``intercom:send`` (without it:
+        :class:`~thalovant.errors.ThalovantUrgentScopeRequiredError`, before
+        anything is spent) and may carry ``repeat``
+        (``times`` 1-10, ``interval_seconds`` 5-120): it is said again until
+        somebody acknowledges, and the call returns at once with status
+        ``sending``. A normal announcement waits up to ten seconds for the
+        hub and returns its result. At most 2 urgent announcements repeat on
+        one hub at a time
+        (:class:`~thalovant.errors.ThalovantUrgentBusyError`, 429, with
+        ``retry_after_seconds``), and an urgent one needs the Intercom skill on
+        the hub (:class:`~thalovant.errors.ThalovantSkillNotInstalledError`).
+
+        With ``wait=True`` a ``sending`` announcement is polled with
+        :meth:`get_announcement` every ``poll_interval`` seconds until it
+        completes, or ``wait_timeout`` seconds pass (default: ``times *
+        interval_seconds + 15``); on timeout the latest answer is returned,
+        still ``sending``. ``wait_timeout`` and ``poll_interval`` are checked
+        before anything is sent (finite numbers: ``wait_timeout`` not
+        negative, ``poll_interval`` above zero). The deadline bounds each
+        status read too, so a read the API is slow to answer cannot carry the
+        wait past it. Not a certified safety system.
+
+        **``wait=True`` polls with :meth:`get_announcement`** (``intercom:read``,
+        which ``intercom:send`` implies, so no further scope is needed). A poll
+        can still fail after the announcement was accepted (a 429, the network):
+        the exception reaches the caller and the caller then has no announcement
+        id. Pass an ``idempotency_key``: calling again with the same key and
+        ``wait=False`` returns the stored announcement, with its id, from the
+        POST alone (no status read) and does not announce a second time; poll it
+        with :meth:`get_announcement` afterwards. With ``wait=True`` the repeat
+        call polls again while the announcement is still ``sending`` and can
+        raise the same poll error.
+
+        **Idempotency.** An ``idempotency_key``, when given, is sent as
+        ``Idempotency-Key``. Use a **fresh unique key** (a ``uuid4``) for each
+        announcement you mean to send, and reuse it only to repeat the *same*
+        attempt after a network drop or timeout. The key is scoped to the hub
+        and lasts 24 hours: the same key replays the stored announcement (the
+        response header ``Idempotency-Replayed: true``) and **never sends
+        again**, whatever its status; a replayed ``failed`` announcement stays
+        ``failed``. The answer says so: ``announcement.replayed`` is ``True``
+        (do not tell the person it was sent anew). A key is at most 128
+        printable ASCII characters, and the same key with a different request is
+        a 409. To send the same text again on purpose, use a **new** key.
+        After :class:`~thalovant.errors.ThalovantHubUnreachableError` (502
+        ``hub_unreachable``) read the announcement first
+        (``error.announcement_id``, then :meth:`get_announcement`) before
+        sending again: the hub may have spoken it. A constant key such as
+        ``"dinner"`` would silence every later announcement for 24 hours.
+
+        **Timeout.** The API waits up to ten seconds for the hub, so this call
+        never uses less than ``INTERCOM_ANNOUNCE_MIN_TIMEOUT`` (25 s), even when
+        the client's ``timeout`` is lower: a reply that arrives at nine seconds
+        must not look like a failure. A longer ``timeout`` is kept. If the call
+        still fails with :class:`~thalovant.errors.ThalovantAPIUnreachableError`,
+        the outcome is unknown: reuse the same ``idempotency_key`` to find out.
+
+        Requires ``intercom:send`` and the owner, a manager or an administrator
+        acting as themselves (an impersonated session is
+        :class:`~thalovant.errors.ThalovantImpersonationNotAllowedError`, a locked
+        hub :class:`~thalovant.errors.ThalovantHubLockedError`). Intercom off for
+        the hub (or for the platform, or on a kid or public hub) is
+        :class:`~thalovant.errors.ThalovantIntercomDisabledError` and its
+        subclasses, a platform that is not configured
+        :class:`~thalovant.errors.ThalovantIntercomNotConfiguredError`, a hub that
+        did not answer in 5 s :class:`~thalovant.errors.ThalovantHubUnreachableError`
+        (``announcement_id``), and a rate limit
+        :class:`~thalovant.errors.ThalovantRateLimitedError`. ``delivered`` means the hub
+        handed the speech to the speaker's connection: there is no playback
+        receipt, and ``failed`` is not proof that nothing was spoken.
+        """
+
+        path = _intercom_path(hub_id, "announce")  # an invalid hub id is refused before anything is sent
+        body = announce_body(text, targets, priority=priority, repeat=repeat, lang=lang)
+        poll_interval = _positive_seconds(poll_interval, "poll_interval")
+        if wait_timeout is not None:
+            wait_timeout = _wait_seconds(wait_timeout, "wait_timeout")
+        headers = {"Idempotency-Key": _idempotency_key(idempotency_key)} if idempotency_key is not None else None
+        answer, response_headers = await self._request_with_headers(
+            "POST", path, json=body, headers=headers,
+            timeout=max(self.timeout, INTERCOM_ANNOUNCE_MIN_TIMEOUT),
+        )
+        announcement = Announcement.from_dict(answer)
+        replayed = _header_is_true(response_headers, "Idempotency-Replayed")
+        if replayed:
+            announcement = replace(announcement, replayed=True)
+        if not wait or not announcement.sending:
+            return announcement
+        if wait_timeout is None:
+            rep = body.get("repeat") or {"times": 1, "interval_seconds": 0}
+            wait_timeout = rep["times"] * rep["interval_seconds"] + 15
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout
+        while announcement.sending:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(poll_interval, remaining))
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break  # the deadline passed while sleeping: no read is started
+            try:
+                # Each read is bounded by what is left of the wait.
+                announcement = await asyncio.wait_for(self.get_announcement(hub_id, announcement.id), remaining)
+            except asyncio.TimeoutError:
+                break  # the latest answer, still ``sending``
+        return replace(announcement, replayed=True) if replayed else announcement
+
+    async def get_announcement(self, hub_id: str, announcement_id: str) -> Announcement:
+        """One announcement and its deliveries; poll it while ``sending``. Requires ``intercom:read``."""
+
+        path = _intercom_path(hub_id, "announcements", _intercom_id(announcement_id, "announcement_id"))
+        return Announcement.from_dict(await self._request("GET", path))
+
+    async def cancel_announcement(self, hub_id: str, announcement_id: str) -> Announcement:
+        """Stop an urgent announcement that is still repeating (``POST .../announcements/{id}/cancel``).
+
+        Returns the announcement with status ``cancelled``. Only while it is
+        ``sending``: an announcement that already completed, failed or was
+        cancelled is :class:`~thalovant.errors.ThalovantNotCancellableError`
+        (409 ``not_cancellable``; ``announcement_status`` is its current
+        status: read it instead of showing an error). The API asks the hub to stop repeating; a
+        hub that cannot confirm still leaves the record ``cancelled`` and the
+        answer has ``hub_confirmed=False``: then speech already queued on the
+        hub may still play, and the hub's own stop paths (the hub switch, the
+        platform kill switch, somebody acknowledging) remain. Requires
+        ``intercom:send`` (the hub's owner, a manager, a plain member of the
+        tenant or an administrator); a hub-scoped token is
+        honoured. Stopping speech is never refused: it works while the platform
+        switch is off, while the hub's switch is off, on a plan that lost
+        intercom, and in an impersonated session. Not a certified safety system.
+        """
+
+        path = _intercom_path(hub_id, "announcements", _intercom_id(announcement_id, "announcement_id"), "cancel")
+        return Announcement.from_dict(await self._request("POST", path))
+
+    async def list_announcements(
+        self, hub_id: str, *, limit: int | None = None, cursor: str | None = None
+    ) -> AnnouncementList:
+        """A hub's announcements, newest first; continue with ``next_cursor``. Requires ``intercom:read``."""
+
+        params: dict[str, Any] = {}
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                raise ValueError("limit must be a positive integer.")
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = _filter_id(cursor, "cursor")
+        return AnnouncementList.from_dict(
+            await self._request("GET", _intercom_path(hub_id, "announcements"), params=params or None)
+        )
+
     async def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""
 
@@ -2688,12 +3009,31 @@ class AsyncThalovantControlPlane:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         auth: bool = True,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
-        response = await self._send(method, path, json=json, params=params, headers=headers, auth=auth)
+        body, _ = await self._request_with_headers(
+            method, path, json=json, params=params, headers=headers, auth=auth, timeout=timeout
+        )
+        return body
+
+    async def _request_with_headers(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        auth: bool = True,
+        timeout: float | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        """:meth:`_request`, and the response's headers beside the body (for ``Idempotency-Replayed``)."""
+        response = await self._send(method, path, json=json, params=params, headers=headers, auth=auth, timeout=timeout)
         if response.status_code < 200 or response.status_code >= 300:
             raise _api_error(response)
+        response_headers = getattr(response, "headers", None)
         if not response.text.strip():
-            return {}
+            return {}, response_headers
         try:
             body = response.json()
         except ValueError as exc:
@@ -2704,7 +3044,7 @@ class AsyncThalovantControlPlane:
             raise ThalovantAPIError(
                 "Thalovant API returned an unexpected response shape.", status_code=response.status_code
             )
-        return body
+        return body, response_headers
 
     async def _send(
         self,
@@ -2716,6 +3056,7 @@ class AsyncThalovantControlPlane:
         headers: Mapping[str, str] | None = None,
         auth: bool = True,
         max_bytes: int | None = None,
+        timeout: float | None = None,
     ) -> Any:
         request_headers = {
             "accept": "application/json",
@@ -2759,7 +3100,7 @@ class AsyncThalovantControlPlane:
             json=json,
             params=params,
             headers=request_headers,
-            timeout=self.timeout,
+            timeout=self.timeout if timeout is None else timeout,
             anonymous_plaintext=not has_credentials and parsed.scheme != "https" and not loopback,
             **({"max_bytes": max_bytes} if max_bytes is not None else {}),
         )
@@ -3824,6 +4165,70 @@ class ThalovantControlPlane:
         """Stop and remove a bridge. See :meth:`AsyncThalovantControlPlane.delete_bridge`."""
         return self._run(self._core.delete_bridge(bridge_id))
 
+    def get_intercom_settings(self, hub_id: str) -> IntercomSettings:
+        """A hub's intercom switch. See :meth:`AsyncThalovantControlPlane.get_intercom_settings`."""
+        return self._run(self._core.get_intercom_settings(hub_id))
+
+    def set_intercom_settings(self, hub_id: str, enabled: bool) -> IntercomSettings:
+        """Turn a hub's intercom on or off. See :meth:`AsyncThalovantControlPlane.set_intercom_settings`."""
+        return self._run(self._core.set_intercom_settings(hub_id, enabled))
+
+    def list_intercom_speakers(self, hub_id: str) -> IntercomSpeakerList:
+        """The hub's speakers. See :meth:`AsyncThalovantControlPlane.list_intercom_speakers`."""
+        return self._run(self._core.list_intercom_speakers(hub_id))
+
+    def update_intercom_speaker(
+        self,
+        hub_id: str,
+        client_id: str,
+        *,
+        receive: bool | _Unset = UNSET,
+        room: str | None | _Unset = UNSET,
+        groups: Sequence[str] | _Unset = UNSET,
+        dnd: DndInput | _Unset = UNSET,
+    ) -> IntercomSpeaker:
+        """Change a speaker's policy. See :meth:`AsyncThalovantControlPlane.update_intercom_speaker`."""
+        return self._run(
+            self._core.update_intercom_speaker(hub_id, client_id, receive=receive, room=room, groups=groups, dnd=dnd)
+        )
+
+    def announce(
+        self,
+        hub_id: str,
+        text: str,
+        targets: TargetsInput,
+        *,
+        priority: IntercomPriority = "normal",
+        repeat: RepeatInput | None = None,
+        lang: str | None = None,
+        idempotency_key: str | None = None,
+        wait: bool = False,
+        wait_timeout: float | None = None,
+        poll_interval: float = 2.0,
+    ) -> Announcement:
+        """Say a text aloud on a hub's speakers. See :meth:`AsyncThalovantControlPlane.announce`."""
+        return self._run(
+            self._core.announce(
+                hub_id, text, targets, priority=priority, repeat=repeat, lang=lang,
+                idempotency_key=idempotency_key, wait=wait, wait_timeout=wait_timeout,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def get_announcement(self, hub_id: str, announcement_id: str) -> Announcement:
+        """One announcement. See :meth:`AsyncThalovantControlPlane.get_announcement`."""
+        return self._run(self._core.get_announcement(hub_id, announcement_id))
+
+    def cancel_announcement(self, hub_id: str, announcement_id: str) -> Announcement:
+        """Stop an urgent announcement. See :meth:`AsyncThalovantControlPlane.cancel_announcement`."""
+        return self._run(self._core.cancel_announcement(hub_id, announcement_id))
+
+    def list_announcements(
+        self, hub_id: str, *, limit: int | None = None, cursor: str | None = None
+    ) -> AnnouncementList:
+        """A hub's announcements, newest first. See :meth:`AsyncThalovantControlPlane.list_announcements`."""
+        return self._run(self._core.list_announcements(hub_id, limit=limit, cursor=cursor))
+
     def create_client(self, payload: Mapping[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """Create a hub client through the API."""
         return self._run(self._core.create_client(payload, idempotency_key=idempotency_key))
@@ -4216,15 +4621,55 @@ def _origin(url: str) -> tuple[str, str, int | None]:
 def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[ThalovantAPIError]:
     probe = ThalovantAPIError(problem=problem)
     code, detail = probe.code, probe.detail
-    if status_code in (401, 423) or (status_code == 403 and detail == "Insufficient scopes"):
+    intercom_kind = _INTERCOM_ERROR_KINDS.get(code or "")
+    if status_code in (401, 423) or (
+        status_code == 403 and detail == "Insufficient scopes" and intercom_kind is None
+    ):
         # A token that is unknown, expired or revoked; an account locked; or a
-        # token without the scope: signing in again is the way out of each.
+        # token without the scope: signing in again is the way out of each. A
+        # 403 that names an intercom code (``urgent_scope_required`` is the one
+        # that is a refusal of scope) is that code's own typed error instead.
         return ThalovantAuthError
     if status_code == 402 or (status_code == 403 and code == "plan_limit"):
         return ThalovantPlanError
     if status_code == 409 and code == "home_assistant_already_linked":
         return ThalovantAlreadyLinkedError
+    if intercom_kind is not None:
+        return intercom_kind
+    if status_code == 429:
+        return ThalovantRateLimitedError
     return ThalovantAPIError
+
+
+#: The typed error of each intercom problem ``code``, whatever the status.
+_INTERCOM_ERROR_KINDS: dict[str, type[ThalovantAPIError]] = {
+    "intercom_disabled": ThalovantIntercomDisabledError,
+    "intercom_unavailable": ThalovantIntercomUnavailableError,
+    "intercom_disabled_platform": ThalovantIntercomPlatformDisabledError,
+    "intercom_not_configured": ThalovantIntercomNotConfiguredError,
+    "urgent_scope_required": ThalovantUrgentScopeRequiredError,
+    "intercom_urgent_busy": ThalovantUrgentBusyError,
+    "skill_not_installed": ThalovantSkillNotInstalledError,
+    "not_a_speaker": ThalovantNotASpeakerError,
+    "reserved_name": ThalovantReservedNameError,
+    "hub_locked": ThalovantHubLockedError,
+    "impersonation_not_allowed": ThalovantImpersonationNotAllowedError,
+    "too_many_targets": ThalovantTooManyTargetsError,
+    "managed_client": ThalovantManagedClientError,
+    "hub_unreachable": ThalovantHubUnreachableError,
+    "not_cancellable": ThalovantNotCancellableError,
+}
+
+
+def _header_is_true(headers: Any, name: str) -> bool:
+    """True when the response header ``name`` is ``true`` (any case); a header mapping that cannot be read says no."""
+    if not headers:
+        return False
+    try:
+        value = headers.get(name)
+    except Exception:  # noqa: BLE001 - a header mapping that cannot be read has no answer
+        return False
+    return isinstance(value, str) and value.strip().lower() == "true"
 
 
 def _linked_client_id(problem: Mapping[str, Any] | None) -> str | None:
@@ -4574,6 +5019,26 @@ class _BlockingSender:
         timeout: float,
         anonymous_plaintext: bool,
         max_bytes: int | None = None,
+    ) -> Any:
+        # A requests-style session blocks until the API answers. Read on a worker
+        # thread so the caller's event loop keeps running and a deadline that
+        # wraps this call (``asyncio.wait_for``, as ``announce(wait=True)`` does)
+        # takes effect at once: a cancelled await abandons the read, which the
+        # session's own ``timeout`` ends.
+        return await asyncio.to_thread(
+            self._send_blocking, method, url, json, params, headers, timeout, anonymous_plaintext, max_bytes
+        )
+
+    def _send_blocking(
+        self,
+        method: str,
+        url: str,
+        json: Mapping[str, Any] | None,
+        params: Mapping[str, Any] | None,
+        headers: Mapping[str, str],
+        timeout: float,
+        anonymous_plaintext: bool,
+        max_bytes: int | None,
     ) -> Any:
         try:
             response = self.session.request(

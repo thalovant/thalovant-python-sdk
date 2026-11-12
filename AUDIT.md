@@ -1,12 +1,45 @@
-Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (0.11.0): review and consumer-port fixes (origin, endpoint rules, secrets, HEAD, drain before close); the loopback flow's known limits remain.
+Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
 
 # Audit
 
 Known issues, technical debt and security findings for `thalovant` (the Python SDK and the parity reference). Each entry cites the code and the test that show it. Line numbers are at `main` 51069339 (2026-11-03).
 
-Test run behind this file: `python -m pytest -q` on Python 3.12, 1621 passed, 1 skipped (branch `feat/browser-sign-in`, final producer revision, 2026-11-08). `ruff`, `mypy`, `scripts/check-sdk-parity.py` and `scripts/generate-sdk-conformance.py --check` also pass.
+Test run behind this file: `python -m pytest -q` on Python 3.12, 1828 passed, 1 skipped (branch `feature/intercom-v1`, final-API round, 2026-11-11). `ruff`, `mypy` and `scripts/check-sdk-parity.py` also pass. (The 0.11.0 round before it: 1621 passed, 1 skipped.)
 
 ## Open: known limitations
+
+### Intercom: the SDK keeps the whole API body in `ThalovantAPIError.problem` (security review L5)
+
+`_api_error()` (`src/thalovant/control.py`) hands the parsed error body to `ThalovantAPIError.problem` as it is. The API strips `input` and `ctx` from `/intercom/` validation errors (`app/middleware/errors.py`), so the text does not reach it today; a regression there would put the text into the exception. Not changed: the contract's section J does not ask for it. Proposed in `SUGGESTIONS.md`.
+
+### Intercom: the timezone and Unicode checks use this machine's databases
+
+`_timezone()` (`src/thalovant/intercom.py`) asks `zoneinfo`, so a name is valid when this machine's tz database knows it; the API asks its own (case-sensitive on Linux). Where no database exists (Windows without the `tzdata` package) only the shape is checked and the API decides (`tests/test_intercom.py::test_the_zone_shape_is_the_fallback_only_where_there_is_no_timezone_database`). `announcement_text()` uses `unicodedata`, whose version follows the Python build: a character assigned in a newer Unicode than the SDK's (or the API's) can pass here and be refused there, or the reverse. The API's answer stays authoritative; the 422 is the fallback.
+
+### Intercom: `ThalovantAPIError.detail` does not read `message`
+
+The final intercom problems carry their sentence in `message`; `_problem_fields()` (`src/thalovant/errors.py`) reads `detail` only, so `error.detail` is `None` for them (the sentence is in `problem["message"]` and in the exception message). Changing it moves the shared api-error behaviour in every SDK; proposed in `SUGGESTIONS.md`.
+
+### Fixed in the review round 2 (PR 114)
+
+- **A requests-style session blocked the event loop** (and so the `announce(wait=True)` deadline): `_BlockingSender.send` (`src/thalovant/control.py`) now reads on a worker thread (`tests/test_intercom.py::test_the_wait_deadline_bounds_a_stalled_read_through_a_requests_style_session`, `::test_a_requests_style_session_is_read_off_the_event_loop_thread`). A cancelled read is abandoned, not interrupted: the thread ends with the session's own `timeout`.
+- **A 403 carrying `urgent_scope_required` and the generic "Insufficient scopes" sentence was a plain `ThalovantAuthError`**, and a top-level `null` hid the nested `announcement_id`, `matched`, `not_speakers`: `_error_kind` and `_problem_member` fixed (`tests/test_intercom.py::test_the_urgent_scope_code_wins_over_the_generic_insufficient_scopes_refusal`, `::test_a_top_level_null_or_wrong_type_does_not_hide_the_member_inside_detail`).
+- **Docs claimed `wait=True` needs `intercom:read` as well, and that cancel is owner/admin only**: both were wrong against the API (`app/auth/utils.py:232`, `app/routes/intercom.py` `cancel_announcement`); corrected in the guide, README, docstrings and porting notes.
+
+### Fixed in this round (final API)
+
+- **Rooms, groups and the key length** (was L6): `IntercomTargets.as_dict()` caps every list at 50 names of 64 characters and `idempotency_key()` caps the key at 128 printable ASCII characters (`tests/test_intercom.py::test_a_target_list_holds_at_most_50_names_of_at_most_64_characters`, `::test_an_idempotency_key_is_at_most_128_printable_ascii_characters`).
+- **A replayed announcement is marked** (`Announcement.replayed`, from `Idempotency-Replayed: true`; `::test_a_replayed_announcement_says_so_and_a_first_answer_does_not`, `::test_a_replayed_sending_announcement_is_202_and_stays_replayed_after_wait`).
+- **The text rule is the API's** (was: 1-280 and control characters only): `<` `>`, format characters, bidi controls, lone surrogates, private use and separators are refused first (`::test_a_text_the_api_would_refuse_is_refused_first_and_never_echoed`).
+- **Quiet hours** that are on need a real IANA zone and `start != end`; unknown `dnd` keys are refused (`::test_an_unusable_do_not_disturb_is_refused_before_anything_is_sent`).
+
+### Intercom: a poll that fails after the POST leaves an accepted announcement
+
+`AsyncThalovantControlPlane.announce(wait=True)` (`src/thalovant/control.py`) sends the POST, then polls `get_announcement` (`intercom:read`, which `intercom:send` implies: `app/auth/utils.py` `expand_granted_scopes`). A 429 or a network error fails a poll after the announcement was accepted, and the exception carries no announcement id (`tests/test_intercom.py::test_a_failed_poll_surfaces_after_the_post_was_accepted`). The callers' answer is a fresh `idempotency_key`: calling again with the same key replays the stored announcement (with its id) and does not send again. Not fixed in the SDK because an exception cannot also return the accepted announcement; the docs say so (`docs/guides/intercom.md`).
+
+### Intercom: the announcement text is held in memory and in the request body
+
+`announce_body()` (`src/thalovant/intercom.py`) builds the request body, which holds the text, and `AsyncThalovantControlPlane.announce()` (`src/thalovant/control.py`) sends it. Nothing in the SDK logs or raises it, and `Announcement` never carries it (`tests/test_intercom.py::test_announce_normal_sends_the_contract_body_and_reads_deliveries`). It is not redacted from an error the API echoes it in: `ThalovantAPIError.problem` keeps the whole body, so a server that echoed the text in a refusal would put it there. The contract says the API never does. Also unverified against a live API: the announcement-list shape (`items` and `next_cursor`) is read from the contract's description, with `data` and `cursor` accepted as well.
 
 ### A blocking handler on MQTT or a custom transport holds up that transport's receive worker
 

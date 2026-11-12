@@ -1,4 +1,4 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign-in section for browser sign-in (0.11.0); the quick start signs in with interactive_login(). -->
+<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions. -->
 
 <p align="center">
   <picture>
@@ -165,6 +165,53 @@ print(api.get_bridge(telegram.id).status.reason)  # Setup, Starting, Connected, 
 A refusal is a `ThalovantAPIError` with `code` and `fields` (the settings or
 secrets it names); see the [chat apps guide](docs/guides/chat-apps.md) for the
 status words, holds and every code.
+
+## Intercom
+
+Say a short text aloud on a hub's speakers (the [intercom guide](docs/guides/intercom.md)).
+Off by default at every level, announce-only, and **not a certified safety system**: it does
+not replace smoke or CO alarms, medical alert devices or emergency services. The API does
+not store the text (it keeps a keyed hash and the length), and intercom does not record or
+store speech. (The names are `announce` and `*_intercom_*`: the HiveMind mesh already has an
+`intercom` frame, which is a different thing.)
+
+```python
+from uuid import uuid4
+
+from thalovant import IntercomRepeat, IntercomTargets
+
+api.set_intercom_settings(hub_id, True)                        # hubs:write
+speakers = api.list_intercom_speakers(hub_id).items              # intercom:read; use a client_id
+speaker = next((s for s in speakers if s.can_play), None)       # can_play=False is listed but never receives
+if speaker is None:
+    raise SystemExit("This hub has no connection that can play speech.")
+api.update_intercom_speaker(hub_id, speaker.client_id, receive=True, room="kitchen")
+# A fresh unique key for each announcement you mean to send. The same key replays the stored
+# result (Idempotency-Replayed: true) and never sends again; to send again, use a new key.
+api.announce(hub_id, "Dinner is ready", IntercomTargets.for_rooms("kitchen"),
+             idempotency_key=str(uuid4()))                                # intercom:send
+urgent = api.announce(hub_id, "Please answer", IntercomTargets.everyone(), priority="urgent",
+                      repeat=IntercomRepeat(times=3, interval_seconds=20),
+                      idempotency_key=str(uuid4()), wait=True)            # urgent needs intercom:urgent as well; the polls use intercom:read, which intercom:send implies
+print(urgent.status, urgent.acked_by)
+if urgent.sending:                                                        # still repeating after the wait
+    api.cancel_announcement(hub_id, urgent.id)                            # stop it; a finished one is a 409
+```
+
+Scopes: `intercom:read`, `intercom:send`, `intercom:urgent` (in addition to `intercom:send`, for
+`priority="urgent"` and every `repeat`) and `hubs:write` for settings and speakers. Speakers
+carry `kind`, `can_play` (a connection that cannot play speech is listed but never receives) and
+`policy_synced`; an announcement carries `replayed` when the answer is the stored one for your
+key. The text is checked first with the API's own rule (1-280 characters, no `<` or `>`, no
+control, bidirectional or invisible format characters). `delivered` means the hub handed the
+speech to the speaker's connection, not that anyone heard it. The platform switch is off until
+the operator turns it on: `ThalovantIntercomPlatformDisabledError`.
+
+After a 502 `hub_unreachable`, read the announcement (`error.announcement_id`) before sending
+again: a replayed `failed` announcement stays `failed`, so a deliberate second send needs a
+new key. `announce` never uses a request timeout below 25 s (the API waits up to 10 s for the
+hub). The hub, client and announcement ids are refused locally when they are `.`, `..`, empty,
+or hold `/`, `?`, `#`, a backslash or a control character.
 
 ## Documentation
 
