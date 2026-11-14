@@ -1,5 +1,3 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
-
 # Audit
 
 Known issues, technical debt and security findings for `thalovant` (the Python SDK and the parity reference). Each entry cites the code and the test that show it. Line numbers are at `main` 51069339 (2026-11-03).

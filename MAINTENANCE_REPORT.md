@@ -1,5 +1,3 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review fixes, round 2 (CodeRabbit PR 114): requests-style session read off the loop, docs aligned with the API's scope and cancel rules; new parity digest.
-
 # Maintenance Report
 
 ## 2026-11-14: Home bridges and the connector gateway API (0.13.0)

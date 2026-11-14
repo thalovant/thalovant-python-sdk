@@ -1,5 +1,3 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane; final API (urgent scope, speaker kind/can_play/policy_synced, typed errors, replayed).
-
 # Quick facts: thalovant (Python SDK)
 
 | Fact | Value |

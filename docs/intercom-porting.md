@@ -1,7 +1,5 @@
 # Porting intercom
 
-Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
-
 The Python SDK 0.12.0 adds the `intercom` capability: announce-only text, spoken aloud
 on a household hub's speakers. Source of truth: `src/thalovant/intercom.py` (models and
 request builders) and the intercom methods of `src/thalovant/control.py`

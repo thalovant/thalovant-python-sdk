@@ -1,5 +1,3 @@
-<!-- Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce, speakers and settings on the control plane. -->
-
 # Thalovant Python SDK
 
 Build Python clients and agents that connect directly to Thalovant hubs.

@@ -1,5 +1,3 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Final producer revision for #113 (CodeRabbit, and the Node and Go ports): every request stays on the API origin, token_endpoint and authorization_endpoint rules, the RFC 6749 error allow-list, the tab's wait, HEAD, empty device name, redaction; the host rule and the relay wording; digest 6dfb3bb31ac7. -->
-
 # Porting browser sign-in (`browser-login`)
 
 Python 0.11.0 adds browser sign-in: the OAuth authorization code grant with PKCE

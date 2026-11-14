@@ -1,5 +1,3 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Browser sign-in (browser_login, interactive_login) and the native_auth helpers, 0.11.0, after the CodeRabbit review of #113. -->
-
 # API Reference
 
 This is a concise reference for the public SDK surface. For generated API docs,
