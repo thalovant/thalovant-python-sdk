@@ -14,11 +14,51 @@ and records its results.
 | `connection-admission` | `connection-admission-vectors.json` | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
 | `home-link` | `home-link-vectors.json`, `link-keeping-vectors.json` | Node, Go, Rust, Kotlin, Swift, .NET | embedded-c, MCP |
 | `link-carriers` (0.9.1) | `link-carrier-vectors.json` | Node, Go, Rust | Kotlin, Swift, .NET (WebSocket only), embedded-c, MCP |
+| `connector-connections` (0.13.0) | none: unit tests (`tests/test_connector_connections.py`) | Node, Go, Rust, Kotlin, Swift, .NET, MCP | embedded-c |
 
 embedded-c has no HTTP client, and it leaves the socket, the loop and every handler
 to its caller. MCP holds a hub connection only for the length of one tool call, and
 has no channel to hand an unsolicited hub request to a model. The manifest says the
 same thing in each capability's `scope`.
+
+## connector-connections (0.13.0)
+
+Home bridges, and the rules the API enforces around links (thalovant-api #521). It has no
+shared vectors: each port writes the cases below as its own tests. All of it is additive
+and must hold against an API that does not have it yet (unknown fields are ignored).
+
+- **Kind.** `connector` is a second link kind next to `home_assistant`: expose it as a
+  constant like the other. Its connector ids ride in `spec.connectors` (each once;
+  `music_assistant` today; `home_assistant` is never one). The SDK does not validate the
+  ids; the API does and says why.
+- **Credentials.** The platform issues the access key and password: an `apiKey` or
+  `password` in the spec is ignored. The identity is the one in the answer's
+  `initial_identify`. An answer with none that is **not** a replay keeps the old fallback
+  (the locally generated pair, for an API that honours it).
+- **Replay.** An answer to a repeated `Idempotency-Key` carries the response header
+  `Idempotent-Replayed: true` and a `replay` object (`code: "idempotent_replay"`,
+  `credentials_included: false`), and no credentials. Either one means replay. The create
+  then **fails with a kind of its own** that carries the resource (no credentials) and its
+  id, and never returns an identity the SDK made up. (Not the intercom header
+  `Idempotency-Replayed`, which is a different spelling.)
+- **`serves`.** The create answer of a link has `serves`: `devices` (`id`, `name`,
+  `connection_type`, `active`), `count` and `warning`. Expose it, and the warning
+  (`null` when there is none), on the create result.
+- **Errors.** Read the code at the top of the problem or inside an object `detail`,
+  keyed by status and code. Keep `status`, `code`, `detail` and the whole problem on each.
+
+  | Status, code | Kind | Reads |
+  |---|---|---|
+  | 422 `connection_type_unavailable` | a kind of the unsupported-kind error (existing handlers keep working) | `reason` (`hub_operated_by_another_account`) |
+  | 422 `connection_type_unknown`, `connection_type_ambiguous` | unsupported kind, as before | `known` stays in the problem |
+  | 422 `connectors_invalid` | its own | `reason` (`duplicate`, `own_kind`, `unknown_or_malformed`), `known` |
+  | 403 `device_owner_only_beside_home_link`, `setup_session_owner_only_beside_home_link`, `device_identity_owner_only_beside_home_link` | one kind for the three | `link_client_id` |
+  | 409 `hub_scale_out_breaks_links` | its own | `links` |
+  | 409 `idempotency_key_spent` | its own | |
+  | 422 `skill_config_private_hub_only` | its own | `settings` |
+
+  A code the SDK does not list is an ordinary API error. Python exports the codes as
+  `ConnectionProblemCode`.
 
 ## What each capability does
 
