@@ -691,6 +691,148 @@ class ThalovantUnsupportedConnectionTypeError(ThalovantAPIError):
     """
 
 
+class ConnectionProblemCode:
+    """The ``code`` of every refusal the connection routes gained with home links and home bridges.
+
+    Read ``code`` first; the typed error for each is named in its comment. A
+    code the SDK does not list is a plain :class:`ThalovantAPIError`, with
+    ``code`` and ``problem`` either way.
+    """
+
+    #: 422: no link on this hub; ``reason`` is ``hub_operated_by_another_account`` (a hub another customer runs). Devices are not affected.
+    CONNECTION_TYPE_UNAVAILABLE = "connection_type_unavailable"
+    #: 422: the kind is not one the API creates; ``known`` lists the ones it does.
+    CONNECTION_TYPE_UNKNOWN = "connection_type_unknown"
+    #: 422: ``connection_type`` and ``connectionType`` were both sent and differ.
+    CONNECTION_TYPE_AMBIGUOUS = "connection_type_ambiguous"
+    #: 422: the home bridge's connector list is empty, repeated or names an id it may not serve; ``reason`` says which.
+    CONNECTORS_INVALID = "connectors_invalid"
+    #: 403: only the account owner, from their own session, may add a device beside a home link; ``link_client_id`` names the link.
+    DEVICE_OWNER_ONLY = "device_owner_only_beside_home_link"
+    #: 403: the same, for a device's setup session.
+    SETUP_SESSION_OWNER_ONLY = "setup_session_owner_only_beside_home_link"
+    #: 403: the same, for downloading a device's identity.
+    DEVICE_IDENTITY_OWNER_ONLY = "device_identity_owner_only_beside_home_link"
+    #: 409: a hub with links does not scale out; ``links`` counts them. Remove the links first.
+    HUB_SCALE_OUT_BREAKS_LINKS = "hub_scale_out_breaks_links"
+    #: 409: the ``Idempotency-Key`` made something that was since removed; send a new key.
+    IDEMPOTENCY_KEY_SPENT = "idempotency_key_spent"
+    #: 422: the setting is not for a public hub (the music skill's direct route); ``settings`` names them.
+    SKILL_CONFIG_PRIVATE_HUB_ONLY = "skill_config_private_hub_only"
+    #: Not an error code: the ``replay.code`` of a connection answered from an earlier request with the same key.
+    IDEMPOTENT_REPLAY = "idempotent_replay"
+
+
+class ThalovantConnectionTypeUnavailableError(ThalovantUnsupportedConnectionTypeError):
+    """Raised when a link cannot be made on this hub (422 ``connection_type_unavailable``).
+
+    A kind of :class:`ThalovantUnsupportedConnectionTypeError`, so code that
+    handles that keeps working. :attr:`reason` is ``hub_operated_by_another_account``
+    when the hub is run by another account: a link (``home_assistant`` or
+    ``connector``) is made only on the caller's own hub or one Thalovant runs.
+    Choose one of those; devices are not affected. Not retryable on this hub.
+    """
+
+    @property
+    def reason(self) -> str | None:
+        """Why (an open value), or ``None`` when the body did not say."""
+        return _problem_str(self.problem, "reason")
+
+
+class ThalovantConnectorsInvalidError(ThalovantAPIError):
+    """Raised when a home bridge's ``spec.connectors`` is refused (422 ``connectors_invalid``).
+
+    :attr:`reason` is ``duplicate`` (an id named twice), ``own_kind``
+    (``home_assistant`` has a connection kind of its own and is never a
+    bridge's) or ``unknown_or_malformed``; :attr:`known` lists the ids a bridge
+    may serve. Send each known id once.
+    """
+
+    @property
+    def reason(self) -> str | None:
+        """``duplicate``, ``own_kind`` or ``unknown_or_malformed`` (an open value), or ``None``."""
+        return _problem_str(self.problem, "reason")
+
+    @property
+    def known(self) -> tuple[str, ...]:
+        """The connector ids a bridge may serve; empty when the body did not say."""
+        return _problem_strs(self.problem, "known")
+
+
+class ThalovantOwnerOnlyBesideLinkError(ThalovantAPIError):
+    """Raised when a device is added beside a home link by anybody but the account owner (403).
+
+    Codes ``device_owner_only_beside_home_link``,
+    ``setup_session_owner_only_beside_home_link`` and
+    ``device_identity_owner_only_beside_home_link``. :attr:`link_client_id`
+    names the link. The owner does it from their own session (never an
+    impersonated one); on a hub where the account has no link nothing changes.
+    """
+
+    @property
+    def link_client_id(self) -> str | None:
+        """The link that closes this, or ``None`` when the body did not say."""
+        return _problem_str(self.problem, "link_client_id")
+
+
+class ThalovantHubScaleOutBreaksLinksError(ThalovantAPIError):
+    """Raised when a hub's change would scale it out while it carries links (409 ``hub_scale_out_breaks_links``).
+
+    A link needs one listener. :attr:`links` counts the links on the hub.
+    There is no override: remove the links first.
+    """
+
+    @property
+    def links(self) -> int | None:
+        """How many links the hub carries, or ``None`` when the body did not say."""
+        value = _problem_member(self.problem, "links", _is_count)
+        return value if isinstance(value, int) else None
+
+
+class ThalovantIdempotencyKeySpentError(ThalovantAPIError):
+    """Raised when an ``Idempotency-Key`` made something that has since been removed (409 ``idempotency_key_spent``).
+
+    Send the request again with a new key.
+    """
+
+
+class ThalovantPrivateHubOnlyError(ThalovantAPIError):
+    """Raised when a setting is for a private hub only (422 ``skill_config_private_hub_only``).
+
+    The music skill's direct route (``transport: direct``, ``url``, ``token``,
+    ``allowed_devices``, ``device_players``) is refused while the skill set
+    serves a public hub, and a hub cannot be made public over it. Use the home
+    bridge instead, or keep the hub private. :attr:`settings` names them.
+    """
+
+    @property
+    def settings(self) -> tuple[str, ...]:
+        """The refused settings by name; empty when the body did not say."""
+        return _problem_strs(self.problem, "settings")
+
+
+class ThalovantCredentialsNotReplayedError(ThalovantError):
+    """Raised when a connection create was answered from an earlier request with the same key.
+
+    The connection exists, but its credentials were in the first answer only:
+    the platform does not store them, so a replay carries none. The SDK does not
+    hand back an identity it generated itself, because the platform issues the
+    connection's real credentials. :attr:`client` is the replayed resource (no
+    credentials); download the identity from the owner's own session, or delete
+    the connection and create it again with a new key.
+    """
+
+    def __init__(self, *args: object, client: Mapping[str, Any] | None = None) -> None:
+        super().__init__(*args)
+        self.client: dict[str, Any] = dict(client) if isinstance(client, Mapping) else {}
+
+    @property
+    def client_id(self) -> str | None:
+        """The connection's id."""
+        value = self.client.get("id")
+        return value if isinstance(value, str) else None
+
+
 class ThalovantDeviceLoginPending(ThalovantAPIError):
     """Raised by one device-login poll while the person has not decided yet.
 

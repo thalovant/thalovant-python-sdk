@@ -308,6 +308,46 @@
         "connection-kinds-vectors.json"
       ]
     },
+    "connector-connections": {
+      "description": "Home bridges and the platform's rules for links, from the connector gateway API (thalovant-api #521): connection_type connector next to home_assistant (a constant for the kind; the connector ids ride in spec.connectors, each once, music_assistant only today, home_assistant never); the connection create does not hand back an identity the SDK made up: the platform issues the access key and password (an apiKey or password in a spec is ignored), the identity is the one in the answer, and an answer to a replayed Idempotency-Key (response header Idempotent-Replayed: true, or a replay marker with code idempotent_replay) carries no credentials and is a distinct failure that keeps the resource and never returns a fabricated identity, while an answer without credentials that is not a replay keeps the old fallback; the create result exposes serves (the account's own devices the link will serve on its hub, count, and a warning when there are none); typed errors read at the top of the problem or inside an object detail, by status and code: 422 connection_type_unavailable (reason, a kind of the unsupported-kind error, so existing handlers keep working), 422 connectors_invalid (reason duplicate, own_kind or unknown_or_malformed; known), 403 device_owner_only_beside_home_link, setup_session_owner_only_beside_home_link and device_identity_owner_only_beside_home_link (link_client_id), 409 hub_scale_out_breaks_links (links), 409 idempotency_key_spent, 422 skill_config_private_hub_only (settings); connection_type_unknown and connection_type_ambiguous stay unsupported-kind refusals; and a code the SDK does not list stays an ordinary API error with its code and problem. Everything is additive and safe against an API that does not have it yet.",
+      "files": [
+        "src/thalovant/control.py",
+        "src/thalovant/errors.py"
+      ],
+      "scope": {
+        "thalovant-dotnet-sdk": {
+          "status": "required"
+        },
+        "thalovant-go-sdk": {
+          "status": "required"
+        },
+        "thalovant-kotlin-sdk": {
+          "status": "required"
+        },
+        "thalovant-mcp": {
+          "status": "required"
+        },
+        "thalovant-node-sdk": {
+          "status": "required"
+        },
+        "thalovant-python-sdk": {
+          "status": "required"
+        },
+        "thalovant-rust-sdk": {
+          "status": "required"
+        },
+        "thalovant-swift-sdk": {
+          "status": "required"
+        },
+        "thalovant-embedded-c": {
+          "status": "not-applicable",
+          "reason": "Embedded C is a caller-buffer wire library without a control-plane HTTP client; the caller owns every request it would make."
+        }
+      },
+      "tests": [
+        "tests/test_connector_connections.py"
+      ]
+    },
     "control": {
       "description": "Public control-plane operations, provisioning, skills and runtime lifecycle, including the sign-in grants and the readable naming of what they return",
       "files": [
@@ -887,61 +927,6 @@
     }
   },
   "reference": {
-    "files": {
-      "src/thalovant/__init__.py": "c98348aa55a469d962910a8deaf8bdeef30e9cf6534e843c90b0e207ae2630a4",
-      "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
-      "src/thalovant/_hive.py": "717d48525fbd6210ff701f23a2fa0a495954e5e4c396fb4e6811b7f7120270e6",
-      "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
-      "src/thalovant/_link.py": "1b483dfca852f73d1e1797cfc6f82bc9596952f2efe6dd865377026fbc902470",
-      "src/thalovant/_loop.py": "88ad7c593f4bb548a74fcf09dcc2fc6ded4afdcfd0f61de5166a61bd885cfbbc",
-      "src/thalovant/_loopback.py": "2399815a0844f6ef24a1ba3b978a65e581945ac61b64f561be59cd0e7bd185e3",
-      "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
-      "src/thalovant/_noise_runtime.py": "5586628a803fc58f3fe9ca2f2674a7c00633cc208c47846ed77f66d3fb378473",
-      "src/thalovant/_wire.py": "f6e589b234ca8a1f369a0d82ccc89bb2bdc95bdad7a140ffd16a7fdd46fef0e7",
-      "src/thalovant/_yaml.py": "14741e3d6aca4d2007eeff8f1d6f1816a38120f5728e8d1db728b493636dc0ff",
-      "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
-      "src/thalovant/chat_apps.py": "64d0f88cfb0558fb582e5cdd52ef72c23a2e491df3f0407f05fb009a4cb8951b",
-      "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
-      "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
-      "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "02a03baa858f21500e47db996e8c93e4057be374058b16138b190bdcbc3ff210",
-      "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
-      "src/thalovant/errors.py": "ff031b64356de5f0e8f92c4af0ceb0d8c834675a07dd7d845b1de840bad6f36c",
-      "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
-      "src/thalovant/home.py": "934f2618a39f35bd7d95b0ff8544b543e7089f8103aa89a5943c01735ccbefe6",
-      "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
-      "src/thalovant/identity.py": "8e8b34d794f14dca7ef42573642eb6ca37cba87f43a3b8027f9c1ab3525c52a0",
-      "src/thalovant/intents.py": "c1635476545bb0e6f9ad251bcfbe8097aa486627403a32d90fcfe29c6280d54d",
-      "src/thalovant/intercom.py": "b88a83f81b4630027b00d7382794cd6c416188913e14704205e35fdfd0500c86",
-      "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
-      "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
-      "src/thalovant/models.py": "029daed0271aa321ceb8e3d5f94541c0f43152eaeaf32146f68f053248ae660c",
-      "src/thalovant/native_auth.py": "d69337afdec3b00daaadeb2ad34b46d760330c06ae2a0a0c0941a3e40cd52f23",
-      "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
-      "src/thalovant/rich.py": "7b4046ead3abca687e7cd353e653ced2e60b66f6d0b8b776367e8172fe218beb",
-      "src/thalovant/session.py": "39813d00a928ede9bbeaf23bfbe4c5f0df8a19a60afd5ded6d5f176a60bdf3f5",
-      "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
-      "src/thalovant/transport.py": "755c4ae9ef4e3390f3d845ed6585e4ad4fba193ca79ee85f6f41b39e7064e96c"
-    },
-    "dependencies": {
-      "requires-python": ">=3.10",
-      "dependencies": [
-        "aiohttp>=3.11",
-        "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-        "cryptography>=48.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'"
-      ],
-      "extras": {
-        "mqtt": [
-          "paho-mqtt>=2.1.0"
-        ],
-        "yaml": [
-          "PyYAML>=6.0.2"
-        ],
-        "listing": [
-          "thalovant-languages>=0.3.0"
-        ]
-      }
-    },
     "conformance": {
       "api-error-vectors.json": "0800a7ab94a28cb49d44cd022b37c3444d4778af2003fc028f70e38f747c3eb0",
       "binary-frames.json": "c069cae1e4c3c768bd067f9fa65c2b47f904a6f06682b20155d2ea41765c073c",
@@ -959,6 +944,61 @@
       "question-vectors.json": "796984d1ee580cdc7dc80d12b9565b8e0c987c7a3d082ce3fd7a0bdc83c2a80f",
       "refusal-vectors.json": "8388f62c4618613d0e262ba3f5367e4a83215b70a5834c7e7ec0516934fc57e0",
       "reply-claim-vectors.json": "9394a4d4579cd655d71fd9983397ecedcdcf0a5b577141111827d1458b33050f"
+    },
+    "dependencies": {
+      "dependencies": [
+        "aiohttp>=3.11",
+        "cryptography>=48.0.1,<49.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+        "cryptography>=48.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'"
+      ],
+      "extras": {
+        "listing": [
+          "thalovant-languages>=0.3.0"
+        ],
+        "mqtt": [
+          "paho-mqtt>=2.1.0"
+        ],
+        "yaml": [
+          "PyYAML>=6.0.2"
+        ]
+      },
+      "requires-python": ">=3.10"
+    },
+    "files": {
+      "src/thalovant/__init__.py": "b1f5b967acedf8c0722aeb27051b0265a128c200fbc68dded317164596c28eb4",
+      "src/thalovant/_aiohttp.py": "93ed34f126f21b53471c1938d2ef3961ae6077623d2387b7a924f349671953b6",
+      "src/thalovant/_hive.py": "717d48525fbd6210ff701f23a2fa0a495954e5e4c396fb4e6811b7f7120270e6",
+      "src/thalovant/_language.py": "9db4ccbb14fcfce375ad8c1d4748d5b2fa49457a70e6fdfcafea417579ad0667",
+      "src/thalovant/_link.py": "1b483dfca852f73d1e1797cfc6f82bc9596952f2efe6dd865377026fbc902470",
+      "src/thalovant/_loop.py": "88ad7c593f4bb548a74fcf09dcc2fc6ded4afdcfd0f61de5166a61bd885cfbbc",
+      "src/thalovant/_loopback.py": "2399815a0844f6ef24a1ba3b978a65e581945ac61b64f561be59cd0e7bd185e3",
+      "src/thalovant/_noise.py": "5a13e3309f84d6761218d46f0ddddaeff9436bd7030c98f36e74eb31e6efbbf6",
+      "src/thalovant/_noise_runtime.py": "5586628a803fc58f3fe9ca2f2674a7c00633cc208c47846ed77f66d3fb378473",
+      "src/thalovant/_wire.py": "f6e589b234ca8a1f369a0d82ccc89bb2bdc95bdad7a140ffd16a7fdd46fef0e7",
+      "src/thalovant/_yaml.py": "14741e3d6aca4d2007eeff8f1d6f1816a38120f5728e8d1db728b493636dc0ff",
+      "src/thalovant/agent.py": "1df7b0b39275054aa9c579bdac4e63a92cba3a6c6db80293b5117649060927b8",
+      "src/thalovant/chat_apps.py": "64d0f88cfb0558fb582e5cdd52ef72c23a2e491df3f0407f05fb009a4cb8951b",
+      "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
+      "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
+      "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
+      "src/thalovant/control.py": "8c47161d370066da8f3ff3d79aabf1cf87cccef3aa5487b8e5188b19c85ece43",
+      "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
+      "src/thalovant/errors.py": "97f1995c6c3f07eafbc0d2bc9c4191ea005dd4f30059ea9f7dfd5af188c99f1b",
+      "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
+      "src/thalovant/home.py": "934f2618a39f35bd7d95b0ff8544b543e7089f8103aa89a5943c01735ccbefe6",
+      "src/thalovant/hubs.py": "001bfe39919958d10381e3b6601211cd520d58fb7771adcd6ea722f754d70eaa",
+      "src/thalovant/identity.py": "8e8b34d794f14dca7ef42573642eb6ca37cba87f43a3b8027f9c1ab3525c52a0",
+      "src/thalovant/intents.py": "c1635476545bb0e6f9ad251bcfbe8097aa486627403a32d90fcfe29c6280d54d",
+      "src/thalovant/intercom.py": "b88a83f81b4630027b00d7382794cd6c416188913e14704205e35fdfd0500c86",
+      "src/thalovant/inventory.py": "4a5074289d34881d41253ea932df754461a3f954f0654c001a76054ec507dc49",
+      "src/thalovant/listing.py": "25c57189d7b19a3154ba829e35651e76b3f2d8cc93df5a7527d719103fa9a3df",
+      "src/thalovant/models.py": "029daed0271aa321ceb8e3d5f94541c0f43152eaeaf32146f68f053248ae660c",
+      "src/thalovant/native_auth.py": "d69337afdec3b00daaadeb2ad34b46d760330c06ae2a0a0c0941a3e40cd52f23",
+      "src/thalovant/protocols.py": "44b433337d4a6bdf6888e5070fb5e0f5176186e77378aa999ebdc28c0a5ec751",
+      "src/thalovant/rich.py": "7b4046ead3abca687e7cd353e653ced2e60b66f6d0b8b776367e8172fe218beb",
+      "src/thalovant/session.py": "39813d00a928ede9bbeaf23bfbe4c5f0df8a19a60afd5ded6d5f176a60bdf3f5",
+      "src/thalovant/subscriptions.py": "69f4f2c03a0824912c35a29b9f3ac4e72ba4ad98d88da0ef337467b10cb826a3",
+      "src/thalovant/transport.py": "755c4ae9ef4e3390f3d845ed6585e4ad4fba193ca79ee85f6f41b39e7064e96c"
     }
   },
   "reference_history": [
@@ -1007,7 +1047,8 @@
     "5b973a65ab583082069afaa67e2baf7257cbc4950a89460c9912851821258d16",
     "1e56099da5dba82b48fb83b27e53192f3cd70e7d0f5a9c4f94bb08948e45a1d6",
     "57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9",
-    "6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df"
+    "6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df",
+    "a0722fec2c5404d1b822e17b9da787370ad7630026c85c25d02f10dc66e8d003"
   ],
   "schema_version": 1
 }

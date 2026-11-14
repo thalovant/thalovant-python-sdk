@@ -63,16 +63,24 @@ from .intercom import (
     speaker_update_body,
 )
 from .errors import (
+    ConnectionProblemCode,
     ThalovantAdmissionFailedError,
     ThalovantAdmissionTimeoutError,
     ThalovantAlreadyLinkedError,
     ThalovantAPIError,
     ThalovantAPIUnreachableError,
     ThalovantAuthError,
+    ThalovantConnectionTypeUnavailableError,
+    ThalovantConnectorsInvalidError,
+    ThalovantCredentialsNotReplayedError,
     ThalovantDeviceLoginDenied,
     ThalovantDeviceLoginExpired,
     ThalovantDeviceLoginPending,
     ThalovantHubLockedError,
+    ThalovantHubScaleOutBreaksLinksError,
+    ThalovantIdempotencyKeySpentError,
+    ThalovantOwnerOnlyBesideLinkError,
+    ThalovantPrivateHubOnlyError,
     ThalovantHubUnreachableError,
     ThalovantImpersonationNotAllowedError,
     ThalovantIntercomDisabledError,
@@ -144,6 +152,10 @@ HOME_ASSISTANT_SCOPES = ("hubs:read", "clients:read", "clients:write")
 HOME_ASSISTANT_CLIENT_ID = "thalovant-home-assistant"
 #: ``spec.connection_type`` of a Home Assistant link.
 CONNECTION_TYPE_HOME_ASSISTANT = "home_assistant"
+#: ``spec.connection_type`` of a home bridge: a link that serves the connector
+#: ids in ``spec.connectors`` (``music_assistant`` today). Home Assistant has the
+#: kind above and is never one of a bridge's connectors.
+CONNECTION_TYPE_CONNECTOR = "connector"
 
 OperationStatus = Literal[
     "requested",
@@ -474,6 +486,30 @@ class BootstrapIdentityResult:
     #: The operation that carries the new client to its hub, when the API
     #: returned one; see ``wait_for_admission``.
     operation: OperationResource | None = None
+    #: True when the API answered from an earlier create with the same
+    #: ``Idempotency-Key`` (``Idempotent-Replayed: true``). A replay carries no
+    #: credentials, so :meth:`create_client_identity` raises
+    #: :class:`ThalovantCredentialsNotReplayedError` instead of returning one;
+    #: this is always ``False`` on a result you hold.
+    replayed: bool = False
+
+    @property
+    def serves(self) -> dict[str, Any] | None:
+        """What a new link will serve: ``devices`` (``id``, ``name``, ``connection_type``, ``active``), ``count`` and ``warning``.
+
+        Present for a ``home_assistant`` or ``connector`` link. A link answers
+        the same account's devices on the same hub and nobody else's;
+        ``warning`` is set when that is nobody (none, or all paused). ``None``
+        for any other kind, and from an API that does not say.
+        """
+        value = self.client.get("serves") if isinstance(self.client, Mapping) else None
+        return dict(value) if isinstance(value, Mapping) else None
+
+    @property
+    def serves_warning(self) -> str | None:
+        """The warning in :attr:`serves`: this link will serve none of the account's devices. ``None`` when there is none."""
+        value = (self.serves or {}).get("warning")
+        return value if isinstance(value, str) and value else None
 
     @property
     def selected_protocol(self) -> HubProtocol | None:
@@ -2707,6 +2743,20 @@ class AsyncThalovantControlPlane:
         a hub that already holds the one link of its kind,
         :class:`ThalovantAlreadyLinkedError`.
 
+        ``connection_type="connector"`` makes a home bridge; name what it serves
+        in ``spec={"connectors": ["music_assistant"]}`` (each id once; see
+        :class:`ThalovantConnectorsInvalidError`). A link, of either kind, is
+        made only on your own hub or one Thalovant runs
+        (:class:`ThalovantConnectionTypeUnavailableError`), and it serves only
+        your own devices on that hub: read :attr:`BootstrapIdentityResult.serves`.
+
+        The platform issues the connection's access key and password: an
+        ``apiKey`` or ``password`` in the spec is ignored by an API that has
+        this behaviour, and the identity returned is the one in the answer. A
+        create answered from an earlier request with the same ``idempotency_key``
+        carries no credentials and raises
+        :class:`ThalovantCredentialsNotReplayedError`.
+
         The result's ``operation`` tracks the hub admitting the connection,
         about ninety seconds; :meth:`wait_for_admission` waits for it.
         """
@@ -2746,8 +2796,15 @@ class AsyncThalovantControlPlane:
             payload["owner_id"] = owner_id
 
         try:
-            client = await self.create_client(payload, idempotency_key=idempotency_key)
+            client, response_headers = await self._request_with_headers(
+                "POST",
+                "/v1/clients",
+                json=payload,
+                headers={"Idempotency-Key": idempotency_key or str(uuid4())},
+            )
         except ThalovantAPIError as error:
+            if isinstance(error, ThalovantConnectionTypeUnavailableError):
+                raise
             if connection_type is not None and _refuses_connection_type(error):
                 raise ThalovantUnsupportedConnectionTypeError(
                     f"The Thalovant API cannot create a {connection_type!r} connection yet.",
@@ -2755,6 +2812,14 @@ class AsyncThalovantControlPlane:
                     problem=error.problem,
                 ) from error
             raise
+        if _is_replay(client, response_headers):
+            raise ThalovantCredentialsNotReplayedError(
+                "This create was answered from an earlier request with the same Idempotency-Key. "
+                "The connection exists, but its credentials were in the first answer only and are "
+                "not stored. Download its identity from the owner's session, or delete it and "
+                "create it again with a new key.",
+                client=_scrub_client_secrets(client),
+            )
         if connection_type is not None:
             await self._require_connection_type(client, connection_type)
         protocols = HubProtocolSettings.from_mapping(hub_resource)
@@ -4634,11 +4699,35 @@ def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[Tha
         return ThalovantPlanError
     if status_code == 409 and code == "home_assistant_already_linked":
         return ThalovantAlreadyLinkedError
+    connection_kind = _CONNECTION_ERROR_KINDS.get((status_code, code or ""))
+    if connection_kind is not None:
+        return connection_kind
     if intercom_kind is not None:
         return intercom_kind
     if status_code == 429:
         return ThalovantRateLimitedError
     return ThalovantAPIError
+
+
+#: The typed error of each connection problem, by status and ``code``.
+_CONNECTION_ERROR_KINDS: dict[tuple[int, str], type[ThalovantAPIError]] = {
+    (422, ConnectionProblemCode.CONNECTION_TYPE_UNAVAILABLE): ThalovantConnectionTypeUnavailableError,
+    (422, ConnectionProblemCode.CONNECTORS_INVALID): ThalovantConnectorsInvalidError,
+    (403, ConnectionProblemCode.DEVICE_OWNER_ONLY): ThalovantOwnerOnlyBesideLinkError,
+    (403, ConnectionProblemCode.SETUP_SESSION_OWNER_ONLY): ThalovantOwnerOnlyBesideLinkError,
+    (403, ConnectionProblemCode.DEVICE_IDENTITY_OWNER_ONLY): ThalovantOwnerOnlyBesideLinkError,
+    (409, ConnectionProblemCode.HUB_SCALE_OUT_BREAKS_LINKS): ThalovantHubScaleOutBreaksLinksError,
+    (409, ConnectionProblemCode.IDEMPOTENCY_KEY_SPENT): ThalovantIdempotencyKeySpentError,
+    (422, ConnectionProblemCode.SKILL_CONFIG_PRIVATE_HUB_ONLY): ThalovantPrivateHubOnlyError,
+}
+
+
+def _is_replay(client: Mapping[str, Any], headers: Any) -> bool:
+    """True when a create was answered from an earlier request: ``Idempotent-Replayed: true`` or a ``replay`` marker."""
+    if _header_is_true(headers, "Idempotent-Replayed"):
+        return True
+    marker = client.get("replay") if isinstance(client, Mapping) else None
+    return isinstance(marker, Mapping) and marker.get("code") == ConnectionProblemCode.IDEMPOTENT_REPLAY
 
 
 #: The typed error of each intercom problem ``code``, whatever the status.
