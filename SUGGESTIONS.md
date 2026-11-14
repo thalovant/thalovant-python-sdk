@@ -1,5 +1,3 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom final API: `replayed` and the list caps are done; shared vectors now matter more (text rule, DND zone, error kinds); `message` in `detail`.
-
 # Suggestions: thalovant (Python SDK)
 
 ## Scrub `input` and `ctx` from `ThalovantAPIError.problem` on intercom calls

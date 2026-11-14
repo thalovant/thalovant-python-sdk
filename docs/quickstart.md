@@ -1,5 +1,3 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-08 - Motive: Sign in with interactive_login() (browser sign-in, 0.11.0). -->
-
 # Quickstart
 
 This guide takes you from discovery to a live hub request.

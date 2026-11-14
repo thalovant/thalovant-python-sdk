@@ -1,5 +1,3 @@
-<!-- Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Document chat apps (connectors, allowance, the /v1/bridges owner routes) for 0.10.0. -->
-
 # Chat apps
 
 A hub can answer in a chat app: the owner connects a bot of their own to the

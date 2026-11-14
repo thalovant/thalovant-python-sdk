@@ -1,5 +1,3 @@
-Last Edit: Claude Sonnet 5.5 - 2026-11-12 - Motive: Intercom review round 2 (CodeRabbit PR 114): requests-style session read off the loop; wait scope (send implies read), key replay, cancel permissions.
-
 # FAQ: thalovant (Python SDK)
 
 **Why is there no `intercom()` method, and is intercom a safety system?**
