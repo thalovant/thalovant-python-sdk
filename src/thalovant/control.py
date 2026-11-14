@@ -2803,7 +2803,9 @@ class AsyncThalovantControlPlane:
                 headers={"Idempotency-Key": idempotency_key or str(uuid4())},
             )
         except ThalovantAPIError as error:
-            if isinstance(error, ThalovantConnectionTypeUnavailableError):
+            # Only an error no typed mapping claimed gets the text check: a
+            # ``connectors_invalid`` whose detail names connection_type stays itself.
+            if type(error) is not ThalovantAPIError:
                 raise
             if connection_type is not None and _refuses_connection_type(error):
                 raise ThalovantUnsupportedConnectionTypeError(
@@ -4712,6 +4714,8 @@ def _error_kind(status_code: int, problem: Mapping[str, Any] | None) -> type[Tha
 #: The typed error of each connection problem, by status and ``code``.
 _CONNECTION_ERROR_KINDS: dict[tuple[int, str], type[ThalovantAPIError]] = {
     (422, ConnectionProblemCode.CONNECTION_TYPE_UNAVAILABLE): ThalovantConnectionTypeUnavailableError,
+    (422, ConnectionProblemCode.CONNECTION_TYPE_UNKNOWN): ThalovantUnsupportedConnectionTypeError,
+    (422, ConnectionProblemCode.CONNECTION_TYPE_AMBIGUOUS): ThalovantUnsupportedConnectionTypeError,
     (422, ConnectionProblemCode.CONNECTORS_INVALID): ThalovantConnectorsInvalidError,
     (403, ConnectionProblemCode.DEVICE_OWNER_ONLY): ThalovantOwnerOnlyBesideLinkError,
     (403, ConnectionProblemCode.SETUP_SESSION_OWNER_ONLY): ThalovantOwnerOnlyBesideLinkError,

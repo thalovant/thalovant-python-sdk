@@ -981,7 +981,7 @@
       "src/thalovant/cli.py": "179e0f7022bbc249167fa3d2e4711fdb1dd05eb900ca2f6e4c729040628e7e37",
       "src/thalovant/client.py": "98ca6d8706d2030bb66cafcb9eb98122aebb17d028bc3b95bed0621831c45ef8",
       "src/thalovant/context.py": "5c6fd2ee632d3750f2a096581e0b40e9dffd63bf28f959248862279fd5db82ae",
-      "src/thalovant/control.py": "8c47161d370066da8f3ff3d79aabf1cf87cccef3aa5487b8e5188b19c85ece43",
+      "src/thalovant/control.py": "bfeabb30f1725d2f82de6af14132c27cf36607de60d5bbf3342239c56d90d3c1",
       "src/thalovant/conversation.py": "ba2c25e2f44fa41bb37aea61104d85581918cbbdc44f458f07dc098d62825adb",
       "src/thalovant/errors.py": "97f1995c6c3f07eafbc0d2bc9c4191ea005dd4f30059ea9f7dfd5af188c99f1b",
       "src/thalovant/events.py": "f2d08216c6993d3374292589f6aa48f3bbf27d97f409cc03af32c37110bf1e95",
@@ -1048,7 +1048,8 @@
     "1e56099da5dba82b48fb83b27e53192f3cd70e7d0f5a9c4f94bb08948e45a1d6",
     "57c7e71f6456344877b34bb3093399f813c7a21fde3ae14f48c8b3fa04be43b9",
     "6dfb3bb31ac7590591febef1c4d8372984ca6cdad4700381f869db30c38452df",
-    "a0722fec2c5404d1b822e17b9da787370ad7630026c85c25d02f10dc66e8d003"
+    "a0722fec2c5404d1b822e17b9da787370ad7630026c85c25d02f10dc66e8d003",
+    "8687c8429e2827ce098a22bfcdeee6545b8bfdf4a18d2ff4c1371eeb477b487c"
   ],
   "schema_version": 1
 }

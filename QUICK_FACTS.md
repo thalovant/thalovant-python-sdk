@@ -13,7 +13,7 @@ Last Edit: Claude Sonnet 5.5 - 2026-11-11 - Motive: Intercom (0.12.0): announce,
 | Control plane | `ThalovantControlPlane`, `AsyncThalovantControlPlane` (`src/thalovant/control.py`) |
 | Errors | `ThalovantAPIError` (`status_code`, `code`, `detail`, `problem`, `fields`), `ThalovantPlanError`, `ThalovantAuthError` (`src/thalovant/errors.py`) |
 | Release | merge to `main` with a new version -> `auto-release.yml` tags and dispatches `publish.yml` (PyPI trusted publishing) |
-| Parity reference digest | `8687c8429e2827ce098a22bfcdeee6545b8bfdf4a18d2ff4c1371eeb477b487c` (0.13.0 candidate; `690784dbb9af...` on 0.12.0) |
+| Parity reference digest | `45c675d3175249f07bc73589f88f049c8dbec34f0064515c8b176d5ef03c89fd` (0.13.0 candidate; `8687c8429e28...` was the first, `690784dbb9af...` on 0.12.0) |
 
 ## Sign-in (0.11.0)
 

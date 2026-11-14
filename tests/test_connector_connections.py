@@ -225,3 +225,28 @@ def test_an_unlisted_code_stays_a_plain_api_error() -> None:
     with pytest.raises(ThalovantAPIError) as caught:
         api.create_client_identity(HUB, name="X")
     assert type(caught.value) is ThalovantAPIError
+
+
+def test_a_connectors_refusal_that_names_connection_type_stays_itself() -> None:
+    api, _ = plane(
+        Response(
+            422,
+            {
+                "detail": "Duplicate connectors for connection_type connector.",
+                "code": "connectors_invalid",
+                "reason": "duplicate",
+                "known": ["music_assistant"],
+            },
+        )
+    )
+    with pytest.raises(ThalovantConnectorsInvalidError) as caught:
+        api.create_client_identity(HUB, name="Bridge", connection_type="connector")
+    assert caught.value.reason == "duplicate"
+    assert caught.value.known == ("music_assistant",)
+
+
+def test_the_unknown_kind_codes_are_unsupported_on_any_call() -> None:
+    for code in ("connection_type_unknown", "connection_type_ambiguous"):
+        api, _ = plane(problem(422, code))
+        with pytest.raises(ThalovantUnsupportedConnectionTypeError):
+            api.create_client({"hub_id": "hub-1", "name": "x", "spec": {}})
