@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1 — Unreleased
+
+Documentation-only patch. The published 0.13.0 files carry `Last Edit:` headers that main has since lost, and the connector docs name `music_assistant` as the only connector id while the API now activates `jellyfin` too (`thalovant-api` `policies/connectors.json`). Both are corrected; no behaviour changes. Validated from PyPI: `repr()` and `str()` of a create result and its identity print no secret. Upgrading is optional for Python; `as_dict(include_secrets=False)` is unchanged (see `AUDIT.md`).
+
 ## 0.13.0 — Unreleased
 
 - Home bridges and the connector gateway API (thalovant-api #521). `CONNECTION_TYPE_CONNECTOR` (`"connector"`) is the second link kind next to `CONNECTION_TYPE_HOME_ASSISTANT`: `create_client_identity(hub, name=..., connection_type="connector", spec={"connectors": ["music_assistant"]})` makes a home bridge. Everything below is additive and holds against an API that does not have it yet.

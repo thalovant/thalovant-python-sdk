@@ -29,7 +29,7 @@ and must hold against an API that does not have it yet (unknown fields are ignor
 
 - **Kind.** `connector` is a second link kind next to `home_assistant`: expose it as a
   constant like the other. Its connector ids ride in `spec.connectors` (each once;
-  `music_assistant` today; `home_assistant` is never one). The SDK does not validate the
+  `jellyfin` and `music_assistant` today; `home_assistant` is never one). The SDK does not validate the
   ids; the API does and says why.
 - **Credentials.** The platform issues the access key and password: an `apiKey` or
   `password` in the spec is ignored. The identity is the one in the answer's

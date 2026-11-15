@@ -1,5 +1,11 @@
 # Maintenance Report
 
+## 2026-11-15: validation of 0.13.0 and a documentation patch (0.13.1)
+
+Installed `thalovant` 0.13.0 from PyPI and ran the connector flow against a local mock: `repr`, `str` and f-string of the result and `ThalovantIdentity`, and `ThalovantControlPlane`, print no secret. `as_dict(include_secrets=False)` leaves `hub` and `selected_endpoint` as received (a URL written `user:pass@host` would pass through). Not changed here: a code change in the reference moves the parity snapshot every consumer must acknowledge; proposed in `SUGGESTIONS.md`. Changed: the `jellyfin` and `music_assistant` connector ids in `src/thalovant/control.py` (comment) and `docs/home-link-porting.md`. `check-sdk-parity.py` with all consumers verified.
+
+Transparency Report: AI model Claude Sonnet 5.5; actions: ran the published package, edited one comment and one doc line, wrote the entries; oversight: PR review and CI only.
+
 ## 2026-11-14: Home bridges and the connector gateway API (0.13.0)
 
 `CONNECTION_TYPE_CONNECTOR`, a replay-aware `create_client_identity` (`ThalovantCredentialsNotReplayedError`, `BootstrapIdentityResult.replayed`, `serves`, `serves_warning`), `ConnectionProblemCode` and six typed errors for the new refusals (`src/thalovant/control.py`, `src/thalovant/errors.py`), the `connector-connections` parity capability and its porting brief (`docs/home-link-porting.md`). Tests: `tests/test_connector_connections.py` (19). Depends on thalovant-api #521, which is not deployed; nothing here needs it.
