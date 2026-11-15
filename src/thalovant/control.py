@@ -153,7 +153,7 @@ HOME_ASSISTANT_CLIENT_ID = "thalovant-home-assistant"
 #: ``spec.connection_type`` of a Home Assistant link.
 CONNECTION_TYPE_HOME_ASSISTANT = "home_assistant"
 #: ``spec.connection_type`` of a home bridge: a link that serves the connector
-#: ids in ``spec.connectors`` (``music_assistant`` today). Home Assistant has the
+#: ids in ``spec.connectors`` (``jellyfin`` and ``music_assistant`` today). Home Assistant has the
 #: kind above and is never one of a bridge's connectors.
 CONNECTION_TYPE_CONNECTOR = "connector"
 

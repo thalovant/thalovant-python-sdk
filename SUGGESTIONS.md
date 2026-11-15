@@ -60,3 +60,9 @@
 - **Problem:** the `chat-apps` capability has no conformance vectors, so each port's parsing (unknown values, required members, `fields`) is checked only by its own tests.
 - **Proposal:** add `contracts/conformance/chat-apps-vectors.json` (payload in, model or refusal out) and have each consumer run it.
 - **Impact:** medium: makes drift between the five implementations visible in CI.
+
+## Strip URL userinfo in `BootstrapIdentityResult.as_dict`
+
+- **Problem:** `hub` and `selected_endpoint` pass through unredacted while the six other SDKs strip `user:pass@`.
+- **Proposal:** strip userinfo from URL strings in `hub` and `selected_endpoint` when `include_secrets` is false, and acknowledge the new reference digest in every consumer in one train.
+- **Impact:** low severity, small change, forces a coordinated parity round.

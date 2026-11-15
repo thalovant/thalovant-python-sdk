@@ -1,5 +1,9 @@
 # Audit
 
+## 2026-11-15: `BootstrapIdentityResult.as_dict()` passes `hub` and `selected_endpoint` through
+
+`as_dict` (`src/thalovant/control.py`, `BootstrapIdentityResult.as_dict`) scrubs `client` but returns `hub` and `selected_endpoint` unchanged, so a data-plane URL written `user:pass@host` would be printed. The other SDKs strip it (Go, Node, Kotlin, .NET, Rust and Swift were aligned on 2026-11-15). Not exploitable with the hubs the API returns today.
+
 Known issues, technical debt and security findings for `thalovant` (the Python SDK and the parity reference). Each entry cites the code and the test that show it. Line numbers are at `main` 51069339 (2026-11-03).
 
 Test run behind this file: `python -m pytest -q` on Python 3.12, 1828 passed, 1 skipped (branch `feature/intercom-v1`, final-API round, 2026-11-11). `ruff`, `mypy` and `scripts/check-sdk-parity.py` also pass. (The 0.11.0 round before it: 1621 passed, 1 skipped.)
